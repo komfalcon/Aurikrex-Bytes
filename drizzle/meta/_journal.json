@@ -1,5 +1,13 @@
 {
   "version": "7",
-  "dialect": "mysql",
-  "entries": []
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788565762294,
+      "tag": "0000_oval_genesis",
+      "breakpoints": true
+    }
+  ]
 }
