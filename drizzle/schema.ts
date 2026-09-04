@@ -1,28 +1,56 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-/**
- * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
- */
-export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
-  id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
-  openId: varchar("openId", { length: 64 }).notNull().unique(),
+const now = () => new Date();
+export const POST_STATUSES = ["draft", "pending_review", "scheduled", "published"] as const;
+export const ADMIN_ROLES = ["admin", "editor"] as const;
+
+export const users = sqliteTable("users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  openId: text("open_id").notNull().unique(),
   name: text("name"),
-  email: varchar("email", { length: 320 }),
-  loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+  email: text("email"),
+  loginMethod: text("login_method"),
+  role: text("role", { enum: ["user", "admin"] }).notNull().default("user"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+  lastSignedIn: integer("last_signed_in", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+});
+
+export const posts = sqliteTable("posts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  imageUrl: text("image_url"),
+  headline: text("headline").notNull(),
+  body: text("body").notNull(),
+  status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
+  scheduledTime: integer("scheduled_time", { mode: "timestamp_ms" }),
+  publishedTime: integer("published_time", { mode: "timestamp_ms" }),
+  createdBy: integer("created_by").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+});
+
+export const adminUsers = sqliteTable("admin_users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: text("role", { enum: ADMIN_ROLES }).notNull().default("editor"),
+  rememberDeviceToken: text("remember_device_token"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+});
+
+export const readers = sqliteTable("readers", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash"),
+  googleId: text("google_id").unique(),
+  emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
+  verificationToken: text("verification_token"),
+  resetToken: text("reset_token"),
+  resetTokenExpires: integer("reset_token_expires", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
-
-// TODO: Add your tables here
+export type Post = typeof posts.$inferSelect;
+export type AdminUser = typeof adminUsers.$inferSelect;
+export type Reader = typeof readers.$inferSelect;

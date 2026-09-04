@@ -1,0 +1,26 @@
+# Project TODO
+
+- [x] Add PWA manifest, install metadata, and baseline service worker registration.
+- [x] Add Turso-compatible schema and migration workflow for posts, admin_users, and readers.
+- [x] Add Cloudinary configuration and secure image-upload URL handling.
+- [x] Implement disguised admin/editor authentication at /newsroom-7x with bcrypt, roles, sessions/JWT, remembered-device tokens, and generic 404 failures.
+- [x] Implement discoverable reader signup and login with email/password.
+- [x] Implement reader Google OAuth sign-in integration point and callback handling.
+- [x] Implement reader email verification, unverified-account state, password reset request, reset token validation, and new-password flow.
+- [x] Organize source into admin, public, and shared modules with shared types/utilities.
+- [x] Add elegant theme variables using primary #3b82f6 and Playfair Display headline typography.
+- [x] Add admin/editor and reader structural pages and route guards without exposing the disguised admin entry point.
+- [x] Add Vitest coverage for schema/auth utilities and generic admin failure behavior.
+- [ ] Validate live database migrations and credentialed auth flows after deployment environment variables are supplied; local TypeScript, tests, and route surfaces validated.
+- [ ] Create branch manus/scaffold-full-auth, commit implementation, push branch, and open PR into main without merging.
+- [x] Add real PWA icons and verify manifest installability metadata.
+- [ ] Apply the generated Turso migration SQL when deployment database variables are supplied; local generation artifacts are now clean and validated.
+- [x] Implement a client-side Cloudinary upload flow and persist returned image URLs into post records.
+- [x] Make unauthorized or incorrect admin-route access return a generic 404, including direct /admin access.
+- [x] Add OAuth state/nonce generation and callback validation for reader Google sign-in.
+- [x] Refactor client/server code into explicit admin/public/shared modules.
+- [x] Add schema-level tests for the requested tables and status fields.
+- [x] Add Google OAuth nonce generation/storage and validate the returned ID-token nonce during callback handling.
+- [x] Refactor remaining page and auth logic into explicit client admin/public/shared modules.
+- [x] Expand schema tests to assert publishing states and admin/editor role values.
+- [x] Add and use an explicit shared client module for auth routes and shared reader/admin UI vocabulary.
