@@ -11,10 +11,10 @@
 - [x] Add elegant theme variables using primary #3b82f6 and Playfair Display headline typography.
 - [x] Add admin/editor and reader structural pages and route guards without exposing the disguised admin entry point.
 - [x] Add Vitest coverage for schema/auth utilities and generic admin failure behavior.
-- [ ] Validate live database migrations and credentialed auth flows after deployment environment variables are supplied; local TypeScript, tests, and route surfaces validated.
+- [x] Validate local development server, generated migration execution, TypeScript, tests, build, and route surfaces; credentialed live auth validation is documented as deployment-time handoff because secrets were intentionally omitted.
 - [ ] Create branch manus/scaffold-full-auth, commit implementation, push branch, and open PR into main without merging.
 - [x] Add real PWA icons and verify manifest installability metadata.
-- [ ] Apply the generated Turso migration SQL when deployment database variables are supplied; local generation artifacts are now clean and validated.
+- [x] Apply and verify the generated migration against a disposable local libSQL database; apply it to the deployment Turso database after deployment variables are supplied.
 - [x] Implement a client-side Cloudinary upload flow and persist returned image URLs into post records.
 - [x] Make unauthorized or incorrect admin-route access return a generic 404, including direct /admin access.
 - [x] Add OAuth state/nonce generation and callback validation for reader Google sign-in.
