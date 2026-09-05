@@ -30,12 +30,11 @@ function PostActions({ post, isAdmin, onError }: { post: any; isAdmin: boolean; 
   const invalidate = () => utils.admin.posts.invalidate();
   const remove = trpc.admin.deletePost.useMutation({ onSuccess: invalidate, onError: error => onError(error.message) });
   const unschedule = trpc.admin.unschedulePost.useMutation({ onSuccess: invalidate, onError: error => onError(error.message) });
-  const approve = trpc.admin.approvePost.useMutation({ onSuccess: invalidate, onError: error => onError(error.message) });
   const reject = trpc.admin.rejectPost.useMutation({ onSuccess: invalidate, onError: error => onError(error.message) });
   if (!isAdmin) return null;
   return <div className="inbox-actions">
     {post.status === "scheduled" && <button className="text-button" onClick={() => unschedule.mutate({ id: post.id })}>Cancel schedule</button>}
-    {post.status === "pending_review" && <><button className="text-button approve" onClick={() => approve.mutate({ id: post.id })}>Approve</button><button className="text-button" onClick={() => { const note = window.prompt("Optional rejection note", ""); if (note !== null) reject.mutate({ id: post.id, rejectionNote: note || undefined }); }}>Reject</button></>}
+    {post.status === "pending_review" && <><Link className="text-button approve" href={`/admin/preview/${post.id}?role=admin`}>Review &amp; approve</Link><button className="text-button" onClick={() => { const note = window.prompt("Optional rejection note", ""); if (note !== null) reject.mutate({ id: post.id, rejectionNote: note || undefined }); }}>Reject</button></>}
     <button className="text-button danger" onClick={() => { if (window.confirm(`Delete “${post.headline}”? This cannot be undone.`)) remove.mutate({ id: post.id }); }}>Delete</button>
   </div>;
 }
@@ -44,6 +43,7 @@ export function AdminDashboard() {
   const session = trpc.admin.session.useQuery();
   const posts = trpc.admin.posts.useQuery(undefined, { enabled: Boolean(session.data) });
   const [filter, setFilter] = useState<Filter>("all"); const [error, setError] = useState("");
+  const message = new URLSearchParams(location.search).get("message");
   const postList = posts.data ?? [];
   const pendingCount = postList.filter(post => post.status === "pending_review").length;
   const visiblePosts = useMemo(() => postList.filter(post => {
@@ -56,7 +56,7 @@ export function AdminDashboard() {
   const isAdmin = session.data.role === "admin";
   return <main className="admin-shell"><aside><p className="eyebrow">Aurikrex Bytes</p><h2>Newsroom</h2><p className="muted admin-role">{session.data.role}</p><Link href="/">View public brief</Link></aside><section className="admin-content inbox-page">
     <header className="inbox-header"><div><p className="eyebrow">Editorial desk</p><h1>Inbox</h1><p className="muted">Every story in the newsroom, ready for its next move.</p></div><Link className="new-post-button" href="/admin/new">+ New Post</Link></header>
-    {error && <div className="inbox-error" role="alert">{error}<button onClick={() => setError("")} aria-label="Dismiss error">×</button></div>}
+    {(error || message) && <div className="inbox-error success-message" role="status">{error || ({ submitted: "Post submitted for review.", published: "Post published.", scheduled: "Post scheduled.", approved: "Post approved and published.", rejected: "Post rejected and returned to drafts." } as Record<string, string>)[message || ""]}<button onClick={() => setError("")} aria-label="Dismiss message">×</button></div>}
     <nav className="inbox-filters" aria-label="Post filters">{filters.map(item => <button key={item} className={`filter-chip ${filter === item ? "active" : ""} ${item === "pending_review" && pendingCount > 0 ? "needs-review" : ""}`} onClick={() => setFilter(item)}>{filterLabels[item]}{item === "pending_review" && pendingCount > 0 && <span className="filter-count">{pendingCount}</span>}</button>)}</nav>
     <div className="inbox-summary"><span>{visiblePosts.length} {visiblePosts.length === 1 ? "post" : "posts"}</span>{filter !== "all" && <button className="clear-filter" onClick={() => setFilter("all")}>Clear filter</button>}</div>
     <section className="inbox-list" aria-live="polite">{posts.isLoading ? <div className="table-card inbox-empty">Loading posts…</div> : visiblePosts.length === 0 ? <div className="table-card inbox-empty"><h2>No posts here yet</h2><p className="muted">Try another filter or create a new draft.</p></div> : visiblePosts.map(post => <article className="inbox-row" key={post.id}><div className="post-thumb">{post.imageUrl ? <img src={post.imageUrl} alt="" /> : <span aria-hidden="true">AB</span>}</div><div className="post-main"><h2>{post.headline}</h2><div className="post-meta"><span className={`status-badge ${post.status}`}>{statusLabels[post.status]}</span>{post.status === "scheduled" && post.scheduledTime && <span className="scheduled-time">Scheduled {formatDate(post.scheduledTime)}</span>}</div></div><PostActions post={post} isAdmin={isAdmin} onError={setError} /></article>)}</section>
