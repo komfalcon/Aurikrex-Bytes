@@ -2,12 +2,13 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { trpc } from "../lib/trpc";
 import NotFound from "../pages/NotFound";
+import { BrandMark, ThemeToggle } from "../components/Brand";
 
 function AdminFrame({ children, title, active }: { children: React.ReactNode; title: string; active: "team" | "analytics" }) {
   const session = trpc.admin.session.useQuery();
   if (session.isLoading) return <main className="auth-wrap"><p className="muted">Loading newsroom…</p></main>;
   if (!session.data || session.data.role !== "admin") return <NotFound />;
-  return <main className="admin-shell"><aside><p className="eyebrow">Aurikrex Bytes</p><h2>Newsroom</h2><p className="muted admin-role">{session.data.role}</p><nav className="admin-nav"><Link className={active === "team" ? "active" : ""} href="/admin/team">Team</Link><Link className={active === "analytics" ? "active" : ""} href="/admin/analytics">Analytics</Link><Link href="/admin">Inbox</Link></nav></aside><section className="admin-content management-page"><p className="eyebrow">Administration</p><h1>{title}</h1>{children}</section></main>;
+  return <main className="admin-shell"><aside className="admin-rail"><BrandMark compact /><div className="eyebrow">Newsroom</div><p className="rail-role">{session.data.role} workspace</p><nav className="rail-nav"><Link href="/admin">Inbox</Link><Link href="/admin/new">New post</Link><Link className={active === "team" ? "active" : ""} href="/admin/team">Team</Link><Link className={active === "analytics" ? "active" : ""} href="/admin/analytics">Analytics</Link></nav><Link className="rail-link" href="/">View public brief</Link><ThemeToggle /></aside><section className="admin-content management-page"><p className="eyebrow">Administration</p><h1>{title}</h1>{children}</section></main>;
 }
 
 export function TeamManagement() {
