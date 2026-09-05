@@ -7,13 +7,19 @@ function mailTransport() {
   return nodemailer.createTransport({ host, port: Number(process.env.SMTP_PORT || 587), secure: Number(process.env.SMTP_PORT) === 465, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD } });
 }
 
-export async function sendAuthEmail(to: string, subject: string, html: string) {
+export async function sendEmail(to: string, subject: string, html: string, fromAddress?: string) {
   const transport = mailTransport();
   if (!transport) {
-    console.info(`[Auth email placeholder] ${subject} for ${to}`);
+    console.info(`[Email placeholder] ${subject} for ${to}`);
     return;
   }
-  await transport.sendMail({ from: process.env.SMTP_FROM, to, subject, html });
+  const from = fromAddress || process.env.SMTP_FROM || "info@aurikrex.tech";
+  await transport.sendMail({ from, to, subject, html });
+}
+
+export async function sendAuthEmail(to: string, subject: string, html: string) {
+  // Use support@aurikrex.tech for OTP and auth emails
+  await sendEmail(to, subject, html, process.env.SMTP_FROM_SUPPORT || "support@aurikrex.tech");
 }
 
 export function cloudinaryConfigured() {
