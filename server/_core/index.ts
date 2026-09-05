@@ -63,16 +63,15 @@ async function setupApp() {
 
 let cachedApp: express.Express | null = null;
 
-// If running on Vercel, export the app handler
-if (process.env.VERCEL) {
-  module.exports = async (req: any, res: any) => {
-    if (!cachedApp) {
-      const { app } = await setupApp();
-      cachedApp = app;
-    }
-    return cachedApp(req, res);
-  };
-} else {
+export default async function handler(req: any, res: any) {
+  if (!cachedApp) {
+    const { app } = await setupApp();
+    cachedApp = app;
+  }
+  return cachedApp(req, res);
+}
+
+if (!process.env.VERCEL) {
   async function startServer() {
     const { server } = await setupApp();
     const preferredPort = parseInt(process.env.PORT || "3000");
