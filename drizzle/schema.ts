@@ -24,6 +24,7 @@ export const posts = sqliteTable("posts", {
   status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
   scheduledTime: integer("scheduled_time", { mode: "timestamp_ms" }),
   publishedTime: integer("published_time", { mode: "timestamp_ms" }),
+  rejectionNote: text("rejection_note"),
   createdBy: integer("created_by").notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
@@ -33,6 +34,7 @@ export const adminUsers = sqliteTable("admin_users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   role: text("role", { enum: ADMIN_ROLES }).notNull().default("editor"),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   rememberDeviceToken: text("remember_device_token"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
