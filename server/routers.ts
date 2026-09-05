@@ -3,12 +3,13 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { adminUsers, posts, readers } from "../drizzle/schema";
 import { createToken, hashPassword, isValidPassword, normalizeEmail, randomToken, readToken, verifyPassword } from "./auth";
-import { getAdminByEmail, getAdminByRememberToken, getDb, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listPosts } from "./db";
+import { getAdminByEmail, getAdminById, getAdminByRememberToken, getAnalytics, getDb, getPostById, getPublishedPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts, listTodaysPublishedPosts, recordPostView, recordSearchQuery, searchPublishedPosts } from "./db";
 import { cloudinaryConfigured, getCloudinaryUploadSignature, sendAuthEmail } from "./services";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
+import { assertActiveAdmin, assertPermission, assertPostTransition } from "./permissions";
 
 const ADMIN_COOKIE = "aurikrex_admin_session";
 const ADMIN_DEVICE_COOKIE = "aurikrex_admin_device";
@@ -23,9 +24,12 @@ async function requireAdmin(ctx: { req: any }) {
   const parsed = cookies(ctx.req);
   const token = parsed[ADMIN_COOKIE];
   const payload = token ? readToken(token) : null;
-  if (payload && payload.kind === "admin") return payload;
+  if (payload && payload.kind === "admin") {
+    const admin = await getAdminById(payload.id);
+    if (admin) return assertActiveAdmin(admin);
+  }
   const remembered = parsed[ADMIN_DEVICE_COOKIE] ? await getAdminByRememberToken(parsed[ADMIN_DEVICE_COOKIE]) : undefined;
-  if (remembered) return { kind: "admin" as const, id: remembered.id, email: remembered.email, role: remembered.role };
+  if (remembered) return assertActiveAdmin(remembered);
   throw genericNotFound();
 }
 async function requireReader(ctx: { req: any }) {
@@ -44,7 +48,7 @@ export const appRouter = router({
   admin: router({
     login: publicProcedure.input(z.object({ email: z.string().email(), password: z.string(), remember: z.boolean().default(false) })).mutation(async ({ input, ctx }) => {
       const admin = await getAdminByEmail(normalizeEmail(input.email));
-      if (!admin || !(await verifyPassword(input.password, admin.passwordHash))) throw genericNotFound();
+      if (!admin || !admin.isActive || !(await verifyPassword(input.password, admin.passwordHash))) throw genericNotFound();
       const token = createToken({ kind: "admin", id: admin.id, email: admin.email, role: admin.role }, input.remember);
       const deviceToken = input.remember ? randomToken() : null;
       const db = await getDb();
@@ -55,7 +59,23 @@ export const appRouter = router({
     }),
     session: publicProcedure.query(async ({ ctx }) => requireAdmin(ctx)),
     posts: publicProcedure.query(async ({ ctx }) => { await requireAdmin(ctx); return listPosts(); }),
-    createPost: publicProcedure.input(z.object({ headline: z.string().min(1), body: z.string().min(1), imageUrl: z.string().url().optional(), status: z.enum(["draft", "pending_review", "scheduled", "published"]).default("draft"), scheduledTime: z.coerce.date().optional() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); const db = await getDb(); if (!db) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Database is not configured" }); const publishedTime = input.status === "published" ? new Date() : null; await db.insert(posts).values({ headline: input.headline, body: input.body, imageUrl: input.imageUrl, status: input.status, scheduledTime: input.scheduledTime, publishedTime, createdBy: admin.id, updatedAt: new Date() }); return { success: true }; }),
+    post: publicProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ input, ctx }) => { await requireAdmin(ctx); const post = await getPostById(input.id); if (!post) throw genericNotFound(); return post; }),
+    createPost: publicProcedure.input(z.object({ headline: z.string().min(1).max(120), body: z.string().min(1).max(800), imageUrl: z.string().url().optional() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "post:create"); const db = await getDb(); if (!db) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Database is not configured" }); const result = await db.insert(posts).values({ ...input, status: "draft", createdBy: admin.id, updatedAt: new Date() }); return { success: true, id: Number(result.lastInsertRowid) }; }),
+    editPost: publicProcedure.input(z.object({ id: z.number().int().positive(), headline: z.string().min(1).optional(), body: z.string().min(1).optional(), imageUrl: z.string().url().nullable().optional() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "post:edit"); const db = await getDb(); const post = await getPostById(input.id); if (!db || !post) throw genericNotFound(); const { id, ...changes } = input; await db.update(posts).set({ ...changes, updatedAt: new Date() }).where(eq(posts.id, id)); return { success: true }; }),
+    deletePost: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "post:delete"); const db = await getDb(); if (!db || !(await getPostById(input.id))) throw genericNotFound(); await db.delete(posts).where(eq(posts.id, input.id)); return { success: true }; }),
+    submitPost: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "post:submit"); const db = await getDb(); const post = await getPostById(input.id); if (!db || !post) throw genericNotFound(); assertPostTransition(admin.role, post.status, "pending_review"); await db.update(posts).set({ status: "pending_review", rejectionNote: null, updatedAt: new Date() }).where(eq(posts.id, input.id)); return { success: true }; }),
+    publishPost: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "post:publish"); const db = await getDb(); const post = await getPostById(input.id); if (!db || !post) throw genericNotFound(); assertPostTransition(admin.role, post.status, "published"); await db.update(posts).set({ status: "published", publishedTime: new Date(), scheduledTime: null, updatedAt: new Date() }).where(eq(posts.id, input.id)); return { success: true }; }),
+    schedulePost: publicProcedure.input(z.object({ id: z.number().int().positive(), scheduledTime: z.coerce.date() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "post:schedule"); const db = await getDb(); const post = await getPostById(input.id); if (!db || !post) throw genericNotFound(); assertPostTransition(admin.role, post.status, "scheduled"); if (input.scheduledTime <= new Date()) throw new TRPCError({ code: "BAD_REQUEST", message: "scheduledTime must be in the future" }); await db.update(posts).set({ status: "scheduled", scheduledTime: input.scheduledTime, updatedAt: new Date() }).where(eq(posts.id, input.id)); return { success: true }; }),
+    unschedulePost: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "post:unschedule"); const db = await getDb(); const post = await getPostById(input.id); if (!db || !post) throw genericNotFound(); assertPostTransition(admin.role, post.status, "draft"); if (!post.scheduledTime || post.scheduledTime <= new Date()) throw new TRPCError({ code: "BAD_REQUEST", message: "Only future scheduled posts can be cancelled" }); await db.update(posts).set({ status: "draft", scheduledTime: null, updatedAt: new Date() }).where(eq(posts.id, input.id)); return { success: true }; }),
+    approvePost: publicProcedure.input(z.object({ id: z.number().int().positive(), scheduledTime: z.coerce.date().optional() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "post:review"); const db = await getDb(); const post = await getPostById(input.id); if (!db || !post) throw genericNotFound(); const next = input.scheduledTime ? "scheduled" : "published"; assertPostTransition(admin.role, post.status, next); await db.update(posts).set({ status: next, scheduledTime: input.scheduledTime ?? null, publishedTime: input.scheduledTime ? null : new Date(), rejectionNote: null, updatedAt: new Date() }).where(eq(posts.id, input.id)); return { success: true, status: next }; }),
+    rejectPost: publicProcedure.input(z.object({ id: z.number().int().positive(), rejectionNote: z.string().max(2000).optional() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "post:review"); const db = await getDb(); const post = await getPostById(input.id); if (!db || !post) throw genericNotFound(); assertPostTransition(admin.role, post.status, "draft"); await db.update(posts).set({ status: "draft", rejectionNote: input.rejectionNote ?? null, scheduledTime: null, updatedAt: new Date() }).where(eq(posts.id, input.id)); return { success: true }; }),
+    users: router({
+      list: publicProcedure.query(async ({ ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "users:manage"); return listAdmins(); }),
+      create: publicProcedure.input(z.object({ email: z.string().email(), password: z.string().min(8), role: z.enum(["admin", "editor"]).default("editor") })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "users:manage"); const db = await getDb(); if (!db) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Database is not configured" }); const email = normalizeEmail(input.email); if (await getAdminByEmail(email)) throw new TRPCError({ code: "CONFLICT", message: "An account already exists" }); await db.insert(adminUsers).values({ email, passwordHash: await hashPassword(input.password), role: input.role, isActive: true }); return { success: true }; }),
+      changeRole: publicProcedure.input(z.object({ id: z.number().int().positive(), role: z.enum(["admin", "editor"]) })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "users:manage"); const db = await getDb(); if (!db || !(await getAdminById(input.id))) throw genericNotFound(); await db.update(adminUsers).set({ role: input.role }).where(eq(adminUsers.id, input.id)); return { success: true }; }),
+      revoke: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "users:manage"); if (input.id === admin.id) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot revoke your own account" }); const db = await getDb(); if (!db || !(await getAdminById(input.id))) throw genericNotFound(); await db.update(adminUsers).set({ isActive: false, rememberDeviceToken: null }).where(eq(adminUsers.id, input.id)); return { success: true }; }),
+    }),
+    analytics: publicProcedure.query(async ({ ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "analytics:view"); return getAnalytics(); }),
     cloudinarySignature: publicProcedure.query(async ({ ctx }) => { await requireAdmin(ctx); if (!cloudinaryConfigured()) return { configured: false }; return { configured: true, ...getCloudinaryUploadSignature() }; }),
   }),
   reader: router({
@@ -79,7 +99,12 @@ export const appRouter = router({
     resetPassword: publicProcedure.input(z.object({ token: z.string().min(10), password: z.string().min(8) })).mutation(async ({ input }) => { const reader = await getReaderByResetToken(input.token); if (!reader) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid or expired reset token" }); const db = await getDb(); if (!db) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Database is not configured" }); await db.update(readers).set({ passwordHash: await hashPassword(input.password), resetToken: null, resetTokenExpires: null }).where(eq(readers.id, reader.id)); return { success: true }; }),
     googleStart: publicProcedure.query(({ ctx }) => { const state = randomToken(); const nonce = randomToken(); ctx.res.cookie(GOOGLE_STATE_COOKIE, state, { ...getSessionCookieOptions(ctx.req), maxAge: 1000 * 60 * 10 }); ctx.res.cookie(GOOGLE_NONCE_COOKIE, nonce, { ...getSessionCookieOptions(ctx.req), maxAge: 1000 * 60 * 10 }); const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID || "", redirect_uri: `${process.env.APP_BASE_URL || "http://localhost:3000"}/api/auth/google/callback`, response_type: "code", scope: "openid email profile", access_type: "offline", prompt: "select_account", state, nonce }); return { configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET), url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` }; }),
   }),
-  publicPosts: router({ list: publicProcedure.query(() => listPosts()) }),
+  publicPosts: router({
+    list: publicProcedure.query(() => listPosts()),
+    today: publicProcedure.query(() => listTodaysPublishedPosts()),
+    archive: publicProcedure.input(z.object({ query: z.string().max(120).default(""), page: z.number().int().min(1).default(1), pageSize: z.number().int().min(1).max(24).default(12) })).query(async ({ input }) => { const result = await searchPublishedPosts(input.query, input.page, input.pageSize); if (input.query.trim() && input.page === 1) await recordSearchQuery(input.query); return result; }),
+    byId: publicProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ input }) => { const post = await getPublishedPostById(input.id); if (!post) throw genericNotFound(); await recordPostView(post.id); return post; }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
