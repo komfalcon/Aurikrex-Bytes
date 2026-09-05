@@ -1,5 +1,5 @@
 import { createClient } from "@libsql/client";
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, like, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { adminUsers, InsertUser, posts, readers, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -88,4 +88,14 @@ export async function getPublishedPostById(id: number) {
   const db = await getDb(); if (!db) return undefined;
   const result = await db.select().from(posts).where(and(eq(posts.id, id), eq(posts.status, "published"))).limit(1);
   return result[0];
+}
+
+export async function searchPublishedPosts(query: string, page: number, pageSize: number) {
+  const db = await getDb(); if (!db) return { posts: [], nextPage: null as number | null };
+  const normalizedQuery = query.trim().toLowerCase();
+  const search = normalizedQuery ? or(like(posts.headline, `%${normalizedQuery}%`), like(posts.body, `%${normalizedQuery}%`)) : undefined;
+  const where = search ? and(eq(posts.status, "published"), search) : eq(posts.status, "published");
+  const rows = await db.select().from(posts).where(where).orderBy(desc(posts.publishedTime), desc(posts.id)).limit(pageSize + 1).offset((page - 1) * pageSize);
+  const hasNextPage = rows.length > pageSize;
+  return { posts: rows.slice(0, pageSize), nextPage: hasNextPage ? page + 1 : null };
 }

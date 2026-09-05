@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { adminUsers, posts, readers } from "../drizzle/schema";
 import { createToken, hashPassword, isValidPassword, normalizeEmail, randomToken, readToken, verifyPassword } from "./auth";
-import { getAdminByEmail, getAdminById, getAdminByRememberToken, getDb, getPostById, getPublishedPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts, listTodaysPublishedPosts } from "./db";
+import { getAdminByEmail, getAdminById, getAdminByRememberToken, getDb, getPostById, getPublishedPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts, listTodaysPublishedPosts, searchPublishedPosts } from "./db";
 import { cloudinaryConfigured, getCloudinaryUploadSignature, sendAuthEmail } from "./services";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -102,6 +102,7 @@ export const appRouter = router({
   publicPosts: router({
     list: publicProcedure.query(() => listPosts()),
     today: publicProcedure.query(() => listTodaysPublishedPosts()),
+    archive: publicProcedure.input(z.object({ query: z.string().max(120).default(""), page: z.number().int().min(1).default(1), pageSize: z.number().int().min(1).max(24).default(12) })).query(({ input }) => searchPublishedPosts(input.query, input.page, input.pageSize)),
     byId: publicProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ input }) => { const post = await getPublishedPostById(input.id); if (!post) throw genericNotFound(); return post; }),
   }),
 });
