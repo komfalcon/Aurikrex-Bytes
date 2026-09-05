@@ -51,8 +51,23 @@ export const readers = sqliteTable("readers", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
 
+export const postViews = sqliteTable("post_views", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  postId: integer("post_id").notNull(),
+  readerId: integer("reader_id"),
+  viewedAt: integer("viewed_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+});
+
+export const searchQueries = sqliteTable("search_queries", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  query: text("query").notNull(),
+  searchedAt: integer("searched_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Post = typeof posts.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type Reader = typeof readers.$inferSelect;
+export type PostView = typeof postViews.$inferSelect;
+export type SearchQuery = typeof searchQueries.$inferSelect;

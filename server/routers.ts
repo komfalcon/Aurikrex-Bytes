@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { adminUsers, posts, readers } from "../drizzle/schema";
 import { createToken, hashPassword, isValidPassword, normalizeEmail, randomToken, readToken, verifyPassword } from "./auth";
-import { getAdminByEmail, getAdminById, getAdminByRememberToken, getDb, getPostById, getPublishedPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts, listTodaysPublishedPosts, searchPublishedPosts } from "./db";
+import { getAdminByEmail, getAdminById, getAdminByRememberToken, getAnalytics, getDb, getPostById, getPublishedPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts, listTodaysPublishedPosts, recordPostView, recordSearchQuery, searchPublishedPosts } from "./db";
 import { cloudinaryConfigured, getCloudinaryUploadSignature, sendAuthEmail } from "./services";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -75,7 +75,7 @@ export const appRouter = router({
       changeRole: publicProcedure.input(z.object({ id: z.number().int().positive(), role: z.enum(["admin", "editor"]) })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "users:manage"); const db = await getDb(); if (!db || !(await getAdminById(input.id))) throw genericNotFound(); await db.update(adminUsers).set({ role: input.role }).where(eq(adminUsers.id, input.id)); return { success: true }; }),
       revoke: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input, ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "users:manage"); if (input.id === admin.id) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot revoke your own account" }); const db = await getDb(); if (!db || !(await getAdminById(input.id))) throw genericNotFound(); await db.update(adminUsers).set({ isActive: false, rememberDeviceToken: null }).where(eq(adminUsers.id, input.id)); return { success: true }; }),
     }),
-    analytics: publicProcedure.query(async ({ ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "analytics:view"); return { success: true }; }),
+    analytics: publicProcedure.query(async ({ ctx }) => { const admin = await requireAdmin(ctx); assertPermission(admin.role, "analytics:view"); return getAnalytics(); }),
     cloudinarySignature: publicProcedure.query(async ({ ctx }) => { await requireAdmin(ctx); if (!cloudinaryConfigured()) return { configured: false }; return { configured: true, ...getCloudinaryUploadSignature() }; }),
   }),
   reader: router({
@@ -102,8 +102,8 @@ export const appRouter = router({
   publicPosts: router({
     list: publicProcedure.query(() => listPosts()),
     today: publicProcedure.query(() => listTodaysPublishedPosts()),
-    archive: publicProcedure.input(z.object({ query: z.string().max(120).default(""), page: z.number().int().min(1).default(1), pageSize: z.number().int().min(1).max(24).default(12) })).query(({ input }) => searchPublishedPosts(input.query, input.page, input.pageSize)),
-    byId: publicProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ input }) => { const post = await getPublishedPostById(input.id); if (!post) throw genericNotFound(); return post; }),
+    archive: publicProcedure.input(z.object({ query: z.string().max(120).default(""), page: z.number().int().min(1).default(1), pageSize: z.number().int().min(1).max(24).default(12) })).query(async ({ input }) => { const result = await searchPublishedPosts(input.query, input.page, input.pageSize); if (input.query.trim() && input.page === 1) await recordSearchQuery(input.query); return result; }),
+    byId: publicProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ input }) => { const post = await getPublishedPostById(input.id); if (!post) throw genericNotFound(); await recordPostView(post.id); return post; }),
   }),
 });
 
