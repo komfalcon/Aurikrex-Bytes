@@ -1,5 +1,5 @@
 import { createClient } from "@libsql/client";
-import { and, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { adminUsers, InsertUser, posts, readers, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -71,4 +71,21 @@ export async function listPosts() {
 export async function getPostById(id: number) {
   const db = await getDb(); if (!db) return undefined;
   const result = await db.select().from(posts).where(eq(posts.id, id)).limit(1); return result[0];
+}
+
+function localCalendarDay(value: Date, timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(value);
+}
+
+export async function listTodaysPublishedPosts(timeZone = process.env.APP_TIMEZONE || "UTC") {
+  const db = await getDb(); if (!db) return [];
+  const today = localCalendarDay(new Date(), timeZone);
+  const published = await db.select().from(posts).where(eq(posts.status, "published")).orderBy(asc(posts.publishedTime));
+  return published.filter(post => post.publishedTime && localCalendarDay(post.publishedTime, timeZone) === today);
+}
+
+export async function getPublishedPostById(id: number) {
+  const db = await getDb(); if (!db) return undefined;
+  const result = await db.select().from(posts).where(and(eq(posts.id, id), eq(posts.status, "published"))).limit(1);
+  return result[0];
 }

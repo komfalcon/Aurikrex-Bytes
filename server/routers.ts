@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { adminUsers, posts, readers } from "../drizzle/schema";
 import { createToken, hashPassword, isValidPassword, normalizeEmail, randomToken, readToken, verifyPassword } from "./auth";
-import { getAdminByEmail, getAdminById, getAdminByRememberToken, getDb, getPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts } from "./db";
+import { getAdminByEmail, getAdminById, getAdminByRememberToken, getDb, getPostById, getPublishedPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts, listTodaysPublishedPosts } from "./db";
 import { cloudinaryConfigured, getCloudinaryUploadSignature, sendAuthEmail } from "./services";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -99,7 +99,11 @@ export const appRouter = router({
     resetPassword: publicProcedure.input(z.object({ token: z.string().min(10), password: z.string().min(8) })).mutation(async ({ input }) => { const reader = await getReaderByResetToken(input.token); if (!reader) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid or expired reset token" }); const db = await getDb(); if (!db) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Database is not configured" }); await db.update(readers).set({ passwordHash: await hashPassword(input.password), resetToken: null, resetTokenExpires: null }).where(eq(readers.id, reader.id)); return { success: true }; }),
     googleStart: publicProcedure.query(({ ctx }) => { const state = randomToken(); const nonce = randomToken(); ctx.res.cookie(GOOGLE_STATE_COOKIE, state, { ...getSessionCookieOptions(ctx.req), maxAge: 1000 * 60 * 10 }); ctx.res.cookie(GOOGLE_NONCE_COOKIE, nonce, { ...getSessionCookieOptions(ctx.req), maxAge: 1000 * 60 * 10 }); const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID || "", redirect_uri: `${process.env.APP_BASE_URL || "http://localhost:3000"}/api/auth/google/callback`, response_type: "code", scope: "openid email profile", access_type: "offline", prompt: "select_account", state, nonce }); return { configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET), url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` }; }),
   }),
-  publicPosts: router({ list: publicProcedure.query(() => listPosts()) }),
+  publicPosts: router({
+    list: publicProcedure.query(() => listPosts()),
+    today: publicProcedure.query(() => listTodaysPublishedPosts()),
+    byId: publicProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ input }) => { const post = await getPublishedPostById(input.id); if (!post) throw genericNotFound(); return post; }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
