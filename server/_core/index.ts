@@ -53,7 +53,7 @@ async function setupApp() {
   // Skip static serving if on Vercel (Vercel Edge handles it)
   if (!process.env.VERCEL) {
     if (process.env.NODE_ENV === "development") {
-      await setupVite(app, server);
+      await setupVite(app, server!);
     } else {
       serveStatic(app);
     }
@@ -72,7 +72,7 @@ export default async function handler(req: any, res: any) {
 }
 
 if (!process.env.VERCEL) {
-  async function startServer() {
+  const startServer = async () => {
     const { server } = await setupApp();
     const preferredPort = parseInt(process.env.PORT || "3000");
     const port = await findAvailablePort(preferredPort);
@@ -82,6 +82,6 @@ if (!process.env.VERCEL) {
     server!.listen(port, () => {
       console.log(`Server running on http://localhost:${port}/`);
     });
-  }
+  };
   startServer().catch(console.error);
 }

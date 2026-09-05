@@ -4,8 +4,8 @@ import { Route, Switch } from "wouter";
 import NotFound from "./pages/NotFound";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import ErrorBoundary from "./components/ErrorBoundary";
-import { Home, ReaderAuth } from "./public/ReaderPages";
+import { Archive, Contact, HelpCenter, Home, HowItWorks, ReaderAuth, SupportPage } from "./public/ReaderPages";
 import { AdminDashboard, AdminLogin } from "./admin/AdminPages";
 
-function Router() { return <Switch><Route path="/" component={Home} /><Route path="/login"><ReaderAuth mode="login" /></Route><Route path="/signup"><ReaderAuth mode="signup" /></Route><Route path="/forgot-password"><ReaderAuth mode="forgot" /></Route><Route path="/reset-password"><ReaderAuth mode="reset" /></Route><Route path="/verify-email"><ReaderAuth mode="verify" /></Route><Route path="/newsroom-7x" component={AdminLogin} /><Route path="/admin" component={AdminDashboard} /><Route path="/404" component={NotFound} /><Route component={NotFound} /></Switch>; }
-export default function App() { return <ErrorBoundary><ThemeProvider defaultTheme="light"><TooltipProvider><Toaster /><Router /></TooltipProvider></ThemeProvider></ErrorBoundary>; }
+function Router() { return <Switch><Route path="/" component={Home} /><Route path="/archive" component={Archive} /><Route path="/how-it-works" component={HowItWorks} /><Route path="/help" component={HelpCenter} /><Route path="/contact" component={Contact} /><Route path="/privacy" component={() => <SupportPage kind="/privacy" />} /><Route path="/terms" component={() => <SupportPage kind="/terms" />} /><Route path="/login"><ReaderAuth mode="login" /></Route><Route path="/signup"><ReaderAuth mode="signup" /></Route><Route path="/forgot-password"><ReaderAuth mode="forgot" /></Route><Route path="/reset-password"><ReaderAuth mode="reset" /></Route><Route path="/verify-email"><ReaderAuth mode="verify" /></Route><Route path="/newsroom-7x" component={AdminLogin} /><Route path="/admin" component={AdminDashboard} /><Route path="/404" component={NotFound} /><Route component={NotFound} /></Switch>; }
+export default function App() { return <ErrorBoundary><ThemeProvider defaultTheme="light" switchable><TooltipProvider><Toaster /><Router /></TooltipProvider></ThemeProvider></ErrorBoundary>; }
