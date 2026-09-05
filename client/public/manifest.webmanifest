@@ -1,12 +1,16 @@
 {
   "name": "Aurikrex Bytes",
   "short_name": "Bytes",
-  "description": "A considered daily editorial briefing.",
+  "description": "A daily curated tech briefing — what matters.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f7f1ea",
-  "theme_color": "#203b3b",
+  "background_color": "#f5f4ef",
+  "theme_color": "#3b82f6",
   "icons": [
-    { "src": "/aurikrex-mark.svg", "sizes": "64x64", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "/logo-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/logo-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/logo-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/logo-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
