@@ -1,6 +1,6 @@
 import "dotenv/config";
 import express from "express";
-import { createServer } from "http";
+import { createServer, type Server } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
@@ -31,7 +31,7 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 
 async function setupApp() {
   const app = express();
-  let server;
+  let server: Server | undefined;
   if (!process.env.VERCEL) {
     server = createServer(app);
   }
@@ -71,17 +71,16 @@ export default async function handler(req: any, res: any) {
   return cachedApp(req, res);
 }
 
-if (!process.env.VERCEL) {
-  const startServer = async () => {
-    const { server } = await setupApp();
-    const preferredPort = parseInt(process.env.PORT || "3000");
-    const port = await findAvailablePort(preferredPort);
-    if (port !== preferredPort) {
-      console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
-    }
-    server!.listen(port, () => {
-      console.log(`Server running on http://localhost:${port}/`);
-    });
-  };
-  startServer().catch(console.error);
+async function startServer() {
+  const { server } = await setupApp();
+  const preferredPort = parseInt(process.env.PORT || "3000");
+  const port = await findAvailablePort(preferredPort);
+  if (port !== preferredPort) {
+    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+  }
+  server!.listen(port, () => {
+    console.log(`Server running on http://localhost:${port}/`);
+  });
 }
+
+if (!process.env.VERCEL) startServer().catch(console.error);
