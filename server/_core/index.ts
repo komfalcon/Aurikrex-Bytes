@@ -69,11 +69,16 @@ async function setupApp() {
 let cachedApp: express.Express | null = null;
 
 export default async function handler(req: any, res: any) {
-  if (!cachedApp) {
-    const { app } = await setupApp();
-    cachedApp = app;
+  try {
+    if (!cachedApp) {
+      const { app } = await setupApp();
+      cachedApp = app;
+    }
+    return cachedApp(req, res);
+  } catch (error) {
+    console.error("Vercel Edge Handler Error:", error);
+    res.status(500).json({ error: "Fatal Vercel Handler Error", message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
   }
-  return cachedApp(req, res);
 }
 
 async function startServer() {

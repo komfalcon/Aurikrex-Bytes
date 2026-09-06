@@ -19,7 +19,7 @@ export function authRateLimit(req: Request, res: Response, next: NextFunction) {
   if (!req.originalUrl.startsWith("/api/trpc/")) return next();
   const route = req.originalUrl.split("?")[0];
   if (!/\/(reader\.(signup|login|requestPasswordReset|resetPassword|verifyEmail)|admin\.login)$/.test(route)) return next();
-  const key = `${req.ip || req.socket.remoteAddress || "unknown"}:${route}`;
+  const key = `${req.ip || req.socket?.remoteAddress || req.headers["x-forwarded-for"] || "unknown"}:${route}`;
   const now = Date.now();
   const current = authAttempts.get(key);
   if (!current || current.resetAt <= now) authAttempts.set(key, { count: 1, resetAt: now + AUTH_WINDOW_MS });
