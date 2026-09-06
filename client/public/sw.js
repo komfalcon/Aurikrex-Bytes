@@ -1,4 +1,4 @@
-const CACHE = "aurikrex-bytes-v3";
+const CACHE = "aurikrex-bytes-v4";
 const SHELL = ["/", "/manifest.webmanifest"];
 
 self.addEventListener("install", event => {
