@@ -134,3 +134,5 @@ button, .button, .icon-button, .mobile-menu, .footer-socials a, .admin-icon-butt
 @media (prefers-reduced-motion: reduce) { .install-prompt { animation: none; } }
 @media (max-width: 800px) { .install-prompt { top: calc(68px + env(safe-area-inset-top) + 10px); bottom: auto; } }
 @media (max-width: 390px) { .install-prompt { top: calc(68px + env(safe-area-inset-top) + 8px); bottom: auto; } }
+
+.route-loading { min-height: 40vh; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
