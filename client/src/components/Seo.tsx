@@ -30,6 +30,7 @@ function setLink(rel: string, href: string) {
   if (!node) { node = document.createElement("link"); node.rel = rel; document.head.appendChild(node); }
   node.href = href;
 }
+function clearLink(rel: string) { document.head.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`)?.remove(); }
 
 export default function Seo({ title, description, path = "/", image = DEFAULT_IMAGE, type = "website", publishedTime, article, prev, next, robots = "index,follow,max-image-preview:large" }: SeoProps) {
   useEffect(() => {
@@ -50,8 +51,8 @@ export default function Seo({ title, description, path = "/", image = DEFAULT_IM
     setMeta("name", "twitter:description", description);
     setMeta("name", "twitter:image", imageUrl);
     setLink("canonical", url);
-    if (prev) setLink("prev", absoluteUrl(prev, window.location.origin));
-    if (next) setLink("next", absoluteUrl(next, window.location.origin));
+    if (prev) setLink("prev", absoluteUrl(prev, window.location.origin)); else clearLink("prev");
+    if (next) setLink("next", absoluteUrl(next, window.location.origin)); else clearLink("next");
 
     const existing = document.head.querySelector<HTMLScriptElement>('script[data-seo-jsonld="true"]');
     if (existing) existing.remove();
