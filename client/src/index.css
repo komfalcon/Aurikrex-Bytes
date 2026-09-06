@@ -135,3 +135,12 @@ button, .button, .icon-button, .mobile-menu, .footer-socials a, .admin-icon-butt
 @media (max-width: 390px) { .install-prompt { top: calc(68px + env(safe-area-inset-top) + 8px); bottom: auto; } }
 
 .route-loading { min-height: 40vh; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+
+/* F11/F16: components own intentional scrolling; focus remains visible everywhere. */
+:where(a, button, input, textarea, select, summary, [role="button"]):focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+:where(input, textarea, select):focus { outline: 3px solid var(--blue); outline-offset: 1px; }
+.admin-tabs { scrollbar-width: thin; }
+.sample-badge { display: inline-block; margin-bottom: 8px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.legal-meta { margin: 24px 0 32px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--muted); font-size: 13px; }
+.legal-meta p { margin: 6px 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
