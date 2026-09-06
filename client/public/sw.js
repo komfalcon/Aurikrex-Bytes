@@ -1,4 +1,4 @@
-const CACHE = 'aurikrex-bytes-v1';
+const CACHE = 'aurikrex-bytes-v2';
 const SHELL = ['/', '/manifest.webmanifest'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL))));
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
