@@ -9,6 +9,8 @@ import { registerGoogleAuthRoutes } from "../google-auth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { registerSeoRoutes } from "./seoRoutes";
+import { authRateLimit, securityHeaders } from "./security";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -36,8 +38,11 @@ async function setupApp() {
     server = createServer(app);
   }
   // Configure body parser with larger size limit for file uploads
+  app.use(securityHeaders);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  registerSeoRoutes(app);
+  app.use(authRateLimit);
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   registerGoogleAuthRoutes(app);
