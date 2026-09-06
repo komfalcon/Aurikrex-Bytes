@@ -49,8 +49,14 @@ describe("auth.logout", () => {
     const result = await caller.auth.logout();
 
     expect(result).toEqual({ success: true });
-    expect(clearedCookies).toHaveLength(1);
-    expect(clearedCookies[0]?.name).toBe(COOKIE_NAME);
+    expect(clearedCookies.map(cookie => cookie.name)).toEqual([
+      COOKIE_NAME,
+      "aurikrex_admin_session",
+      "aurikrex_admin_device",
+      "aurikrex_reader_session",
+      "aurikrex_google_state",
+      "aurikrex_google_nonce",
+    ]);
     expect(clearedCookies[0]?.options).toMatchObject({
       maxAge: -1,
       secure: true,
