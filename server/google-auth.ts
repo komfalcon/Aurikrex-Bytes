@@ -24,6 +24,8 @@ export function registerGoogleAuthRoutes(app: Express) {
       const db = await getDb(); if (!db) return res.redirect("/login?error=database");
       let reader = await getReaderByEmail(payload.email);
       if (!reader) { await db.insert(readers).values({ email: payload.email.toLowerCase(), googleId: payload.sub, emailVerified: true, verificationToken: null, passwordHash: null }); reader = await getReaderByEmail(payload.email); }
+      else if (reader.googleId && reader.googleId !== payload.sub) return res.redirect("/login?error=oauth");
+      else if (!reader.googleId) { await db.update(readers).set({ googleId: payload.sub, emailVerified: true, verificationToken: null }).where(eq(readers.id, reader.id)); }
       if (!reader) return res.redirect("/login?error=oauth");
       const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true }, true);
       res.cookie("aurikrex_reader_session", session, { ...getSessionCookieOptions(req), maxAge: 1000 * 60 * 60 * 24 * 30 });
