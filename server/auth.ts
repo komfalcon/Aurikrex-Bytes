@@ -5,7 +5,12 @@ import { ENV } from "./_core/env";
 
 export type SessionPayload = { kind: "admin" | "reader"; id: number; email: string; role?: "admin" | "editor"; verified?: boolean };
 
-const secret = () => ENV.cookieSecret || "development-only-secret";
+const secret = () => {
+  if (process.env.NODE_ENV === "production" && !ENV.cookieSecret) {
+    throw new Error("Missing strong cookieSecret in production. Startup failed closed for security.");
+  }
+  return ENV.cookieSecret || "development-only-secret";
+};
 
 export function hashPassword(password: string) { return bcrypt.hash(password, 12); }
 export function verifyPassword(password: string, hash: string) { return bcrypt.compare(password, hash); }

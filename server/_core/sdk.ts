@@ -302,7 +302,7 @@ class SDKServer {
         });
         user = await db.getUserByOpenId(userInfo.openId);
       } catch (error) {
-        console.error("[Auth] Failed to sync user from OAuth:", error);
+        console.error("[Auth] Failed to sync user from OAuth:", error instanceof Error ? error.message : "Unknown error");
         throw ForbiddenError("Failed to sync user info");
       }
     }

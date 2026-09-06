@@ -5,7 +5,7 @@ import { useTheme } from "../contexts/ThemeContext";
 export function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
     <Link href="/" className={`brand-lockup${compact ? " brand-lockup--compact" : ""}`} aria-label="Aurikrex Bytes home">
-      <img src="/logo.svg" alt="" className="brand-mark" />
+      <img src="/logo.svg" alt="Aurikrex Bytes logo" className="brand-mark" />
       <span className="brand-name">Aurikrex <em>Bytes</em></span>
     </Link>
   );
