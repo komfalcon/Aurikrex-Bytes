@@ -700,7 +700,7 @@ export default function ComponentsShowcase() {
                       <AvatarFallback>CN</AvatarFallback>
                     </Avatar>
                     <Avatar>
-                      <AvatarImage src="/logo.svg" alt="Aurikrex Bytes" />
+                      <AvatarImage src="/aurikrex-mark.svg" alt="Aurikrex Bytes" />
                     </Avatar>
                   </div>
                 </div>
