@@ -8,7 +8,7 @@ export function ThemeProvider({ children, defaultTheme = "light", switchable = t
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window === "undefined") return defaultTheme;
     const stored = window.localStorage.getItem("aurikrex-theme");
-    return stored === "dark" || stored === "light" ? stored : defaultTheme;
+    return stored === "dark" || stored === "light" ? stored : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
