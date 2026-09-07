@@ -89,6 +89,7 @@ export function SiteHeader() {
           className="mobile-menu"
           onClick={() => setMenu(!menu)}
           aria-label="Toggle navigation"
+          aria-expanded={menu}
         >
           {menu ? <X /> : <span>Menu</span>}
         </button>
@@ -99,6 +100,7 @@ export function SiteHeader() {
           <Link href="/archive">All Bytes</Link>
           <Link href="/how-it-works">About</Link>
           <Link href={authRoutes.login}>Sign in</Link>
+          <Link className="mobile-nav-join" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link>
         </nav>
       )}
     </header>
