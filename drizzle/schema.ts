@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const now = () => new Date();
 export const POST_STATUSES = [
@@ -86,6 +86,24 @@ export const postViews = sqliteTable("post_views", {
     .$defaultFn(now),
 });
 
+export const postReactions = sqliteTable("post_reactions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  postId: integer("post_id").notNull(),
+  readerId: integer("reader_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(now),
+}, table => ({ postReaderUnique: uniqueIndex("post_reactions_post_reader_unique").on(table.postId, table.readerId) }));
+
+export const postBookmarks = sqliteTable("post_bookmarks", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  postId: integer("post_id").notNull(),
+  readerId: integer("reader_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(now),
+}, table => ({ postReaderUnique: uniqueIndex("post_bookmarks_post_reader_unique").on(table.postId, table.readerId) }));
+
 export const searchQueries = sqliteTable("search_queries", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   query: text("query").notNull(),
@@ -100,4 +118,6 @@ export type Post = typeof posts.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type Reader = typeof readers.$inferSelect;
 export type PostView = typeof postViews.$inferSelect;
+export type PostReaction = typeof postReactions.$inferSelect;
+export type PostBookmark = typeof postBookmarks.$inferSelect;
 export type SearchQuery = typeof searchQueries.$inferSelect;

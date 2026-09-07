@@ -7,7 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import ErrorBoundary from "./components/ErrorBoundary";
 import PWAInstallPrompt from "./components/PWAInstallPrompt";
 import Seo from "./components/Seo";
-import { Archive, Contact, HelpCenter, Home, HowItWorks, PostDetail, ReaderAuth, ReaderDashboard, SupportPage } from "./public/ReaderPages";
+import { Archive, Contact, HelpCenter, Home, HowItWorks, PostDetail, ReaderAuth, ReaderDashboard, SavedPosts, SupportPage } from "./public/ReaderPages";
 
 const AdminDashboard = React.lazy(() => import("./admin/AdminPages").then(m => ({ default: m.AdminDashboard })));
 const AdminLogin = React.lazy(() => import("./admin/AdminPages").then(m => ({ default: m.AdminLogin })));
@@ -19,6 +19,7 @@ const AnalyticsDashboard = React.lazy(() => import("./admin/AdminManagement").th
 function Router() {
   return <Switch>
     <Route path="/dashboard" component={ReaderDashboard} />
+    <Route path="/saved" component={SavedPosts} />
     <Route path="/" component={Home} />
     <Route path="/archive" component={Archive} />
     <Route path="/post/:id" component={PostDetail} />

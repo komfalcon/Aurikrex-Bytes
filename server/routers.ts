@@ -21,15 +21,19 @@ import {
   getPublishedPostById,
   getReaderByEmail,
   getReaderDashboard,
+  getReaderPostEngagement,
   getReaderByResetToken,
   getReaderByUsedVerificationToken,
   getReaderByVerificationToken,
   listAdmins,
   listPosts,
+  listSavedPosts,
   listTodaysPublishedPosts,
   recordPostView,
   recordSearchQuery,
   searchPublishedPosts,
+  togglePostBookmark,
+  togglePostReaction,
 } from "./db.js";
 import {
   cloudinaryConfigured,
@@ -467,6 +471,16 @@ export const appRouter = router({
         if (!dashboard) throw genericNotFound();
         return dashboard;
       }),
+    saved: publicProcedure.query(async ({ ctx }) => listSavedPosts((await requireReader(ctx)).id)),
+    engagement: publicProcedure
+      .input(z.object({ postId: z.number().int().positive() }))
+      .query(async ({ input, ctx }) => getReaderPostEngagement(input.postId, (await requireReader(ctx)).id)),
+    toggleReaction: publicProcedure
+      .input(z.object({ postId: z.number().int().positive() }))
+      .mutation(async ({ input, ctx }) => togglePostReaction(input.postId, (await requireReader(ctx)).id)),
+    toggleBookmark: publicProcedure
+      .input(z.object({ postId: z.number().int().positive() }))
+      .mutation(async ({ input, ctx }) => togglePostBookmark(input.postId, (await requireReader(ctx)).id)),
     signup: publicProcedure
       .input(
         z.object({
