@@ -108,16 +108,20 @@ export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
+      const firstPartyCookieOptions = getFirstPartyCookieOptions(ctx.req);
       for (const name of [
         COOKIE_NAME,
         "aurikrex_admin_session",
         "aurikrex_admin_device",
         "aurikrex_reader_session",
-        GOOGLE_STATE_COOKIE,
-        GOOGLE_NONCE_COOKIE,
       ])
-        ctx.res.clearCookie(name, { ...cookieOptions, maxAge: -1 });
+        ctx.res.clearCookie(name, {
+          ...firstPartyCookieOptions,
+          maxAge: -1,
+        });
+      const oauthCookieOptions = getSessionCookieOptions(ctx.req);
+      for (const name of [GOOGLE_STATE_COOKIE, GOOGLE_NONCE_COOKIE])
+        ctx.res.clearCookie(name, { ...oauthCookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
   }),
