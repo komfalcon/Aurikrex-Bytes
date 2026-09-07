@@ -8,6 +8,41 @@
       "when": 1788565762294,
       "tag": "0000_oval_genesis",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788567560935,
+      "tag": "0001_rich_luckman",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788569144105,
+      "tag": "0002_powerful_penance",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788745851348,
+      "tag": "0003_reader_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788755922365,
+      "tag": "0004_curious_shinobi_shaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788755922366,
+      "tag": "0005_reader_streak",
+      "breakpoints": true
     }
   ]
 }

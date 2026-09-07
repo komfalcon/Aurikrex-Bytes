@@ -1,0 +1,16 @@
+name: Trigger publish cron
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call publish endpoint
+        run: |
+          curl --fail --show-error --silent \
+            -X GET https://bytes.aurikrex.tech/api/cron/publish \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
