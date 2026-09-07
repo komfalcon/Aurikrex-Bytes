@@ -1,9 +1,11 @@
 import { createClient } from "@libsql/client";
-import { and, asc, desc, eq, gt, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, like, lt, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import {
   adminUsers,
   InsertUser,
+  postBookmarks,
+  postReactions,
   postViews,
   posts,
   readers,
@@ -224,10 +226,10 @@ export async function publishDuePosts() {
       .where(and(eq(posts.id, post.id), eq(posts.status, "scheduled")));
   return due.length;
 }
-export async function listPublishedPosts() {
+export async function listPublishedPosts(readerId?: number) {
   const db = await getDb();
   if (!db) return [];
-  return db
+  const rows = await db
     .select({
       id: posts.id,
       headline: posts.headline,
@@ -239,6 +241,22 @@ export async function listPublishedPosts() {
     .from(posts)
     .where(eq(posts.status, "published"))
     .orderBy(desc(posts.publishedTime), desc(posts.id));
+  return addEngagement(rows, readerId);
+}
+
+async function addEngagement<T extends { id: number }>(rows: T[], readerId?: number) {
+  const db = await getDb();
+  if (!db || !rows.length) return rows.map(row => ({ ...row, reactionCount: 0, hasReacted: false, isBookmarked: false }));
+  const ids = rows.map(row => row.id);
+  const [reactions, bookmarks] = await Promise.all([
+    db.select().from(postReactions).where(inArray(postReactions.postId, ids)),
+    db.select().from(postBookmarks).where(inArray(postBookmarks.postId, ids)),
+  ]);
+  const reactionCounts = new Map<number, number>();
+  reactions.forEach(reaction => reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1));
+  const reacted = new Set(reactions.filter(reaction => reaction.readerId === readerId).map(reaction => reaction.postId));
+  const saved = new Set(bookmarks.filter(bookmark => bookmark.readerId === readerId).map(bookmark => bookmark.postId));
+  return rows.map(row => ({ ...row, reactionCount: reactionCounts.get(row.id) || 0, hasReacted: reacted.has(row.id), isBookmarked: saved.has(row.id) }));
 }
 export function localCalendarDay(value: Date, timeZone: string) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -275,8 +293,8 @@ export async function getReaderDashboard(
       })
       .where(eq(readers.id, readerId));
   const [todayPosts, allPosts] = await Promise.all([
-    listTodaysPublishedPosts(timeZone),
-    listPublishedPosts(),
+    listTodaysPublishedPosts(timeZone, readerId),
+    listPublishedPosts(readerId),
   ]);
   return {
     reader: { id: reader.id, name: reader.name, email: reader.email },
@@ -286,7 +304,8 @@ export async function getReaderDashboard(
   };
 }
 export async function listTodaysPublishedPosts(
-  timeZone = process.env.APP_TIMEZONE || "UTC"
+  timeZone = process.env.APP_TIMEZONE || "UTC",
+  readerId?: number
 ) {
   const db = await getDb();
   if (!db) return [];
@@ -296,11 +315,11 @@ export async function listTodaysPublishedPosts(
     .from(posts)
     .where(eq(posts.status, "published"))
     .orderBy(asc(posts.publishedTime));
-  return published.filter(
+  return addEngagement(published.filter(
     post =>
       post.publishedTime &&
       localCalendarDay(post.publishedTime, timeZone) === today
-  );
+  ), readerId);
 }
 export async function getPublishedPostById(id: number) {
   const db = await getDb();
@@ -310,7 +329,50 @@ export async function getPublishedPostById(id: number) {
     .from(posts)
     .where(and(eq(posts.id, id), eq(posts.status, "published")))
     .limit(1);
-  return result[0];
+  return result[0] ? (await addEngagement(result))[0] : undefined;
+}
+
+export async function getReaderPostEngagement(postId: number, readerId: number) {
+  const db = await getDb();
+  if (!db) return { reactionCount: 0, hasReacted: false, isBookmarked: false };
+  const [reactions, bookmark] = await Promise.all([
+    db.select().from(postReactions).where(eq(postReactions.postId, postId)),
+    db.select().from(postBookmarks).where(and(eq(postBookmarks.postId, postId), eq(postBookmarks.readerId, readerId))).limit(1),
+  ]);
+  return { reactionCount: reactions.length, hasReacted: reactions.some(reaction => reaction.readerId === readerId), isBookmarked: Boolean(bookmark[0]) };
+}
+
+export async function togglePostReaction(postId: number, readerId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const existing = await db.select().from(postReactions).where(and(eq(postReactions.postId, postId), eq(postReactions.readerId, readerId))).limit(1);
+  if (existing[0]) await db.delete(postReactions).where(eq(postReactions.id, existing[0].id));
+  else await db.insert(postReactions).values({ postId, readerId, createdAt: new Date() });
+  return getReaderPostEngagement(postId, readerId);
+}
+
+export async function togglePostBookmark(postId: number, readerId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const existing = await db.select().from(postBookmarks).where(and(eq(postBookmarks.postId, postId), eq(postBookmarks.readerId, readerId))).limit(1);
+  if (existing[0]) await db.delete(postBookmarks).where(eq(postBookmarks.id, existing[0].id));
+  else await db.insert(postBookmarks).values({ postId, readerId, createdAt: new Date() });
+  return getReaderPostEngagement(postId, readerId);
+}
+
+export async function listSavedPosts(readerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    id: posts.id,
+    headline: posts.headline,
+    body: posts.body,
+    imageUrl: posts.imageUrl,
+    publishedTime: posts.publishedTime,
+    updatedAt: posts.updatedAt,
+    savedAt: postBookmarks.createdAt,
+  }).from(postBookmarks).innerJoin(posts, eq(posts.id, postBookmarks.postId)).where(and(eq(postBookmarks.readerId, readerId), eq(posts.status, "published"))).orderBy(desc(postBookmarks.createdAt));
+  return addEngagement(rows, readerId);
 }
 export async function searchPublishedPosts(
   query: string,
@@ -337,7 +399,7 @@ export async function searchPublishedPosts(
     .limit(pageSize + 1)
     .offset((page - 1) * pageSize);
   return {
-    posts: rows.slice(0, pageSize),
+    posts: await addEngagement(rows.slice(0, pageSize)),
     nextPage: rows.length > pageSize ? page + 1 : null,
   };
 }

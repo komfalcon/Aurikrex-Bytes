@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, useEffect, useState, type ComponentProps } from "
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
+  Bookmark,
   BookOpen,
   Check,
   ChevronDown,
@@ -17,11 +18,13 @@ import {
   MailOpen,
   Moon,
   Search,
+  Share2,
   ShieldCheck,
   Sparkles,
   Sun,
   X,
 } from "lucide-react";
+import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useTheme } from "@/contexts/ThemeContext";
 import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
@@ -106,6 +109,7 @@ export function SiteHeader() {
       <Logo href={homePath} />
       <nav className="main-nav" aria-label="Primary">
         <Link href={homePath}>{signedIn ? "Dashboard" : "Today"}</Link>
+        {signedIn && <Link href="/saved">Saved</Link>}
         <Link href="/archive">All Bytes</Link>
         <Link href="/how-it-works">About</Link>
       </nav>
@@ -133,6 +137,7 @@ export function SiteHeader() {
       {menu && (
         <nav className="mobile-nav">
           <Link href={homePath}>{signedIn ? "Dashboard" : "Today"}</Link>
+          {signedIn && <Link href="/saved">Saved</Link>}
           <Link href="/archive">All Bytes</Link>
           <Link href="/how-it-works">About</Link>
           {signedIn ? <button className="mobile-nav-join text-button" onClick={() => logout.mutate()}>Sign out</button> : <><Link href={authRoutes.login}>Sign in</Link><Link className="mobile-nav-join" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link></>}
@@ -266,6 +271,47 @@ export function PublicLayout({
     </>
   );
 }
+function ShareButton({ post }: { post: any }) {
+  const [open, setOpen] = useState(false);
+  const shareUrl = `https://www.bytes.aurikrex.tech/post/${post.id}`;
+  const share = async () => {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({ title: post.headline, text: post.headline, url: shareUrl });
+      } catch (error) {
+        if ((error as DOMException).name !== "AbortError") toast.error("Unable to share this story");
+      }
+      return;
+    }
+    setOpen(value => !value);
+  };
+  const copy = async () => {
+    await navigator.clipboard.writeText(shareUrl);
+    toast.success("Link copied");
+    setOpen(false);
+  };
+  return <div className="share-control">
+    <button className="engagement-button" onClick={e => { e.preventDefault(); e.stopPropagation(); void share(); }} aria-label="Share post" title="Share post"><Share2 size={15} /></button>
+    {open && <div className="share-menu" onClick={e => e.stopPropagation()}><button onClick={e => { e.preventDefault(); void copy(); }}><Check size={14} /> Copy link</button><a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(post.headline)}&url=${encodeURIComponent(shareUrl)}`} target="_blank" rel="noreferrer">Share to X</a></div>}
+  </div>;
+}
+
+function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (saved: boolean) => void }) {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const engagement = trpc.reader.engagement.useQuery({ postId: post.id }, { enabled: Boolean(session.data), retry: false });
+  const utils = trpc.useUtils();
+  const reaction = trpc.reader.toggleReaction.useMutation({ onSuccess: () => { utils.reader.engagement.invalidate({ postId: post.id }); utils.reader.dashboard.invalidate(); utils.publicPosts.archive.invalidate(); utils.publicPosts.byId.invalidate({ id: post.id }); } });
+  const bookmark = trpc.reader.toggleBookmark.useMutation({ onSuccess: data => { onBookmark?.(data.isBookmarked); utils.reader.engagement.invalidate({ postId: post.id }); utils.reader.dashboard.invalidate(); utils.reader.saved.invalidate(); utils.publicPosts.archive.invalidate(); utils.publicPosts.byId.invalidate({ id: post.id }); } });
+  const requireLogin = () => { if (!session.data) navigate("/login"); return Boolean(session.data); };
+  const state = { ...post, ...(engagement.data || {}) };
+  return <div className="engagement-actions" onClick={e => e.preventDefault()}>
+    <button className={`engagement-button fire-button ${state.hasReacted ? "active" : ""}`} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove fire reaction" : "React with fire"} title="Fire reaction"><Flame size={15} fill={state.hasReacted ? "currentColor" : "none"} /><span>{state.reactionCount || 0}</span></button>
+    <button className={`engagement-button ${state.isBookmarked ? "active" : ""}`} onClick={() => requireLogin() && bookmark.mutate({ postId: post.id })} aria-label={state.isBookmarked ? "Remove bookmark" : "Save post"} title={state.isBookmarked ? "Remove bookmark" : "Save post"}><Bookmark size={15} fill={state.isBookmarked ? "currentColor" : "none"} /></button>
+    <ShareButton post={state} />
+  </div>;
+}
+
 function PostCard({
   post,
   featured = false,
@@ -274,10 +320,8 @@ function PostCard({
   featured?: boolean;
 }) {
   return (
-    <Link
-      href={`/post/${post.id}`}
-      className={`post-card ${featured ? "post-card-featured" : ""}`}
-    >
+    <article className={`post-card ${featured ? "post-card-featured" : ""}`}>
+      <Link href={`/post/${post.id}`} className="post-card-link">
       <div className="card-image">
         {post.imageUrl ? (
           <img
@@ -305,7 +349,9 @@ function PostCard({
           Read story <ArrowRight size={15} />
         </span>
       </div>
-    </Link>
+      </Link>
+      <div className="post-card-actions"><EngagementActions post={post} /></div>
+    </article>
   );
 }
 function EmptyToday() {
@@ -623,10 +669,13 @@ export function Archive() {
 export function PostDetail() {
   const [, params] = useRoute("/post/:id");
   const id = Number(params?.id);
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
   const post = trpc.publicPosts.byId.useQuery(
     { id },
     { enabled: Number.isFinite(id) }
   );
+  const engagement = trpc.reader.engagement.useQuery({ postId: id }, { enabled: Boolean(session.data) && Number.isFinite(id), retry: false });
+  const detailPost = post.data ? { ...post.data, ...(engagement.data || {}) } : null;
   const seo = post.data
     ? {
         title: `${post.data.headline} — Aurikrex Bytes`,
@@ -677,6 +726,7 @@ export function PostDetail() {
                   <p key={i}>{paragraph}</p>
                 ))}
             </div>
+            <div className="detail-actions"><EngagementActions post={detailPost || post.data} /></div>
           </article>
         ) : (
           <div className="empty-state">
@@ -690,6 +740,21 @@ export function PostDetail() {
     </PublicLayout>
   );
 }
+
+export function SavedPosts() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const saved = trpc.reader.saved.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
+  useEffect(() => { if (!session.isLoading && !session.data) navigate("/login"); }, [navigate, session.data, session.isLoading]);
+  if (session.isLoading || (!session.data && !saved.error)) return <div className="route-loading">Opening your saved stories…</div>;
+  return <PublicLayout seo={{ title: "Saved Posts — Aurikrex Bytes", description: "Stories you saved for later.", path: "/saved", robots: "noindex,nofollow" }}>
+    <main className="container page-main saved-page">
+      <div className="page-intro"><span className="eyebrow">Your reading list</span><h1>Saved Posts</h1><p>Keep the stories worth returning to close at hand.</p></div>
+      {saved.isLoading ? <div className="skeleton-grid"><div /><div /><div /></div> : saved.data?.length ? <div className="post-grid">{saved.data.map((post: any) => <PostCard key={post.id} post={post} />)}</div> : <div className="empty-state"><Bookmark size={24} /><h2>You haven’t saved anything yet</h2><p>Save a story from the feed when you want to come back to it.</p><Link className="button" href="/archive">Browse the archive <ArrowRight size={15} /></Link></div>}
+    </main>
+  </PublicLayout>;
+}
+
 export function HowItWorks() {
   return (
     <PublicLayout
