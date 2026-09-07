@@ -18,11 +18,19 @@ let _schemaRepair: Promise<void> | null = null;
 
 async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
   const columns = await db.all(sql.raw("PRAGMA table_info('readers')"));
-  if (!columns.some(column => (column as { name?: string }).name === "name")) {
-    await db.run(
-      sql.raw("ALTER TABLE readers ADD COLUMN name text DEFAULT '' NOT NULL")
-    );
-    console.info("[Database] Applied missing readers.name column");
+  const names = new Set(
+    columns.map(column => (column as { name?: string }).name).filter(Boolean)
+  );
+  const repairs = [
+    ["name", "text DEFAULT '' NOT NULL"],
+    ["current_streak", "integer DEFAULT 0 NOT NULL"],
+    ["longest_streak", "integer DEFAULT 0 NOT NULL"],
+    ["last_active_date", "text"],
+  ] as const;
+  for (const [name, definition] of repairs) {
+    if (names.has(name)) continue;
+    await db.run(sql.raw(`ALTER TABLE readers ADD COLUMN ${name} ${definition}`));
+    console.info(`[Database] Applied missing readers.${name} column`);
   }
 }
 
