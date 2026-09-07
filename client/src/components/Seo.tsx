@@ -14,7 +14,7 @@ type SeoProps = {
 };
 
 const SITE_NAME = "Aurikrex Bytes";
-const SITE_URL = "https://aurikrex.tech";
+const SITE_URL = "https://www.bytes.aurikrex.tech";
 const DEFAULT_IMAGE = `${SITE_URL}/logo-512.png`;
 
 function absoluteUrl(value: string, base = SITE_URL) {

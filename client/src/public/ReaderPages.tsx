@@ -277,7 +277,19 @@ function ShareButton({ post }: { post: any }) {
   const share = async () => {
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
-        await navigator.share({ title: post.headline, text: post.headline, url: shareUrl });
+        const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
+        if (post.imageUrl && typeof File !== "undefined" && navigator.canShare) {
+          try {
+            const response = await fetch(post.imageUrl, { mode: "cors" });
+            const blob = await response.blob();
+            const extension = blob.type.split("/")[1] || "jpg";
+            const imageFile = new File([blob], `aurikrex-bytes-${post.id}.${extension}`, { type: blob.type || "image/jpeg" });
+            if (navigator.canShare({ files: [imageFile] })) payload.files = [imageFile];
+          } catch {
+            // Some CDNs do not allow cross-origin image fetches; title, text, URL, and OG metadata still share.
+          }
+        }
+        await navigator.share(payload);
       } catch (error) {
         if ((error as DOMException).name !== "AbortError") toast.error("Unable to share this story");
       }
