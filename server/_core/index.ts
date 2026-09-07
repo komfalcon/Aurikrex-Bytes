@@ -47,8 +47,16 @@ async function setupApp() {
   registerSeoRoutes(app);
   app.get("/api/cron/publish", async (req, res) => {
     const authorization = req.headers.authorization;
-    if (process.env.CRON_SECRET && authorization !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).json({ error: "Unauthorized" });
-    try { return res.json({ published: await publishDuePosts() }); } catch (error) { console.error("[Cron] publish failed", error); return res.status(500).json({ error: "Publish job failed" }); }
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      return res.json({ published: await publishDuePosts() });
+    } catch (error) {
+      console.error("[Cron] publish failed", error);
+      return res.status(500).json({ error: "Publish job failed" });
+    }
   });
   app.use(authRateLimit);
   registerStorageProxy(app);
@@ -62,7 +70,7 @@ async function setupApp() {
       createContext,
     })
   );
-  
+
   // Skip static serving if on Vercel (Vercel Edge handles it)
   if (!process.env.VERCEL) {
     if (process.env.NODE_ENV === "development") {
@@ -85,7 +93,11 @@ export default async function handler(req: any, res: any) {
     return cachedApp(req, res);
   } catch (error) {
     console.error("Vercel Edge Handler Error:", error);
-    res.status(500).json({ error: "Fatal Vercel Handler Error", message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
+    res.status(500).json({
+      error: "Fatal Vercel Handler Error",
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
   }
 }
 
