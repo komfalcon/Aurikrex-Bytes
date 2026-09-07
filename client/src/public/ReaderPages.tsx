@@ -59,6 +59,16 @@ export function Logo({ compact = false, href = "/" }: { compact?: boolean; href?
     </Link>
   );
 }
+function GoogleIcon() {
+  return (
+    <svg className="google-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="#4285F4" d="M21.35 12.27c0-.79-.07-1.55-.2-2.27H12v4.3h5.24a4.48 4.48 0 0 1-1.94 2.94v2.45h3.15c1.85-1.7 2.9-4.2 2.9-7.42Z" />
+      <path fill="#34A853" d="M12 21.75c2.65 0 4.88-.88 6.5-2.38l-3.15-2.45c-.88.59-2 .94-3.35.94-2.57 0-4.75-1.74-5.53-4.08H3.22v2.53A9.82 9.82 0 0 0 12 21.75Z" />
+      <path fill="#FBBC05" d="M6.47 13.78a5.9 5.9 0 0 1 0-3.56V7.69H3.22a9.75 9.75 0 0 0 0 8.62l3.25-2.53Z" />
+      <path fill="#EA4335" d="M12 6.14c1.45 0 2.75.5 3.77 1.48l2.83-2.83C16.88 3.2 14.65 2.25 12 2.25a9.82 9.82 0 0 0-8.78 5.44l3.25 2.53C7.25 7.88 9.43 6.14 12 6.14Z" />
+    </svg>
+  );
+}
 function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
   return (
@@ -992,12 +1002,6 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
     },
     onError: e => setMessage(e.message),
   });
-  const googleStart = trpc.reader.googleStart.useQuery(undefined, { enabled: false });
-  const startGoogle = async () => {
-    const result = await googleStart.refetch();
-    if (result.data?.configured) window.location.assign(result.data.url);
-    else setMessage("Google sign-in is not configured yet.");
-  };
   const signup = trpc.reader.signup.useMutation({
     onSuccess: r => {
       setVerificationEmail(r.email);
@@ -1292,9 +1296,10 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                     <div className="auth-divider">
                       <span>or continue with</span>
                     </div>
-                    <button type="button" className="google-button" onClick={startGoogle} disabled={googleStart.isFetching}>
-                      {googleStart.isFetching ? "Connecting…" : "Continue with Google"}
-                    </button>
+                    <a className="google-button" href="/login">
+                      <GoogleIcon />
+                      <span>Continue with Google</span>
+                    </a>
                     <div className="auth-links">
                       <Link href={authRoutes.signup}>Create an account</Link>
                       <Link href={authRoutes.forgotPassword}>
