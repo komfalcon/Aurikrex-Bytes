@@ -275,32 +275,25 @@ function ShareButton({ post }: { post: any }) {
   const [open, setOpen] = useState(false);
   const shareUrl = `https://www.bytes.aurikrex.tech/post/${post.id}`;
   const share = async () => {
-    if (typeof navigator !== "undefined" && navigator.share) {
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
       try {
-        const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
-        if (post.imageUrl && typeof File !== "undefined" && navigator.canShare) {
-          try {
-            const response = await fetch(post.imageUrl, { mode: "cors" });
-            const blob = await response.blob();
-            const extension = blob.type.split("/")[1] || "jpg";
-            const imageFile = new File([blob], `aurikrex-bytes-${post.id}.${extension}`, { type: blob.type || "image/jpeg" });
-            if (navigator.canShare({ files: [imageFile] })) payload.files = [imageFile];
-          } catch {
-            // Some CDNs do not allow cross-origin image fetches; title, text, URL, and OG metadata still share.
-          }
-        }
         await navigator.share(payload);
       } catch (error) {
-        if ((error as DOMException).name !== "AbortError") toast.error("Unable to share this story");
+        if ((error as DOMException).name !== "AbortError") setOpen(true);
       }
       return;
     }
     setOpen(value => !value);
   };
   const copy = async () => {
-    await navigator.clipboard.writeText(shareUrl);
-    toast.success("Link copied");
-    setOpen(false);
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast.success("Link copied");
+      setOpen(false);
+    } catch {
+      toast.error("Copy failed — use the share link directly");
+    }
   };
   return <div className="share-control">
     <button className="engagement-button" onClick={e => { e.preventDefault(); e.stopPropagation(); void share(); }} aria-label="Share post" title="Share post"><Share2 size={15} /></button>
