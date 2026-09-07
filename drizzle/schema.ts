@@ -69,6 +69,9 @@ export const readers = sqliteTable("readers", {
   verificationTokenUsed: text("verification_token_used"),
   resetToken: text("reset_token"),
   resetTokenExpires: integer("reset_token_expires", { mode: "timestamp_ms" }),
+  currentStreak: integer("current_streak").notNull().default(0),
+  longestStreak: integer("longest_streak").notNull().default(0),
+  lastActiveDate: text("last_active_date"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(now),

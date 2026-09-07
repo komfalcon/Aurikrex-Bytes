@@ -11,6 +11,7 @@ import {
   users,
 } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
+import { updateDailyStreak } from "./streak.js";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _schemaRepair: Promise<void> | null = null;
@@ -138,6 +139,16 @@ export async function getReaderByEmail(email: string) {
     .limit(1);
   return result[0];
 }
+export async function getReaderById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(readers)
+    .where(eq(readers.id, id))
+    .limit(1);
+  return result[0];
+}
 export async function getReaderByVerificationToken(token: string) {
   const db = await getDb();
   if (!db) return undefined;
@@ -212,6 +223,7 @@ export async function listPublishedPosts() {
     .select({
       id: posts.id,
       headline: posts.headline,
+      body: posts.body,
       imageUrl: posts.imageUrl,
       publishedTime: posts.publishedTime,
       updatedAt: posts.updatedAt,
@@ -220,13 +232,50 @@ export async function listPublishedPosts() {
     .where(eq(posts.status, "published"))
     .orderBy(desc(posts.publishedTime), desc(posts.id));
 }
-function localCalendarDay(value: Date, timeZone: string) {
+export function localCalendarDay(value: Date, timeZone: string) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).format(value);
+}
+export async function getReaderDashboard(
+  readerId: number,
+  timeZone = process.env.APP_TIMEZONE || "UTC"
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const reader = await getReaderById(readerId);
+  if (!reader) return undefined;
+  const today = localCalendarDay(new Date(), timeZone);
+  const streak = updateDailyStreak(
+    {
+      currentStreak: reader.currentStreak,
+      longestStreak: reader.longestStreak,
+      lastActiveDate: reader.lastActiveDate,
+    },
+    today
+  );
+  if (streak.increased)
+    await db
+      .update(readers)
+      .set({
+        currentStreak: streak.currentStreak,
+        longestStreak: streak.longestStreak,
+        lastActiveDate: streak.lastActiveDate,
+      })
+      .where(eq(readers.id, readerId));
+  const [todayPosts, allPosts] = await Promise.all([
+    listTodaysPublishedPosts(timeZone),
+    listPublishedPosts(),
+  ]);
+  return {
+    reader: { id: reader.id, name: reader.name, email: reader.email },
+    streak,
+    todayPosts,
+    allPosts,
+  };
 }
 export async function listTodaysPublishedPosts(
   timeZone = process.env.APP_TIMEZONE || "UTC"

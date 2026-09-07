@@ -20,6 +20,7 @@ import {
   getPostById,
   getPublishedPostById,
   getReaderByEmail,
+  getReaderDashboard,
   getReaderByResetToken,
   getReaderByUsedVerificationToken,
   getReaderByVerificationToken,
@@ -454,6 +455,14 @@ export const appRouter = router({
     }),
   }),
   reader: router({
+    dashboard: publicProcedure
+      .input(z.object({ timeZone: z.string().min(1).max(80).default("UTC") }))
+      .query(async ({ input, ctx }) => {
+        const session = await requireReader(ctx);
+        const dashboard = await getReaderDashboard(session.id, input.timeZone);
+        if (!dashboard) throw genericNotFound();
+        return dashboard;
+      }),
     signup: publicProcedure
       .input(
         z.object({

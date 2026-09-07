@@ -2570,3 +2570,56 @@ button,
   .admin-rail nav a { min-width: 100%; }
   .admin-role-badge { align-self: flex-start; }
 }
+.reader-dashboard {
+  padding-top: 76px;
+  padding-bottom: 100px;
+}
+.dashboard-intro {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 32px;
+  padding-bottom: 62px;
+}
+.dashboard-intro h1 {
+  font-size: clamp(2.8rem, 6vw, 5.4rem);
+  margin: 18px 0 12px;
+}
+.dashboard-intro p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 17px;
+}
+.streak-card {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 185px;
+  padding: 16px 18px;
+  border: 1px solid rgba(59, 130, 246, .25);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow);
+}
+.streak-card-celebrate { animation: streak-pulse .75s ease-out; }
+.streak-flame { color: #f97316; grid-row: span 2; }
+.streak-card strong { display: block; font: 500 34px/1 var(--serif); }
+.streak-card span, .streak-card small { color: var(--muted); font-size: 11px; }
+.streak-card span { display: block; text-transform: uppercase; letter-spacing: .1em; }
+.streak-card small { grid-column: 2; }
+.dashboard-heading { align-items: end; }
+.reader-tabs { display: flex; gap: 3px; padding: 4px; border-radius: 10px; background: var(--surface-2); }
+.reader-tabs button { border: 0; border-radius: 7px; padding: 9px 13px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; }
+.reader-tabs button.active { color: var(--blue); background: var(--surface); box-shadow: 0 3px 12px rgba(15, 23, 42, .08); }
+.header-login { display: inline-flex; align-items: center; gap: 6px; }
+@keyframes streak-pulse { 0% { box-shadow: 0 0 0 rgba(59,130,246,0); } 40% { box-shadow: 0 0 0 8px rgba(59,130,246,.12); } 100% { box-shadow: var(--shadow); } }
+@media (max-width: 800px) {
+  .reader-dashboard { padding-top: 52px; }
+  .dashboard-intro { align-items: stretch; flex-direction: column; padding-bottom: 45px; }
+  .streak-card { width: fit-content; }
+  .dashboard-heading { align-items: flex-start; }
+}
+@media (max-width: 460px) {
+  .reader-tabs button { padding-inline: 10px; }
+}
