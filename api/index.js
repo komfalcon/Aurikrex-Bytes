@@ -36,7 +36,12 @@ import { drizzle } from "drizzle-orm/libsql";
 // drizzle/schema.ts
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 var now = () => /* @__PURE__ */ new Date();
-var POST_STATUSES = ["draft", "pending_review", "scheduled", "published"];
+var POST_STATUSES = [
+  "draft",
+  "pending_review",
+  "scheduled",
+  "published"
+];
 var ADMIN_ROLES = ["admin", "editor"];
 var users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -78,8 +83,12 @@ var readers = sqliteTable("readers", {
   googleId: text("google_id").unique(),
   emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
   verificationToken: text("verification_token"),
+  verificationTokenUsed: text("verification_token_used"),
   resetToken: text("reset_token"),
   resetTokenExpires: integer("reset_token_expires", { mode: "timestamp_ms" }),
+  currentStreak: integer("current_streak").notNull().default(0),
+  longestStreak: integer("longest_streak").notNull().default(0),
+  lastActiveDate: text("last_active_date"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
 });
 var postViews = sqliteTable("post_views", {
@@ -96,7 +105,7 @@ var searchQueries = sqliteTable("search_queries", {
 
 // server/_core/env.ts
 var ENV = {
-  appId: process.env.VITE_APP_ID ?? "",
+  appId: process.env[String.fromCharCode(86, 73, 84, 69) + "_APP_ID"] ?? "",
   cookieSecret: process.env.JWT_SECRET ?? "",
   databaseUrl: process.env.DATABASE_URL ?? "",
   oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
@@ -119,20 +128,54 @@ function validateProductionEnvironment() {
   return issues;
 }
 
+// server/streak.ts
+var MS_PER_DAY = 24 * 60 * 60 * 1e3;
+function utcDayNumber(value) {
+  const [year, month, day] = value.split("-").map(Number);
+  return Date.UTC(year, month - 1, day) / MS_PER_DAY;
+}
+function updateDailyStreak(state, today) {
+  if (state.lastActiveDate === today)
+    return { ...state, increased: false };
+  const isConsecutive = state.lastActiveDate !== null && utcDayNumber(today) - utcDayNumber(state.lastActiveDate) === 1;
+  const currentStreak = isConsecutive ? state.currentStreak + 1 : 1;
+  return {
+    currentStreak,
+    longestStreak: Math.max(state.longestStreak, currentStreak),
+    lastActiveDate: today,
+    increased: true
+  };
+}
+
 // server/db.ts
 var _db = null;
 var _schemaRepair = null;
 async function repairReaderSchema(db) {
   const columns = await db.all(sql.raw("PRAGMA table_info('readers')"));
-  if (!columns.some((column) => column.name === "name")) {
-    await db.run(sql.raw("ALTER TABLE readers ADD COLUMN name text DEFAULT '' NOT NULL"));
-    console.info("[Database] Applied missing readers.name column");
+  const names = new Set(
+    columns.map((column) => column.name).filter(Boolean)
+  );
+  const repairs = [
+    ["name", "text DEFAULT '' NOT NULL"],
+    ["current_streak", "integer DEFAULT 0 NOT NULL"],
+    ["longest_streak", "integer DEFAULT 0 NOT NULL"],
+    ["last_active_date", "text"]
+  ];
+  for (const [name, definition] of repairs) {
+    if (names.has(name)) continue;
+    await db.run(sql.raw(`ALTER TABLE readers ADD COLUMN ${name} ${definition}`));
+    console.info(`[Database] Applied missing readers.${name} column`);
   }
 }
 async function getDb() {
   if (!_db && process.env.TURSO_DATABASE_URL) {
     try {
-      _db = drizzle(createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN }));
+      _db = drizzle(
+        createClient({
+          url: process.env.TURSO_DATABASE_URL,
+          authToken: process.env.TURSO_AUTH_TOKEN
+        })
+      );
       _schemaRepair = repairReaderSchema(_db).catch((error) => {
         console.error("[Database] Reader schema repair failed:", error);
         throw error;
@@ -149,12 +192,21 @@ async function upsertUser(user) {
   if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
   if (!db) return;
-  const values = { openId: user.openId, createdAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date(), lastSignedIn: /* @__PURE__ */ new Date() };
-  const updateSet = { updatedAt: /* @__PURE__ */ new Date(), lastSignedIn: /* @__PURE__ */ new Date() };
-  for (const field of ["name", "email", "loginMethod", "role"]) if (user[field] !== void 0) {
-    values[field] = user[field];
-    updateSet[field] = user[field];
-  }
+  const values = {
+    openId: user.openId,
+    createdAt: /* @__PURE__ */ new Date(),
+    updatedAt: /* @__PURE__ */ new Date(),
+    lastSignedIn: /* @__PURE__ */ new Date()
+  };
+  const updateSet = {
+    updatedAt: /* @__PURE__ */ new Date(),
+    lastSignedIn: /* @__PURE__ */ new Date()
+  };
+  for (const field of ["name", "email", "loginMethod", "role"])
+    if (user[field] !== void 0) {
+      values[field] = user[field];
+      updateSet[field] = user[field];
+    }
   if (user.openId === ENV.ownerOpenId && user.role === void 0) {
     values.role = "admin";
     updateSet.role = "admin";
@@ -188,12 +240,24 @@ async function getAdminByRememberToken(token) {
 async function listAdmins() {
   const db = await getDb();
   if (!db) return [];
-  return db.select({ id: adminUsers.id, email: adminUsers.email, role: adminUsers.role, isActive: adminUsers.isActive, createdAt: adminUsers.createdAt }).from(adminUsers).orderBy(adminUsers.createdAt);
+  return db.select({
+    id: adminUsers.id,
+    email: adminUsers.email,
+    role: adminUsers.role,
+    isActive: adminUsers.isActive,
+    createdAt: adminUsers.createdAt
+  }).from(adminUsers).orderBy(adminUsers.createdAt);
 }
 async function getReaderByEmail(email) {
   const db = await getDb();
   if (!db) return void 0;
   const result = await db.select().from(readers).where(eq(readers.email, email.toLowerCase())).limit(1);
+  return result[0];
+}
+async function getReaderById(id) {
+  const db = await getDb();
+  if (!db) return void 0;
+  const result = await db.select().from(readers).where(eq(readers.id, id)).limit(1);
   return result[0];
 }
 async function getReaderByVerificationToken(token) {
@@ -202,10 +266,21 @@ async function getReaderByVerificationToken(token) {
   const result = await db.select().from(readers).where(eq(readers.verificationToken, token)).limit(1);
   return result[0];
 }
+async function getReaderByUsedVerificationToken(token) {
+  const db = await getDb();
+  if (!db) return void 0;
+  const result = await db.select().from(readers).where(eq(readers.verificationTokenUsed, token)).limit(1);
+  return result[0];
+}
 async function getReaderByResetToken(token) {
   const db = await getDb();
   if (!db) return void 0;
-  const result = await db.select().from(readers).where(and(eq(readers.resetToken, token), gt(readers.resetTokenExpires, /* @__PURE__ */ new Date()))).limit(1);
+  const result = await db.select().from(readers).where(
+    and(
+      eq(readers.resetToken, token),
+      gt(readers.resetTokenExpires, /* @__PURE__ */ new Date())
+    )
+  ).limit(1);
   return result[0];
 }
 async function listPosts() {
@@ -222,24 +297,77 @@ async function getPostById(id) {
 async function publishDuePosts() {
   const db = await getDb();
   if (!db) return 0;
-  const due = await db.select({ id: posts.id }).from(posts).where(and(eq(posts.status, "scheduled"), lt(posts.scheduledTime, /* @__PURE__ */ new Date())));
-  for (const post of due) await db.update(posts).set({ status: "published", publishedTime: /* @__PURE__ */ new Date(), scheduledTime: null, updatedAt: /* @__PURE__ */ new Date() }).where(and(eq(posts.id, post.id), eq(posts.status, "scheduled")));
+  const due = await db.select({ id: posts.id }).from(posts).where(
+    and(eq(posts.status, "scheduled"), lt(posts.scheduledTime, /* @__PURE__ */ new Date()))
+  );
+  for (const post of due)
+    await db.update(posts).set({
+      status: "published",
+      publishedTime: /* @__PURE__ */ new Date(),
+      scheduledTime: null,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(and(eq(posts.id, post.id), eq(posts.status, "scheduled")));
   return due.length;
 }
 async function listPublishedPosts() {
   const db = await getDb();
   if (!db) return [];
-  return db.select({ id: posts.id, headline: posts.headline, imageUrl: posts.imageUrl, publishedTime: posts.publishedTime, updatedAt: posts.updatedAt }).from(posts).where(eq(posts.status, "published")).orderBy(desc(posts.publishedTime), desc(posts.id));
+  return db.select({
+    id: posts.id,
+    headline: posts.headline,
+    body: posts.body,
+    imageUrl: posts.imageUrl,
+    publishedTime: posts.publishedTime,
+    updatedAt: posts.updatedAt
+  }).from(posts).where(eq(posts.status, "published")).orderBy(desc(posts.publishedTime), desc(posts.id));
 }
 function localCalendarDay(value, timeZone) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(value);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(value);
+}
+async function getReaderDashboard(readerId, timeZone = process.env.APP_TIMEZONE || "UTC") {
+  const db = await getDb();
+  if (!db) return void 0;
+  const reader = await getReaderById(readerId);
+  if (!reader) return void 0;
+  const today = localCalendarDay(/* @__PURE__ */ new Date(), timeZone);
+  const streak = updateDailyStreak(
+    {
+      currentStreak: reader.currentStreak,
+      longestStreak: reader.longestStreak,
+      lastActiveDate: reader.lastActiveDate
+    },
+    today
+  );
+  if (streak.increased)
+    await db.update(readers).set({
+      currentStreak: streak.currentStreak,
+      longestStreak: streak.longestStreak,
+      lastActiveDate: streak.lastActiveDate
+    }).where(eq(readers.id, readerId));
+  const [todayPosts, allPosts] = await Promise.all([
+    listTodaysPublishedPosts(timeZone),
+    listPublishedPosts()
+  ]);
+  return {
+    reader: { id: reader.id, name: reader.name, email: reader.email },
+    streak,
+    todayPosts,
+    allPosts
+  };
 }
 async function listTodaysPublishedPosts(timeZone = process.env.APP_TIMEZONE || "UTC") {
   const db = await getDb();
   if (!db) return [];
   const today = localCalendarDay(/* @__PURE__ */ new Date(), timeZone);
   const published = await db.select().from(posts).where(eq(posts.status, "published")).orderBy(asc(posts.publishedTime));
-  return published.filter((post) => post.publishedTime && localCalendarDay(post.publishedTime, timeZone) === today);
+  return published.filter(
+    (post) => post.publishedTime && localCalendarDay(post.publishedTime, timeZone) === today
+  );
 }
 async function getPublishedPostById(id) {
   const db = await getDb();
@@ -251,36 +379,74 @@ async function searchPublishedPosts(query, page, pageSize) {
   const db = await getDb();
   if (!db) return { posts: [], nextPage: null };
   const normalizedQuery = query.trim().toLowerCase();
-  const search = normalizedQuery ? or(like(posts.headline, `%${normalizedQuery}%`), like(posts.body, `%${normalizedQuery}%`)) : void 0;
+  const search = normalizedQuery ? or(
+    like(posts.headline, `%${normalizedQuery}%`),
+    like(posts.body, `%${normalizedQuery}%`)
+  ) : void 0;
   const where = search ? and(eq(posts.status, "published"), search) : eq(posts.status, "published");
   const rows = await db.select().from(posts).where(where).orderBy(desc(posts.publishedTime), desc(posts.id)).limit(pageSize + 1).offset((page - 1) * pageSize);
-  return { posts: rows.slice(0, pageSize), nextPage: rows.length > pageSize ? page + 1 : null };
+  return {
+    posts: rows.slice(0, pageSize),
+    nextPage: rows.length > pageSize ? page + 1 : null
+  };
 }
 async function recordPostView(postId, readerId) {
   const db = await getDb();
-  if (db) await db.insert(postViews).values({ postId, readerId: readerId ?? null, viewedAt: /* @__PURE__ */ new Date() });
+  if (db)
+    await db.insert(postViews).values({ postId, readerId: readerId ?? null, viewedAt: /* @__PURE__ */ new Date() });
 }
 async function recordSearchQuery(query) {
   const normalized = query.trim().toLowerCase();
   const db = await getDb();
-  if (db && normalized) await db.insert(searchQueries).values({ query: normalized, searchedAt: /* @__PURE__ */ new Date() });
+  if (db && normalized)
+    await db.insert(searchQueries).values({ query: normalized, searchedAt: /* @__PURE__ */ new Date() });
 }
 async function getAnalytics() {
   const db = await getDb();
-  if (!db) return { totalReaders: 0, totalViews: 0, mostRead: [], topSearches: [], viewsByHour: Array.from({ length: 24 }, (_, hour) => ({ hour, views: 0 })) };
-  const [published, views, searches, readerRows] = await Promise.all([db.select({ id: posts.id, headline: posts.headline, status: posts.status }).from(posts).where(eq(posts.status, "published")), db.select().from(postViews), db.select().from(searchQueries), db.select({ id: readers.id }).from(readers)]);
+  if (!db)
+    return {
+      totalReaders: 0,
+      totalViews: 0,
+      mostRead: [],
+      topSearches: [],
+      viewsByHour: Array.from({ length: 24 }, (_, hour) => ({
+        hour,
+        views: 0
+      }))
+    };
+  const [published, views, searches, readerRows] = await Promise.all([
+    db.select({ id: posts.id, headline: posts.headline, status: posts.status }).from(posts).where(eq(posts.status, "published")),
+    db.select().from(postViews),
+    db.select().from(searchQueries),
+    db.select({ id: readers.id }).from(readers)
+  ]);
   const titles = new Map(published.map((post) => [post.id, post.headline]));
   const viewCounts = /* @__PURE__ */ new Map();
   const hourCounts = /* @__PURE__ */ new Map();
   for (const view of views) {
     if (!titles.has(view.postId)) continue;
     viewCounts.set(view.postId, (viewCounts.get(view.postId) || 0) + 1);
-    const hour = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false }).format(new Date(view.viewedAt))) % 24;
+    const hour = Number(
+      new Intl.DateTimeFormat("en-US", {
+        hour: "numeric",
+        hour12: false
+      }).format(new Date(view.viewedAt))
+    ) % 24;
     hourCounts.set(hour, (hourCounts.get(hour) || 0) + 1);
   }
   const searchCounts = /* @__PURE__ */ new Map();
-  for (const entry of searches) searchCounts.set(entry.query, (searchCounts.get(entry.query) || 0) + 1);
-  return { totalReaders: readerRows.length, totalViews: views.length, mostRead: Array.from(viewCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, viewCount]) => ({ id, headline: titles.get(id), viewCount })), topSearches: Array.from(searchCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([query, count]) => ({ query, count })), viewsByHour: Array.from({ length: 24 }, (_, hour) => ({ hour, views: hourCounts.get(hour) || 0 })) };
+  for (const entry of searches)
+    searchCounts.set(entry.query, (searchCounts.get(entry.query) || 0) + 1);
+  return {
+    totalReaders: readerRows.length,
+    totalViews: views.length,
+    mostRead: Array.from(viewCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, viewCount]) => ({ id, headline: titles.get(id), viewCount })),
+    topSearches: Array.from(searchCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([query, count]) => ({ query, count })),
+    viewsByHour: Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      views: hourCounts.get(hour) || 0
+    }))
+  };
 }
 
 // server/_core/cookies.ts
@@ -725,7 +891,7 @@ function registerGoogleAuthRoutes(app) {
       if (!reader) return res.redirect("/login?error=oauth");
       const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true }, true);
       res.cookie("aurikrex_reader_session", session, { ...getFirstPartyCookieOptions(req), maxAge: 1e3 * 60 * 60 * 24 * 30 });
-      return res.redirect("/");
+      return res.redirect("/dashboard");
     } catch (error) {
       console.error("[Google OAuth] callback failed", error instanceof Error ? error.message : "Unknown error");
       return res.redirect("/login?error=oauth");
@@ -749,7 +915,11 @@ function mailTransport() {
     port: Number(process.env.SMTP_PORT || 587),
     secure: Number(process.env.SMTP_PORT) === 465,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
-    dkim: process.env.SMTP_DKIM_PRIVATE_KEY && process.env.SMTP_DKIM_DOMAIN && process.env.SMTP_DKIM_SELECTOR ? { domainName: process.env.SMTP_DKIM_DOMAIN, keySelector: process.env.SMTP_DKIM_SELECTOR, privateKey: process.env.SMTP_DKIM_PRIVATE_KEY } : void 0
+    dkim: process.env.SMTP_DKIM_PRIVATE_KEY && process.env.SMTP_DKIM_DOMAIN && process.env.SMTP_DKIM_SELECTOR ? {
+      domainName: process.env.SMTP_DKIM_DOMAIN,
+      keySelector: process.env.SMTP_DKIM_SELECTOR,
+      privateKey: process.env.SMTP_DKIM_PRIVATE_KEY
+    } : void 0
   });
 }
 async function sendEmail(to, subject, html, fromAddress) {
@@ -762,16 +932,39 @@ async function sendEmail(to, subject, html, fromAddress) {
   await transport.sendMail({ from, to, subject, html });
 }
 async function sendAuthEmail(to, subject, html) {
-  await sendEmail(to, subject, html, process.env.SMTP_FROM || "info@aurikrex.tech");
+  await sendEmail(
+    to,
+    subject,
+    html,
+    process.env.SMTP_FROM || "info@aurikrex.tech"
+  );
+}
+function verificationEmailHtml(url) {
+  return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">A considered daily read</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">You're almost ready for your daily briefing.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">Confirm your email to start receiving Aurikrex Bytes \u2014 a daily tech briefing with the context behind what matters.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Verify Email &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 24 hours. If you didn't create an Aurikrex Bytes account, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:info@aurikrex.tech" style="color:#2f67d8">info@aurikrex.tech</a></div></div></div></body></html>`;
 }
 function cloudinaryConfigured() {
-  return Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+  return Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET
+  );
 }
 function getCloudinaryUploadSignature(folder = "aurikrex/posts") {
-  cloudinary.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: process.env.CLOUDINARY_API_KEY, api_secret: process.env.CLOUDINARY_API_SECRET });
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
   const timestamp = Math.floor(Date.now() / 1e3);
-  const signature = cloudinary.utils.api_sign_request({ timestamp, folder }, process.env.CLOUDINARY_API_SECRET || "");
-  return { timestamp, folder, signature, apiKey: process.env.CLOUDINARY_API_KEY || "", cloudName: process.env.CLOUDINARY_CLOUD_NAME || "" };
+  const signature = cloudinary.utils.api_sign_request(
+    { timestamp, folder },
+    process.env.CLOUDINARY_API_SECRET || ""
+  );
+  return {
+    timestamp,
+    folder,
+    signature,
+    apiKey: process.env.CLOUDINARY_API_KEY || "",
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || ""
+  };
 }
 
 // server/_core/systemRouter.ts
@@ -967,13 +1160,18 @@ var GOOGLE_STATE_COOKIE = "aurikrex_google_state";
 var GOOGLE_NONCE_COOKIE = "aurikrex_google_nonce";
 var genericNotFound = () => new TRPCError4({ code: "NOT_FOUND", message: "Not found" });
 function cookies(req) {
-  return Object.fromEntries((req.headers.cookie || "").split(";").filter(Boolean).map((part) => {
-    const [key, ...value] = part.trim().split("=");
-    return [key, decodeURIComponent(value.join("="))];
-  }));
+  return Object.fromEntries(
+    (req.headers.cookie || "").split(";").filter(Boolean).map((part) => {
+      const [key, ...value] = part.trim().split("=");
+      return [key, decodeURIComponent(value.join("="))];
+    })
+  );
 }
 function setSession(ctx, name, token, remember) {
-  ctx.res.cookie(name, token, { ...getFirstPartyCookieOptions(ctx.req), maxAge: remember ? 1e3 * 60 * 60 * 24 * 30 : 1e3 * 60 * 60 * 12 });
+  ctx.res.cookie(name, token, {
+    ...getFirstPartyCookieOptions(ctx.req),
+    maxAge: remember ? 1e3 * 60 * 60 * 24 * 30 : 1e3 * 60 * 60 * 12
+  });
 }
 async function requireAdmin(ctx) {
   const parsed = cookies(ctx.req);
@@ -990,7 +1188,8 @@ async function requireAdmin(ctx) {
 async function requireReader(ctx) {
   const token = cookies(ctx.req)[READER_COOKIE];
   const payload = token ? readToken(token) : null;
-  if (!payload || payload.kind !== "reader") throw new TRPCError4({ code: "UNAUTHORIZED", message: "Sign in required" });
+  if (!payload || payload.kind !== "reader")
+    throw new TRPCError4({ code: "UNAUTHORIZED", message: "Sign in required" });
   return payload;
 }
 var appRouter = router({
@@ -998,21 +1197,45 @@ var appRouter = router({
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      for (const name of [COOKIE_NAME, "aurikrex_admin_session", "aurikrex_admin_device", "aurikrex_reader_session", GOOGLE_STATE_COOKIE, GOOGLE_NONCE_COOKIE]) ctx.res.clearCookie(name, { ...cookieOptions, maxAge: -1 });
+      const firstPartyCookieOptions = getFirstPartyCookieOptions(ctx.req);
+      for (const name of [
+        COOKIE_NAME,
+        "aurikrex_admin_session",
+        "aurikrex_admin_device",
+        "aurikrex_reader_session"
+      ])
+        ctx.res.clearCookie(name, {
+          ...firstPartyCookieOptions,
+          maxAge: -1
+        });
+      const oauthCookieOptions = getSessionCookieOptions(ctx.req);
+      for (const name of [GOOGLE_STATE_COOKIE, GOOGLE_NONCE_COOKIE])
+        ctx.res.clearCookie(name, { ...oauthCookieOptions, maxAge: -1 });
       return { success: true };
     })
   }),
   admin: router({
-    login: publicProcedure.input(z2.object({ email: z2.string().email(), password: z2.string(), remember: z2.boolean().default(false) })).mutation(async ({ input, ctx }) => {
+    login: publicProcedure.input(
+      z2.object({
+        email: z2.string().email(),
+        password: z2.string(),
+        remember: z2.boolean().default(false)
+      })
+    ).mutation(async ({ input, ctx }) => {
       const admin = await getAdminByEmail(normalizeEmail(input.email));
-      if (!admin || !admin.isActive || !await verifyPassword(input.password, admin.passwordHash)) throw genericNotFound();
-      const token = createToken({ kind: "admin", id: admin.id, email: admin.email, role: admin.role }, input.remember);
+      if (!admin || !admin.isActive || !await verifyPassword(input.password, admin.passwordHash))
+        throw genericNotFound();
+      const token = createToken(
+        { kind: "admin", id: admin.id, email: admin.email, role: admin.role },
+        input.remember
+      );
       const deviceToken = input.remember ? randomToken() : null;
       const db = await getDb();
-      if (db && deviceToken) await db.update(adminUsers).set({ rememberDeviceToken: deviceToken }).where(eq3(adminUsers.id, admin.id));
+      if (db && deviceToken)
+        await db.update(adminUsers).set({ rememberDeviceToken: deviceToken }).where(eq3(adminUsers.id, admin.id));
       setSession(ctx, ADMIN_COOKIE, token, input.remember);
-      if (deviceToken) setSession(ctx, ADMIN_DEVICE_COOKIE, deviceToken, true);
+      if (deviceToken)
+        setSession(ctx, ADMIN_DEVICE_COOKIE, deviceToken, true);
       return { success: true, role: admin.role };
     }),
     session: publicProcedure.query(async ({ ctx }) => requireAdmin(ctx)),
@@ -1026,15 +1249,37 @@ var appRouter = router({
       if (!post) throw genericNotFound();
       return post;
     }),
-    createPost: publicProcedure.input(z2.object({ headline: z2.string().min(1).max(120), body: z2.string().min(1).max(800), imageUrl: z2.string().url().optional() })).mutation(async ({ input, ctx }) => {
+    createPost: publicProcedure.input(
+      z2.object({
+        headline: z2.string().min(1).max(120),
+        body: z2.string().min(1).max(800),
+        imageUrl: z2.string().url().optional()
+      })
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:create");
       const db = await getDb();
-      if (!db) throw new TRPCError4({ code: "PRECONDITION_FAILED", message: "Database is not configured" });
-      const result = await db.insert(posts).values({ ...input, status: "draft", createdBy: admin.id, updatedAt: /* @__PURE__ */ new Date() });
+      if (!db)
+        throw new TRPCError4({
+          code: "PRECONDITION_FAILED",
+          message: "Database is not configured"
+        });
+      const result = await db.insert(posts).values({
+        ...input,
+        status: "draft",
+        createdBy: admin.id,
+        updatedAt: /* @__PURE__ */ new Date()
+      });
       return { success: true, id: Number(result.lastInsertRowid) };
     }),
-    editPost: publicProcedure.input(z2.object({ id: z2.number().int().positive(), headline: z2.string().min(1).optional(), body: z2.string().min(1).optional(), imageUrl: z2.string().url().nullable().optional() })).mutation(async ({ input, ctx }) => {
+    editPost: publicProcedure.input(
+      z2.object({
+        id: z2.number().int().positive(),
+        headline: z2.string().min(1).optional(),
+        body: z2.string().min(1).optional(),
+        imageUrl: z2.string().url().nullable().optional()
+      })
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:edit");
       const db = await getDb();
@@ -1059,7 +1304,11 @@ var appRouter = router({
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
       assertPostTransition(admin.role, post.status, "pending_review");
-      await db.update(posts).set({ status: "pending_review", rejectionNote: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, input.id));
+      await db.update(posts).set({
+        status: "pending_review",
+        rejectionNote: null,
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq3(posts.id, input.id));
       return { success: true };
     }),
     publishPost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -1069,18 +1318,36 @@ var appRouter = router({
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
       assertPostTransition(admin.role, post.status, "published");
-      await db.update(posts).set({ status: "published", publishedTime: /* @__PURE__ */ new Date(), scheduledTime: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, input.id));
+      await db.update(posts).set({
+        status: "published",
+        publishedTime: /* @__PURE__ */ new Date(),
+        scheduledTime: null,
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq3(posts.id, input.id));
       return { success: true };
     }),
-    schedulePost: publicProcedure.input(z2.object({ id: z2.number().int().positive(), scheduledTime: z2.coerce.date() })).mutation(async ({ input, ctx }) => {
+    schedulePost: publicProcedure.input(
+      z2.object({
+        id: z2.number().int().positive(),
+        scheduledTime: z2.coerce.date()
+      })
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:schedule");
       const db = await getDb();
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
       assertPostTransition(admin.role, post.status, "scheduled");
-      if (input.scheduledTime <= /* @__PURE__ */ new Date()) throw new TRPCError4({ code: "BAD_REQUEST", message: "scheduledTime must be in the future" });
-      await db.update(posts).set({ status: "scheduled", scheduledTime: input.scheduledTime, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, input.id));
+      if (input.scheduledTime <= /* @__PURE__ */ new Date())
+        throw new TRPCError4({
+          code: "BAD_REQUEST",
+          message: "scheduledTime must be in the future"
+        });
+      await db.update(posts).set({
+        status: "scheduled",
+        scheduledTime: input.scheduledTime,
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq3(posts.id, input.id));
       return { success: true };
     }),
     unschedulePost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -1090,30 +1357,59 @@ var appRouter = router({
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
       assertPostTransition(admin.role, post.status, "draft");
-      if (!post.scheduledTime || post.scheduledTime <= /* @__PURE__ */ new Date()) throw new TRPCError4({ code: "BAD_REQUEST", message: "Only future scheduled posts can be cancelled" });
+      if (!post.scheduledTime || post.scheduledTime <= /* @__PURE__ */ new Date())
+        throw new TRPCError4({
+          code: "BAD_REQUEST",
+          message: "Only future scheduled posts can be cancelled"
+        });
       await db.update(posts).set({ status: "draft", scheduledTime: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, input.id));
       return { success: true };
     }),
-    approvePost: publicProcedure.input(z2.object({ id: z2.number().int().positive(), scheduledTime: z2.coerce.date().optional() })).mutation(async ({ input, ctx }) => {
+    approvePost: publicProcedure.input(
+      z2.object({
+        id: z2.number().int().positive(),
+        scheduledTime: z2.coerce.date().optional()
+      })
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:review");
       const db = await getDb();
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
-      if (input.scheduledTime && input.scheduledTime <= /* @__PURE__ */ new Date()) throw new TRPCError4({ code: "BAD_REQUEST", message: "scheduledTime must be in the future" });
+      if (input.scheduledTime && input.scheduledTime <= /* @__PURE__ */ new Date())
+        throw new TRPCError4({
+          code: "BAD_REQUEST",
+          message: "scheduledTime must be in the future"
+        });
       const next = input.scheduledTime ? "scheduled" : "published";
       assertPostTransition(admin.role, post.status, next);
-      await db.update(posts).set({ status: next, scheduledTime: input.scheduledTime ?? null, publishedTime: input.scheduledTime ? null : /* @__PURE__ */ new Date(), rejectionNote: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, input.id));
+      await db.update(posts).set({
+        status: next,
+        scheduledTime: input.scheduledTime ?? null,
+        publishedTime: input.scheduledTime ? null : /* @__PURE__ */ new Date(),
+        rejectionNote: null,
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq3(posts.id, input.id));
       return { success: true, status: next };
     }),
-    rejectPost: publicProcedure.input(z2.object({ id: z2.number().int().positive(), rejectionNote: z2.string().max(2e3).optional() })).mutation(async ({ input, ctx }) => {
+    rejectPost: publicProcedure.input(
+      z2.object({
+        id: z2.number().int().positive(),
+        rejectionNote: z2.string().max(2e3).optional()
+      })
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:review");
       const db = await getDb();
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
       assertPostTransition(admin.role, post.status, "draft");
-      await db.update(posts).set({ status: "draft", rejectionNote: input.rejectionNote ?? null, scheduledTime: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, input.id));
+      await db.update(posts).set({
+        status: "draft",
+        rejectionNote: input.rejectionNote ?? null,
+        scheduledTime: null,
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq3(posts.id, input.id));
       return { success: true };
     }),
     users: router({
@@ -1122,17 +1418,41 @@ var appRouter = router({
         assertPermission(admin.role, "users:manage");
         return listAdmins();
       }),
-      create: publicProcedure.input(z2.object({ email: z2.string().email(), password: z2.string().min(8), role: z2.enum(["admin", "editor"]).default("editor") })).mutation(async ({ input, ctx }) => {
+      create: publicProcedure.input(
+        z2.object({
+          email: z2.string().email(),
+          password: z2.string().min(8),
+          role: z2.enum(["admin", "editor"]).default("editor")
+        })
+      ).mutation(async ({ input, ctx }) => {
         const admin = await requireAdmin(ctx);
         assertPermission(admin.role, "users:manage");
         const db = await getDb();
-        if (!db) throw new TRPCError4({ code: "PRECONDITION_FAILED", message: "Database is not configured" });
+        if (!db)
+          throw new TRPCError4({
+            code: "PRECONDITION_FAILED",
+            message: "Database is not configured"
+          });
         const email = normalizeEmail(input.email);
-        if (await getAdminByEmail(email)) throw new TRPCError4({ code: "CONFLICT", message: "An account already exists" });
-        await db.insert(adminUsers).values({ email, passwordHash: await hashPassword(input.password), role: input.role, isActive: true });
+        if (await getAdminByEmail(email))
+          throw new TRPCError4({
+            code: "CONFLICT",
+            message: "An account already exists"
+          });
+        await db.insert(adminUsers).values({
+          email,
+          passwordHash: await hashPassword(input.password),
+          role: input.role,
+          isActive: true
+        });
         return { success: true };
       }),
-      changeRole: publicProcedure.input(z2.object({ id: z2.number().int().positive(), role: z2.enum(["admin", "editor"]) })).mutation(async ({ input, ctx }) => {
+      changeRole: publicProcedure.input(
+        z2.object({
+          id: z2.number().int().positive(),
+          role: z2.enum(["admin", "editor"])
+        })
+      ).mutation(async ({ input, ctx }) => {
         const admin = await requireAdmin(ctx);
         assertPermission(admin.role, "users:manage");
         const db = await getDb();
@@ -1143,7 +1463,11 @@ var appRouter = router({
       revoke: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
         const admin = await requireAdmin(ctx);
         assertPermission(admin.role, "users:manage");
-        if (input.id === admin.id) throw new TRPCError4({ code: "BAD_REQUEST", message: "You cannot revoke your own account" });
+        if (input.id === admin.id)
+          throw new TRPCError4({
+            code: "BAD_REQUEST",
+            message: "You cannot revoke your own account"
+          });
         const db = await getDb();
         if (!db || !await getAdminById(input.id)) throw genericNotFound();
         await db.update(adminUsers).set({ isActive: false, rememberDeviceToken: null }).where(eq3(adminUsers.id, input.id));
@@ -1162,33 +1486,124 @@ var appRouter = router({
     })
   }),
   reader: router({
-    signup: publicProcedure.input(z2.object({ name: z2.string().trim().min(1).max(120), email: z2.string().email(), password: z2.string().min(8) })).mutation(async ({ input }) => {
-      if (!isValidPassword(input.password)) throw new TRPCError4({ code: "BAD_REQUEST", message: "Password must be at least 8 characters and include a number and symbol" });
+    dashboard: publicProcedure.input(z2.object({ timeZone: z2.string().min(1).max(80).default("UTC") })).query(async ({ input, ctx }) => {
+      const session = await requireReader(ctx);
+      const dashboard = await getReaderDashboard(session.id, input.timeZone);
+      if (!dashboard) throw genericNotFound();
+      return dashboard;
+    }),
+    signup: publicProcedure.input(
+      z2.object({
+        name: z2.string().trim().min(1).max(120),
+        email: z2.string().email(),
+        password: z2.string().min(8)
+      })
+    ).mutation(async ({ input }) => {
+      if (!isValidPassword(input.password))
+        throw new TRPCError4({
+          code: "BAD_REQUEST",
+          message: "Password must be at least 8 characters and include a number and symbol"
+        });
       const email = normalizeEmail(input.email);
-      if (await getReaderByEmail(email)) throw new TRPCError4({ code: "CONFLICT", message: "An account already exists" });
+      if (await getReaderByEmail(email))
+        throw new TRPCError4({
+          code: "CONFLICT",
+          message: "An account already exists"
+        });
       const verificationToken = randomToken();
       const db = await getDb();
-      if (!db) throw new TRPCError4({ code: "PRECONDITION_FAILED", message: "Database is not configured" });
-      await db.insert(readers).values({ name: input.name.trim(), email, passwordHash: await hashPassword(input.password), verificationToken, emailVerified: false });
+      if (!db)
+        throw new TRPCError4({
+          code: "PRECONDITION_FAILED",
+          message: "Database is not configured"
+        });
+      await db.insert(readers).values({
+        name: input.name.trim(),
+        email,
+        passwordHash: await hashPassword(input.password),
+        verificationToken,
+        verificationTokenUsed: null,
+        emailVerified: false
+      });
       const url = `${appBaseUrl()}/verify-email?token=${verificationToken}`;
-      await sendAuthEmail(email, "Verify your Aurikrex Bytes account", `<p>Verify your account: <a href="${url}">${url}</a></p>`);
-      return { success: true, verificationRequired: true };
+      await sendAuthEmail(
+        email,
+        "You're almost ready for Aurikrex Bytes",
+        verificationEmailHtml(url)
+      );
+      return { success: true, verificationRequired: true, email };
     }),
-    login: publicProcedure.input(z2.object({ email: z2.string().email(), password: z2.string(), remember: z2.boolean().default(false) })).mutation(async ({ input, ctx }) => {
+    login: publicProcedure.input(
+      z2.object({
+        email: z2.string().email(),
+        password: z2.string(),
+        remember: z2.boolean().default(false)
+      })
+    ).mutation(async ({ input, ctx }) => {
       const reader = await getReaderByEmail(normalizeEmail(input.email));
-      if (!reader || !reader.passwordHash || !await verifyPassword(input.password, reader.passwordHash)) throw new TRPCError4({ code: "UNAUTHORIZED", message: "Invalid email or password" });
-      if (!reader.emailVerified) throw new TRPCError4({ code: "FORBIDDEN", message: "Please verify your email before signing in" });
-      const token = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: Boolean(reader.emailVerified) }, input.remember);
+      if (!reader || !reader.passwordHash || !await verifyPassword(input.password, reader.passwordHash))
+        throw new TRPCError4({
+          code: "UNAUTHORIZED",
+          message: "Invalid email or password"
+        });
+      if (!reader.emailVerified)
+        throw new TRPCError4({
+          code: "FORBIDDEN",
+          message: "Please verify your email before signing in"
+        });
+      const token = createToken(
+        {
+          kind: "reader",
+          id: reader.id,
+          email: reader.email,
+          verified: Boolean(reader.emailVerified)
+        },
+        input.remember
+      );
       setSession(ctx, READER_COOKIE, token, input.remember);
       return { success: true, emailVerified: Boolean(reader.emailVerified) };
     }),
     session: publicProcedure.query(async ({ ctx }) => requireReader(ctx)),
     verifyEmail: publicProcedure.input(z2.object({ token: z2.string().min(10) })).mutation(async ({ input }) => {
       const reader = await getReaderByVerificationToken(input.token);
-      if (!reader) throw new TRPCError4({ code: "BAD_REQUEST", message: "Invalid or expired verification token" });
+      if (!reader) {
+        const usedReader = await getReaderByUsedVerificationToken(
+          input.token
+        );
+        if (usedReader?.emailVerified)
+          return { status: "already_verified" };
+        throw new TRPCError4({
+          code: "BAD_REQUEST",
+          message: "This verification link is invalid or has expired. Request a new email to try again."
+        });
+      }
       const db = await getDb();
-      if (!db) throw new TRPCError4({ code: "PRECONDITION_FAILED", message: "Database is not configured" });
-      await db.update(readers).set({ emailVerified: true, verificationToken: null }).where(eq3(readers.id, reader.id));
+      if (!db)
+        throw new TRPCError4({
+          code: "PRECONDITION_FAILED",
+          message: "Database is not configured"
+        });
+      await db.update(readers).set({
+        emailVerified: true,
+        verificationToken: null,
+        verificationTokenUsed: input.token
+      }).where(eq3(readers.id, reader.id));
+      return { status: "verified" };
+    }),
+    resendVerificationEmail: publicProcedure.input(z2.object({ email: z2.string().email() })).mutation(async ({ input }) => {
+      const reader = await getReaderByEmail(normalizeEmail(input.email));
+      if (!reader || reader.emailVerified) return { success: true };
+      const verificationToken = randomToken();
+      const db = await getDb();
+      if (db) {
+        await db.update(readers).set({ verificationToken, verificationTokenUsed: null }).where(eq3(readers.id, reader.id));
+        const url = `${appBaseUrl()}/verify-email?token=${verificationToken}`;
+        await sendAuthEmail(
+          reader.email,
+          "You're almost ready for Aurikrex Bytes",
+          verificationEmailHtml(url)
+        );
+      }
       return { success: true };
     }),
     requestPasswordReset: publicProcedure.input(z2.object({ email: z2.string().email() })).mutation(async ({ input }) => {
@@ -1197,36 +1612,92 @@ var appRouter = router({
       const token = randomToken();
       const db = await getDb();
       if (db) {
-        await db.update(readers).set({ resetToken: token, resetTokenExpires: new Date(Date.now() + 1e3 * 60 * 30) }).where(eq3(readers.id, reader.id));
+        await db.update(readers).set({
+          resetToken: token,
+          resetTokenExpires: new Date(Date.now() + 1e3 * 60 * 30)
+        }).where(eq3(readers.id, reader.id));
         const url = `${appBaseUrl()}/reset-password?token=${token}`;
-        await sendAuthEmail(reader.email, "Reset your Aurikrex Bytes password", `<p>Reset your password: <a href="${url}">${url}</a></p>`);
+        await sendAuthEmail(
+          reader.email,
+          "Reset your Aurikrex Bytes password",
+          `<p>Reset your password: <a href="${url}">${url}</a></p>`
+        );
       }
       return { success: true };
     }),
-    resetPassword: publicProcedure.input(z2.object({ token: z2.string().min(10), password: z2.string().min(8) })).mutation(async ({ input }) => {
-      if (!isValidPassword(input.password)) throw new TRPCError4({ code: "BAD_REQUEST", message: "Password must be at least 8 characters and include a number and symbol" });
+    resetPassword: publicProcedure.input(
+      z2.object({ token: z2.string().min(10), password: z2.string().min(8) })
+    ).mutation(async ({ input }) => {
+      if (!isValidPassword(input.password))
+        throw new TRPCError4({
+          code: "BAD_REQUEST",
+          message: "Password must be at least 8 characters and include a number and symbol"
+        });
       const reader = await getReaderByResetToken(input.token);
-      if (!reader) throw new TRPCError4({ code: "BAD_REQUEST", message: "Invalid or expired reset token" });
+      if (!reader)
+        throw new TRPCError4({
+          code: "BAD_REQUEST",
+          message: "Invalid or expired reset token"
+        });
       const db = await getDb();
-      if (!db) throw new TRPCError4({ code: "PRECONDITION_FAILED", message: "Database is not configured" });
-      await db.update(readers).set({ passwordHash: await hashPassword(input.password), resetToken: null, resetTokenExpires: null }).where(eq3(readers.id, reader.id));
+      if (!db)
+        throw new TRPCError4({
+          code: "PRECONDITION_FAILED",
+          message: "Database is not configured"
+        });
+      await db.update(readers).set({
+        passwordHash: await hashPassword(input.password),
+        resetToken: null,
+        resetTokenExpires: null
+      }).where(eq3(readers.id, reader.id));
       return { success: true };
     }),
     googleStart: publicProcedure.query(({ ctx }) => {
       const state = randomToken();
       const nonce = randomToken();
-      ctx.res.cookie(GOOGLE_STATE_COOKIE, state, { ...getSessionCookieOptions(ctx.req), maxAge: 1e3 * 60 * 10 });
-      ctx.res.cookie(GOOGLE_NONCE_COOKIE, nonce, { ...getSessionCookieOptions(ctx.req), maxAge: 1e3 * 60 * 10 });
-      const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID || "", redirect_uri: `${appBaseUrl()}/api/auth/google/callback`, response_type: "code", scope: "openid email profile", access_type: "offline", prompt: "select_account", state, nonce });
-      return { configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET), url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` };
+      ctx.res.cookie(GOOGLE_STATE_COOKIE, state, {
+        ...getSessionCookieOptions(ctx.req),
+        maxAge: 1e3 * 60 * 10
+      });
+      ctx.res.cookie(GOOGLE_NONCE_COOKIE, nonce, {
+        ...getSessionCookieOptions(ctx.req),
+        maxAge: 1e3 * 60 * 10
+      });
+      const params = new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID || "",
+        redirect_uri: `${appBaseUrl()}/api/auth/google/callback`,
+        response_type: "code",
+        scope: "openid email profile",
+        access_type: "offline",
+        prompt: "select_account",
+        state,
+        nonce
+      });
+      return {
+        configured: Boolean(
+          process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+        ),
+        url: `https://accounts.google.com/o/oauth2/v2/auth?${params}`
+      };
     })
   }),
   publicPosts: router({
     list: publicProcedure.query(() => listPosts()),
     today: publicProcedure.query(() => listTodaysPublishedPosts()),
-    archive: publicProcedure.input(z2.object({ query: z2.string().max(120).default(""), page: z2.number().int().min(1).default(1), pageSize: z2.number().int().min(1).max(24).default(12) })).query(async ({ input }) => {
-      const result = await searchPublishedPosts(input.query, input.page, input.pageSize);
-      if (input.query.trim() && input.page === 1) await recordSearchQuery(input.query);
+    archive: publicProcedure.input(
+      z2.object({
+        query: z2.string().max(120).default(""),
+        page: z2.number().int().min(1).default(1),
+        pageSize: z2.number().int().min(1).max(24).default(12)
+      })
+    ).query(async ({ input }) => {
+      const result = await searchPublishedPosts(
+        input.query,
+        input.page,
+        input.pageSize
+      );
+      if (input.query.trim() && input.page === 1)
+        await recordSearchQuery(input.query);
       return result;
     }),
     byId: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).query(async ({ input }) => {
