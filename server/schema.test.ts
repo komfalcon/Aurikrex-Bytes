@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ADMIN_ROLES, POST_STATUSES, adminUsers, postViews, posts, readers, searchQueries } from "../drizzle/schema";
+import { ADMIN_ROLES, POST_STATUSES, adminUsers, postViews, posts, readers, searchQueries } from "../drizzle/schema.js";
 
 describe("Aurikrex Bytes schema", () => {
   it("defines the required publishing and auth tables", () => {

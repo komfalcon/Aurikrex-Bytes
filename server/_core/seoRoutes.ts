@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { listPublishedPosts } from "../db";
+import { listPublishedPosts } from "../db.js";
 
 const siteUrl = () => (process.env.APP_BASE_URL || "https://aurikrex.tech").replace(/\/$/, "");
 const xmlEscape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
