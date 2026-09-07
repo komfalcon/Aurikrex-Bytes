@@ -27,9 +27,9 @@ function ArticleSection({ title, children }: { title: string; children: ReactNod
 export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const [, navigate] = useLocation();
   const [name, setName] = useState(""); const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [confirmPassword, setConfirmPassword] = useState("");
-  const [token] = useState(() => new URLSearchParams(location.search).get("token") || ""); const [message, setMessage] = useState("");
+  const [token] = useState(() => new URLSearchParams(location.search).get("token") || ""); const [message, setMessage] = useState(() => new URLSearchParams(location.search).get("error") === "oauth" ? "Google sign-in could not be completed. Please try again." : "");
   const requirements = [{ label: "At least 8 characters", valid: password.length >= 8 }, { label: "One number", valid: /\d/.test(password) }, { label: "One symbol", valid: /[^A-Za-z0-9]/.test(password) }];
-  const login = trpc.reader.login.useMutation({ onSuccess: r => setMessage(r.emailVerified ? "Welcome back." : "Please verify your email before accessing all stories."), onError: e => setMessage(e.message) });
+  const login = trpc.reader.login.useMutation({ onSuccess: r => { setMessage(r.emailVerified ? "Welcome back." : "Please verify your email before accessing all stories."); navigate("/"); }, onError: e => setMessage(e.message) });
   const signup = trpc.reader.signup.useMutation({ onSuccess: () => setMessage("Check your inbox for a verification link."), onError: e => setMessage(e.message) });
   const forgot = trpc.reader.requestPasswordReset.useMutation({ onSuccess: () => setMessage("If that address exists, a reset link is on its way.") });
   const reset = trpc.reader.resetPassword.useMutation({ onSuccess: () => { setMessage("Password updated. You can sign in now."); navigate("/login"); }, onError: e => setMessage(e.message) });
