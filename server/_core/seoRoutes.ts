@@ -6,7 +6,7 @@ const xmlEscape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, 
 
 export function registerSeoRoutes(app: Express) {
   app.get("/robots.txt", (_req: Request, res: Response) => {
-    res.type("text/plain").send(["User-agent: *", "Allow: /", "Disallow: /admin", "Disallow: /newsroom-7x", "Disallow: /api", `Sitemap: ${siteUrl()}/sitemap.xml`, ""].join("\n"));
+    res.type("text/plain").send(["User-agent: *", "Allow: /", "Disallow: /admin", "Disallow: /falcon-system-auth", "Disallow: /api", `Sitemap: ${siteUrl()}/sitemap.xml`, ""].join("\n"));
   });
 
   app.get("/sitemap.xml", async (_req: Request, res: Response) => {

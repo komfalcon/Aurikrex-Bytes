@@ -10,6 +10,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { assertActiveAdmin, assertPermission, assertPostTransition } from "./permissions";
+import { appBaseUrl } from "./_core/env";
 
 const ADMIN_COOKIE = "aurikrex_admin_session";
 const ADMIN_DEVICE_COOKIE = "aurikrex_admin_device";
@@ -79,25 +80,26 @@ export const appRouter = router({
     cloudinarySignature: publicProcedure.query(async ({ ctx }) => { await requireAdmin(ctx); if (!cloudinaryConfigured()) return { configured: false }; return { configured: true, ...getCloudinaryUploadSignature() }; }),
   }),
   reader: router({
-    signup: publicProcedure.input(z.object({ email: z.string().email(), password: z.string().min(8) })).mutation(async ({ input }) => {
-      if (!isValidPassword(input.password)) throw new TRPCError({ code: "BAD_REQUEST", message: "Password must be at least 8 characters" });
+    signup: publicProcedure.input(z.object({ name: z.string().trim().min(1).max(120), email: z.string().email(), password: z.string().min(8) })).mutation(async ({ input }) => {
+      if (!isValidPassword(input.password)) throw new TRPCError({ code: "BAD_REQUEST", message: "Password must be at least 8 characters and include a number and symbol" });
       const email = normalizeEmail(input.email); if (await getReaderByEmail(email)) throw new TRPCError({ code: "CONFLICT", message: "An account already exists" });
       const verificationToken = randomToken(); const db = await getDb(); if (!db) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Database is not configured" });
-      await db.insert(readers).values({ email, passwordHash: await hashPassword(input.password), verificationToken, emailVerified: false });
-      const url = `${process.env.APP_BASE_URL || "http://localhost:3000"}/verify-email?token=${verificationToken}`;
+      await db.insert(readers).values({ name: input.name.trim(), email, passwordHash: await hashPassword(input.password), verificationToken, emailVerified: false });
+      const url = `${appBaseUrl()}/verify-email?token=${verificationToken}`;
       await sendAuthEmail(email, "Verify your Aurikrex Bytes account", `<p>Verify your account: <a href="${url}">${url}</a></p>`);
       return { success: true, verificationRequired: true };
     }),
     login: publicProcedure.input(z.object({ email: z.string().email(), password: z.string(), remember: z.boolean().default(false) })).mutation(async ({ input, ctx }) => {
       const reader = await getReaderByEmail(normalizeEmail(input.email)); if (!reader || !reader.passwordHash || !(await verifyPassword(input.password, reader.passwordHash))) throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password" });
+      if (!reader.emailVerified) throw new TRPCError({ code: "FORBIDDEN", message: "Please verify your email before signing in" });
       const token = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: Boolean(reader.emailVerified) }, input.remember); setSession(ctx, READER_COOKIE, token, input.remember);
       return { success: true, emailVerified: Boolean(reader.emailVerified) };
     }),
     session: publicProcedure.query(async ({ ctx }) => requireReader(ctx)),
     verifyEmail: publicProcedure.input(z.object({ token: z.string().min(10) })).mutation(async ({ input }) => { const reader = await getReaderByVerificationToken(input.token); if (!reader) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid or expired verification token" }); const db = await getDb(); if (!db) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Database is not configured" }); await db.update(readers).set({ emailVerified: true, verificationToken: null }).where(eq(readers.id, reader.id)); return { success: true }; }),
-    requestPasswordReset: publicProcedure.input(z.object({ email: z.string().email() })).mutation(async ({ input }) => { const reader = await getReaderByEmail(normalizeEmail(input.email)); if (!reader) return { success: true }; const token = randomToken(); const db = await getDb(); if (db) { await db.update(readers).set({ resetToken: token, resetTokenExpires: new Date(Date.now() + 1000 * 60 * 30) }).where(eq(readers.id, reader.id)); const url = `${process.env.APP_BASE_URL || "http://localhost:3000"}/reset-password?token=${token}`; await sendAuthEmail(reader.email, "Reset your Aurikrex Bytes password", `<p>Reset your password: <a href="${url}">${url}</a></p>`); } return { success: true }; }),
+    requestPasswordReset: publicProcedure.input(z.object({ email: z.string().email() })).mutation(async ({ input }) => { const reader = await getReaderByEmail(normalizeEmail(input.email)); if (!reader) return { success: true }; const token = randomToken(); const db = await getDb(); if (db) { await db.update(readers).set({ resetToken: token, resetTokenExpires: new Date(Date.now() + 1000 * 60 * 30) }).where(eq(readers.id, reader.id)); const url = `${appBaseUrl()}/reset-password?token=${token}`; await sendAuthEmail(reader.email, "Reset your Aurikrex Bytes password", `<p>Reset your password: <a href="${url}">${url}</a></p>`); } return { success: true }; }),
     resetPassword: publicProcedure.input(z.object({ token: z.string().min(10), password: z.string().min(8) })).mutation(async ({ input }) => { const reader = await getReaderByResetToken(input.token); if (!reader) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid or expired reset token" }); const db = await getDb(); if (!db) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Database is not configured" }); await db.update(readers).set({ passwordHash: await hashPassword(input.password), resetToken: null, resetTokenExpires: null }).where(eq(readers.id, reader.id)); return { success: true }; }),
-    googleStart: publicProcedure.query(({ ctx }) => { const state = randomToken(); const nonce = randomToken(); ctx.res.cookie(GOOGLE_STATE_COOKIE, state, { ...getSessionCookieOptions(ctx.req), maxAge: 1000 * 60 * 10 }); ctx.res.cookie(GOOGLE_NONCE_COOKIE, nonce, { ...getSessionCookieOptions(ctx.req), maxAge: 1000 * 60 * 10 }); const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID || "", redirect_uri: `${process.env.APP_BASE_URL || "http://localhost:3000"}/api/auth/google/callback`, response_type: "code", scope: "openid email profile", access_type: "offline", prompt: "select_account", state, nonce }); return { configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET), url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` }; }),
+    googleStart: publicProcedure.query(({ ctx }) => { const state = randomToken(); const nonce = randomToken(); ctx.res.cookie(GOOGLE_STATE_COOKIE, state, { ...getSessionCookieOptions(ctx.req), maxAge: 1000 * 60 * 10 }); ctx.res.cookie(GOOGLE_NONCE_COOKIE, nonce, { ...getSessionCookieOptions(ctx.req), maxAge: 1000 * 60 * 10 }); const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID || "", redirect_uri: `${appBaseUrl()}/api/auth/google/callback`, response_type: "code", scope: "openid email profile", access_type: "offline", prompt: "select_account", state, nonce }); return { configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET), url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` }; }),
   }),
   publicPosts: router({
     list: publicProcedure.query(() => listPosts()),
