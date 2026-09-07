@@ -765,7 +765,9 @@ details p {
 }
 .google-button {
   display: flex;
+  align-items: center;
   justify-content: center;
+  gap: 10px;
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 12px;
@@ -773,6 +775,11 @@ details p {
   background: var(--surface);
   font-size: 13px;
   font-weight: 600;
+}
+.google-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
 }
 .auth-links {
   display: flex;
