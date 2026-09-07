@@ -2623,3 +2623,113 @@ button,
 @media (max-width: 460px) {
   .reader-tabs button { padding-inline: 10px; }
 }
+
+/* Mobile-first reading layer: persistent thumb navigation and safe-area-aware rhythm. */
+.mobile-bottom-nav {
+  display: none;
+}
+@media (max-width: 800px) {
+  .site-footer {
+    padding-bottom: calc(92px + env(safe-area-inset-bottom));
+  }
+  .mobile-bottom-nav {
+    position: fixed;
+    z-index: 15;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2px;
+    padding: 7px 12px calc(7px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow: 0 -10px 30px rgba(15, 23, 42, .08);
+    backdrop-filter: blur(18px);
+  }
+  .mobile-bottom-nav a {
+    display: flex;
+    min-height: 52px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 3px;
+    border-radius: 10px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    touch-action: manipulation;
+  }
+  .mobile-bottom-nav a.active {
+    color: var(--blue);
+    background: var(--surface-2);
+  }
+  .mobile-bottom-nav a:active {
+    transform: scale(.97);
+  }
+  .reader-dashboard {
+    padding-bottom: 86px;
+  }
+  .dashboard-intro {
+    gap: 24px;
+  }
+  .dashboard-intro h1 {
+    max-width: 12ch;
+    font-size: clamp(2.5rem, 11vw, 4rem);
+    line-height: 1.02;
+  }
+  .dashboard-intro p {
+    font-size: 16px;
+  }
+  .dashboard-intro .streak-card {
+    width: 100%;
+    max-width: 320px;
+    min-height: 92px;
+    padding: 17px 19px;
+  }
+  .streak-card strong {
+    font-size: 38px;
+  }
+  .dashboard-heading {
+    gap: 18px;
+  }
+  .reader-tabs {
+    width: 100%;
+  }
+  .reader-tabs button {
+    flex: 1;
+    min-height: 46px;
+    font-size: 13px;
+  }
+  .post-card {
+    min-height: 0;
+  }
+  .post-card-body {
+    padding-top: 19px;
+    padding-bottom: 21px;
+  }
+  .post-card h2 {
+    font-size: 25px;
+    line-height: 1.12;
+  }
+  .read-more {
+    min-height: 44px;
+    align-items: center;
+  }
+}
+@media (max-width: 390px) {
+  .mobile-bottom-nav {
+    padding-inline: 8px;
+  }
+  .dashboard-intro h1 {
+    font-size: clamp(2.35rem, 12vw, 3.3rem);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .streak-card-celebrate,
+  .mobile-bottom-nav a:active {
+    animation: none;
+    transform: none;
+  }
+}
