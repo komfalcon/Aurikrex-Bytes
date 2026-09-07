@@ -248,10 +248,17 @@ async function addEngagement<T extends { id: number }>(rows: T[], readerId?: num
   const db = await getDb();
   if (!db || !rows.length) return rows.map(row => ({ ...row, reactionCount: 0, hasReacted: false, isBookmarked: false }));
   const ids = rows.map(row => row.id);
-  const [reactions, bookmarks] = await Promise.all([
-    db.select().from(postReactions).where(inArray(postReactions.postId, ids)),
-    db.select().from(postBookmarks).where(inArray(postBookmarks.postId, ids)),
-  ]);
+  let reactions;
+  let bookmarks;
+  try {
+    [reactions, bookmarks] = await Promise.all([
+      db.select().from(postReactions).where(inArray(postReactions.postId, ids)),
+      db.select().from(postBookmarks).where(inArray(postBookmarks.postId, ids)),
+    ]);
+  } catch (error) {
+    console.warn("[Database] Engagement tables are unavailable; serving posts without engagement state", error);
+    return rows.map(row => ({ ...row, reactionCount: 0, hasReacted: false, isBookmarked: false }));
+  }
   const reactionCounts = new Map<number, number>();
   reactions.forEach(reaction => reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1));
   const reacted = new Set(reactions.filter(reaction => reaction.readerId === readerId).map(reaction => reaction.postId));
