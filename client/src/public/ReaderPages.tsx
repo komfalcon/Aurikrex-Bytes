@@ -975,16 +975,20 @@ function ArticleSection({
   );
 }
 export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const utils = trpc.useUtils();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [token] = useState(
-    () => new URLSearchParams(location.search).get("token") || ""
+    () => new URLSearchParams(location.split("?")[1] || "").get("token") || ""
   );
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(() =>
+    new URLSearchParams(location.split("?")[1] || "").get("error") === "oauth"
+      ? "Google sign-in failed. Please try again."
+      : ""
+  );
   const [verificationEmail, setVerificationEmail] = useState("");
   const [verificationState, setVerificationState] = useState<
     "idle" | "verified" | "already_verified" | "error"
