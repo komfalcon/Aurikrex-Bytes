@@ -30,7 +30,7 @@ import { parse as parseCookieHeader2 } from "cookie";
 
 // server/db.ts
 import { createClient } from "@libsql/client";
-import { and, asc, desc, eq, gt, like, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, like, lt, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 
 // drizzle/schema.ts
@@ -121,15 +121,28 @@ function validateProductionEnvironment() {
 
 // server/db.ts
 var _db = null;
+var _schemaRepair = null;
+async function repairReaderSchema(db) {
+  const columns = await db.all(sql.raw("PRAGMA table_info('readers')"));
+  if (!columns.some((column) => column.name === "name")) {
+    await db.run(sql.raw("ALTER TABLE readers ADD COLUMN name text DEFAULT '' NOT NULL"));
+    console.info("[Database] Applied missing readers.name column");
+  }
+}
 async function getDb() {
   if (!_db && process.env.TURSO_DATABASE_URL) {
     try {
       _db = drizzle(createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN }));
+      _schemaRepair = repairReaderSchema(_db).catch((error) => {
+        console.error("[Database] Reader schema repair failed:", error);
+        throw error;
+      });
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
     }
   }
+  if (_db && _schemaRepair) await _schemaRepair;
   return _db;
 }
 async function upsertUser(user) {
@@ -283,6 +296,14 @@ function getSessionCookieOptions(req) {
     httpOnly: true,
     path: "/",
     sameSite: "none",
+    secure: isSecureRequest(req)
+  };
+}
+function getFirstPartyCookieOptions(req) {
+  return {
+    httpOnly: true,
+    path: "/",
+    sameSite: "lax",
     secure: isSecureRequest(req)
   };
 }
@@ -703,7 +724,7 @@ function registerGoogleAuthRoutes(app) {
       }
       if (!reader) return res.redirect("/login?error=oauth");
       const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true }, true);
-      res.cookie("aurikrex_reader_session", session, { ...getSessionCookieOptions(req), maxAge: 1e3 * 60 * 60 * 24 * 30 });
+      res.cookie("aurikrex_reader_session", session, { ...getFirstPartyCookieOptions(req), maxAge: 1e3 * 60 * 60 * 24 * 30 });
       return res.redirect("/");
     } catch (error) {
       console.error("[Google OAuth] callback failed", error instanceof Error ? error.message : "Unknown error");
@@ -952,7 +973,7 @@ function cookies(req) {
   }));
 }
 function setSession(ctx, name, token, remember) {
-  ctx.res.cookie(name, token, { ...getSessionCookieOptions(ctx.req), maxAge: remember ? 1e3 * 60 * 60 * 24 * 30 : 1e3 * 60 * 60 * 12 });
+  ctx.res.cookie(name, token, { ...getFirstPartyCookieOptions(ctx.req), maxAge: remember ? 1e3 * 60 * 60 * 24 * 30 : 1e3 * 60 * 60 * 12 });
 }
 async function requireAdmin(ctx) {
   const parsed = cookies(ctx.req);

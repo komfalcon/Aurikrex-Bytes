@@ -37,7 +37,10 @@ import {
   verificationEmailHtml,
 } from "./services.js";
 import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies.js";
+import {
+  getFirstPartyCookieOptions,
+  getSessionCookieOptions,
+} from "./_core/cookies.js";
 import { systemRouter } from "./_core/systemRouter.js";
 import { publicProcedure, router } from "./_core/trpc.js";
 import {
@@ -72,7 +75,7 @@ function setSession(
   remember: boolean
 ) {
   ctx.res.cookie(name, token, {
-    ...getSessionCookieOptions(ctx.req),
+    ...getFirstPartyCookieOptions(ctx.req),
     maxAge: remember ? 1000 * 60 * 60 * 24 * 30 : 1000 * 60 * 60 * 12,
   });
 }
