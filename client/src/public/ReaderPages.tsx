@@ -145,8 +145,10 @@ export function SiteFooter() {
           <p className="footer-founder">
             A product of Aurikrex, founded by Korede Omotosho
           </p>
-          <div className="footer-socials">
-            <a
+          <div className="footer-socials-wrap">
+            <span className="footer-socials-label">Follow Aurikrex Bytes</span>
+            <div className="footer-socials" aria-label="Aurikrex Bytes social links">
+              <a
               href="https://instagram.com/falcon.omotosho"
               target="_blank"
               rel="noreferrer"
@@ -185,7 +187,8 @@ export function SiteFooter() {
               aria-label="Facebook"
             >
               <Facebook size={16} />
-            </a>
+              </a>
+            </div>
           </div>
         </div>
         <div className="footer-links">
