@@ -1,16 +1,32 @@
 import { createClient } from "@libsql/client";
-import { and, asc, desc, eq, gt, like, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, like, lt, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { adminUsers, InsertUser, postViews, posts, readers, searchQueries, users } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _schemaRepair: Promise<void> | null = null;
+
+async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
+  const columns = await db.all(sql.raw("PRAGMA table_info('readers')"));
+  if (!columns.some(column => (column as { name?: string }).name === "name")) {
+    await db.run(sql.raw("ALTER TABLE readers ADD COLUMN name text DEFAULT '' NOT NULL"));
+    console.info("[Database] Applied missing readers.name column");
+  }
+}
 
 export async function getDb() {
   if (!_db && process.env.TURSO_DATABASE_URL) {
-    try { _db = drizzle(createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN })); }
+    try {
+      _db = drizzle(createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN }));
+      _schemaRepair = repairReaderSchema(_db).catch(error => {
+        console.error("[Database] Reader schema repair failed:", error);
+        throw error;
+      });
+    }
     catch (error) { console.warn("[Database] Failed to connect:", error); _db = null; }
   }
+  if (_db && _schemaRepair) await _schemaRepair;
   return _db;
 }
 export async function upsertUser(user: InsertUser): Promise<void> {
