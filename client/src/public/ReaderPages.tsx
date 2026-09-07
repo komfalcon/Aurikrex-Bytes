@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useState, type ComponentProps } from "react";
+import { FormEvent, ReactNode, useEffect, useState, type ComponentProps } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
@@ -6,8 +6,10 @@ import {
   ChevronDown,
   Clock3,
   Facebook,
+  Flame,
   Instagram,
   Linkedin,
+  LogOut,
   Mail,
   MailOpen,
   Moon,
@@ -40,10 +42,10 @@ const optimizedImage = (url: string, width: number) =>
   !url.includes("f_auto")
     ? url.replace("/upload/", `/upload/f_auto,q_auto,w_${width}/`)
     : url;
-export function Logo({ compact = false }: { compact?: boolean }) {
+export function Logo({ compact = false, href = "/" }: { compact?: boolean; href?: string }) {
   return (
     <Link
-      href="/"
+      href={href}
       className={`brand ${compact ? "brand-compact" : ""}`}
       aria-label="Aurikrex Bytes home"
     >
@@ -69,22 +71,31 @@ function ThemeToggle() {
 }
 export function SiteHeader() {
   const [menu, setMenu] = useState(false);
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const logout = trpc.auth.logout.useMutation({ onSuccess: () => navigate("/") });
+  const signedIn = Boolean(session.data);
+  const homePath = signedIn ? "/dashboard" : "/";
   return (
     <header className="site-header">
-      <Logo />
+      <Logo href={homePath} />
       <nav className="main-nav" aria-label="Primary">
-        <Link href="/">Today</Link>
+        <Link href={homePath}>{signedIn ? "Dashboard" : "Today"}</Link>
         <Link href="/archive">All Bytes</Link>
         <Link href="/how-it-works">About</Link>
       </nav>
       <div className="header-actions">
         <ThemeToggle />
-        <Link className="header-login" href={authRoutes.login}>
-          Sign in
-        </Link>
-        <Link className="button button-small" href={authRoutes.signup}>
-          Join free <ArrowRight size={14} />
-        </Link>
+        {signedIn ? (
+          <button className="header-login text-button" onClick={() => logout.mutate()}>
+            <LogOut size={14} /> Sign out
+          </button>
+        ) : (
+          <>
+            <Link className="header-login" href={authRoutes.login}>Sign in</Link>
+            <Link className="button button-small" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link>
+          </>
+        )}
         <button
           className="mobile-menu"
           onClick={() => setMenu(!menu)}
@@ -96,11 +107,10 @@ export function SiteHeader() {
       </div>
       {menu && (
         <nav className="mobile-nav">
-          <Link href="/">Today</Link>
+          <Link href={homePath}>{signedIn ? "Dashboard" : "Today"}</Link>
           <Link href="/archive">All Bytes</Link>
           <Link href="/how-it-works">About</Link>
-          <Link href={authRoutes.login}>Sign in</Link>
-          <Link className="mobile-nav-join" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link>
+          {signedIn ? <button className="mobile-nav-join text-button" onClick={() => logout.mutate()}>Sign out</button> : <><Link href={authRoutes.login}>Sign in</Link><Link className="mobile-nav-join" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link></>}
         </nav>
       )}
     </header>
@@ -265,6 +275,11 @@ function EmptyToday() {
   );
 }
 export function Home() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  useEffect(() => {
+    if (session.data) navigate("/dashboard");
+  }, [navigate, session.data]);
   const today = trpc.publicPosts.today.useQuery();
   const posts = today.data ?? [];
   return (
@@ -419,6 +434,52 @@ export function Home() {
               Get started <ArrowRight size={15} />
             </Link>
           </div>
+        </section>
+      </main>
+    </PublicLayout>
+  );
+}
+export function ReaderDashboard() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const [tab, setTab] = useState<"today" | "all">("today");
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const dashboard = trpc.reader.dashboard.useQuery(
+    { timeZone },
+    { enabled: Boolean(session.data), retry: false }
+  );
+  useEffect(() => {
+    if (!session.isLoading && !session.data) navigate("/login");
+  }, [navigate, session.data, session.isLoading]);
+  if (session.isLoading || (!session.data && !dashboard.error))
+    return <div className="route-loading">Opening your briefing…</div>;
+  const data = dashboard.data;
+  const posts = tab === "today" ? data?.todayPosts ?? [] : data?.allPosts ?? [];
+  const firstName = data?.reader.name?.trim().split(/\s+/)[0] || "reader";
+  return (
+    <PublicLayout seo={{ title: "Your dashboard — Aurikrex Bytes", description: "Your daily Aurikrex Bytes briefing and reading streak.", path: "/dashboard", robots: "noindex,nofollow" }}>
+      <main className="container reader-dashboard">
+        <section className="dashboard-intro">
+          <div>
+            <span className="eyebrow"><span className="live-dot" /> Your reading desk</span>
+            <h1>Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}, {firstName}.</h1>
+            <p>Here’s the signal worth your attention today.</p>
+          </div>
+          <div className={`streak-card ${data?.streak.increased ? "streak-card-celebrate" : ""}`}>
+            <div className="streak-flame"><Flame size={25} fill="currentColor" /></div>
+            <div><strong>{data?.streak.currentStreak ?? 0}</strong><span>day streak</span></div>
+            <small>Best: {data?.streak.longestStreak ?? 0} days</small>
+          </div>
+        </section>
+        <section className="dashboard-feed">
+          <div className="section-heading dashboard-heading">
+            <div><span className="eyebrow">Your briefing</span><h2>{tab === "today" ? "Today’s Bytes" : "All Bytes"}</h2></div>
+            <div className="reader-tabs" role="tablist" aria-label="Reader feed">
+              <button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Today</button>
+              <button className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
+            </div>
+          </div>
+          {dashboard.isLoading ? <div className="skeleton-grid"><div /><div /><div /></div> : posts.length ? <div className="post-grid">{posts.map((post: any, index: number) => <PostCard key={post.id} post={post} featured={tab === "today" && index === 0} />)}</div> : <EmptyToday />}
         </section>
       </main>
     </PublicLayout>
@@ -881,6 +942,7 @@ function ArticleSection({
 }
 export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const [, navigate] = useLocation();
+  const utils = trpc.useUtils();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -899,14 +961,19 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
     { label: "One symbol", valid: /[^A-Za-z0-9]/.test(password) },
   ];
   const login = trpc.reader.login.useMutation({
-    onSuccess: r =>
-      setMessage(
-        r.emailVerified
-          ? "Welcome back."
-          : "Please verify your email before accessing all stories."
-      ),
+    onSuccess: async r => {
+      await utils.reader.session.invalidate();
+      if (r.emailVerified) navigate("/dashboard");
+      else setMessage("Please verify your email before accessing all stories.");
+    },
     onError: e => setMessage(e.message),
   });
+  const googleStart = trpc.reader.googleStart.useQuery(undefined, { enabled: false });
+  const startGoogle = async () => {
+    const result = await googleStart.refetch();
+    if (result.data?.configured) window.location.assign(result.data.url);
+    else setMessage("Google sign-in is not configured yet.");
+  };
   const signup = trpc.reader.signup.useMutation({
     onSuccess: r => {
       setVerificationEmail(r.email);
@@ -1201,9 +1268,9 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                     <div className="auth-divider">
                       <span>or continue with</span>
                     </div>
-                    <a className="google-button" href="/login">
-                      Continue with Google
-                    </a>
+                    <button type="button" className="google-button" onClick={startGoogle} disabled={googleStart.isFetching}>
+                      {googleStart.isFetching ? "Connecting…" : "Continue with Google"}
+                    </button>
                     <div className="auth-links">
                       <Link href={authRoutes.signup}>Create an account</Link>
                       <Link href={authRoutes.forgotPassword}>

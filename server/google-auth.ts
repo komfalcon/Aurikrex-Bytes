@@ -30,7 +30,7 @@ export function registerGoogleAuthRoutes(app: Express) {
       if (!reader) return res.redirect("/login?error=oauth");
       const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true }, true);
       res.cookie("aurikrex_reader_session", session, { ...getFirstPartyCookieOptions(req), maxAge: 1000 * 60 * 60 * 24 * 30 });
-      return res.redirect("/");
+      return res.redirect("/dashboard");
     } catch (error) { console.error("[Google OAuth] callback failed", error instanceof Error ? error.message : "Unknown error"); return res.redirect("/login?error=oauth"); }
   });
 }
