@@ -144,3 +144,5 @@ button, .button, .icon-button, .mobile-menu, .footer-socials a, .admin-icon-butt
 .legal-meta { margin: 24px 0 32px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--muted); font-size: 13px; }
 .legal-meta p { margin: 6px 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.password-requirements{display:grid;gap:5px;list-style:none;margin:-7px 0 0;padding:0;color:var(--muted);font-size:12px;font-weight:500}.password-requirements li{display:flex;align-items:center;gap:6px;transition:color .2s,transform .2s}.password-requirements li.valid{color:#15803d;transform:translateX(3px)}
