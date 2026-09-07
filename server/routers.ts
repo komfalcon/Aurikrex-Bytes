@@ -6,7 +6,7 @@ import { createToken, hashPassword, isValidPassword, normalizeEmail, randomToken
 import { getAdminByEmail, getAdminById, getAdminByRememberToken, getAnalytics, getDb, getPostById, getPublishedPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts, listTodaysPublishedPosts, recordPostView, recordSearchQuery, searchPublishedPosts } from "./db.js";
 import { cloudinaryConfigured, getCloudinaryUploadSignature, sendAuthEmail } from "./services.js";
 import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies.js";
+import { getFirstPartyCookieOptions, getSessionCookieOptions } from "./_core/cookies.js";
 import { systemRouter } from "./_core/systemRouter.js";
 import { publicProcedure, router } from "./_core/trpc.js";
 import { assertActiveAdmin, assertPermission, assertPostTransition } from "./permissions.js";
@@ -19,7 +19,7 @@ const GOOGLE_STATE_COOKIE = "aurikrex_google_state";
 const GOOGLE_NONCE_COOKIE = "aurikrex_google_nonce";
 const genericNotFound = () => new TRPCError({ code: "NOT_FOUND", message: "Not found" });
 function cookies(req: { headers: { cookie?: string } }) { return Object.fromEntries((req.headers.cookie || "").split(";").filter(Boolean).map(part => { const [key, ...value] = part.trim().split("="); return [key, decodeURIComponent(value.join("="))]; })); }
-function setSession(ctx: { res: { cookie: Function }; req: any }, name: string, token: string, remember: boolean) { ctx.res.cookie(name, token, { ...getSessionCookieOptions(ctx.req), maxAge: remember ? 1000 * 60 * 60 * 24 * 30 : 1000 * 60 * 60 * 12 }); }
+function setSession(ctx: { res: { cookie: Function }; req: any }, name: string, token: string, remember: boolean) { ctx.res.cookie(name, token, { ...getFirstPartyCookieOptions(ctx.req), maxAge: remember ? 1000 * 60 * 60 * 24 * 30 : 1000 * 60 * 60 * 12 }); }
 
 async function requireAdmin(ctx: { req: any }) {
   const parsed = cookies(ctx.req);

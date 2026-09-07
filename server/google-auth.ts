@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { readers } from "../drizzle/schema.js";
 import { createToken, randomToken } from "./auth.js";
 import { getDb, getReaderByEmail } from "./db.js";
-import { getSessionCookieOptions } from "./_core/cookies.js";
+import { getFirstPartyCookieOptions, getSessionCookieOptions } from "./_core/cookies.js";
 import { appBaseUrl } from "./_core/env.js";
 
 export function registerGoogleAuthRoutes(app: Express) {
@@ -29,7 +29,7 @@ export function registerGoogleAuthRoutes(app: Express) {
       else if (!reader.googleId) { await db.update(readers).set({ googleId: payload.sub, emailVerified: true, verificationToken: null }).where(eq(readers.id, reader.id)); }
       if (!reader) return res.redirect("/login?error=oauth");
       const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true }, true);
-      res.cookie("aurikrex_reader_session", session, { ...getSessionCookieOptions(req), maxAge: 1000 * 60 * 60 * 24 * 30 });
+      res.cookie("aurikrex_reader_session", session, { ...getFirstPartyCookieOptions(req), maxAge: 1000 * 60 * 60 * 24 * 30 });
       return res.redirect("/");
     } catch (error) { console.error("[Google OAuth] callback failed", error instanceof Error ? error.message : "Unknown error"); return res.redirect("/login?error=oauth"); }
   });
