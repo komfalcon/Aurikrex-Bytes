@@ -14,10 +14,12 @@ export function appBaseUrl() {
 }
 
 export function validateProductionEnvironment() {
-  if (!ENV.isProduction) return;
+  if (!ENV.isProduction) return [];
+  const issues: string[] = [];
   const secret = process.env.JWT_SECRET || "";
   if (secret.length < 32 || /local|dev|placeholder|change[-_ ]?me|secret/i.test(secret)) {
-    throw new Error("JWT_SECRET must be a strong, production-only secret of at least 32 characters.");
+    issues.push("JWT_SECRET must be a strong, production-only secret of at least 32 characters");
   }
-  if (!appBaseUrl().startsWith("https://")) throw new Error("APP_BASE_URL must be an HTTPS production URL.");
+  if (!appBaseUrl().startsWith("https://")) issues.push("APP_BASE_URL must be an HTTPS production URL");
+  return issues;
 }
