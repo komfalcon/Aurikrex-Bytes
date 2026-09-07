@@ -2,12 +2,15 @@ import { FormEvent, ReactNode, useEffect, useState, type ComponentProps } from "
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
+  BookOpen,
   Check,
   ChevronDown,
   Clock3,
   Facebook,
   Flame,
+  Home as HomeIcon,
   Instagram,
+  Info,
   Linkedin,
   LogOut,
   Mail,
@@ -117,11 +120,13 @@ export function SiteHeader() {
   );
 }
 export function SiteFooter() {
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const readerHome = session.data ? "/dashboard" : "/";
   return (
     <footer className="site-footer">
       <div className="footer-inner">
         <div className="footer-brand-block">
-          <Logo compact />
+          <Logo compact href={readerHome} />
           <p className="footer-note">
             A calmer way to keep up.
             <br />
@@ -175,7 +180,7 @@ export function SiteFooter() {
         </div>
         <div className="footer-links">
           <span>Explore</span>
-          <Link href="/">Today's Bytes</Link>
+          <Link href={readerHome}>Today's Bytes</Link>
           <Link href="/archive">All Bytes</Link>
           <Link href="/how-it-works">How it works</Link>
         </div>
@@ -192,6 +197,24 @@ export function SiteFooter() {
         <span>Made for the signal-seekers.</span>
       </div>
     </footer>
+  );
+}
+function MobileBottomNav() {
+  const [location] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const links = [
+    { href: session.data ? "/dashboard" : "/", label: "Today", icon: <HomeIcon size={18} /> },
+    { href: "/archive", label: "All Bytes", icon: <BookOpen size={18} /> },
+    { href: "/how-it-works", label: "About", icon: <Info size={18} /> },
+  ];
+  return (
+    <nav className="mobile-bottom-nav" aria-label="Mobile primary navigation">
+      {links.map(link => (
+        <Link key={link.href} href={link.href} className={location === link.href ? "active" : ""} aria-current={location === link.href ? "page" : undefined}>
+          {link.icon}<span>{link.label}</span>
+        </Link>
+      ))}
+    </nav>
   );
 }
 export function PublicLayout({
@@ -214,6 +237,7 @@ export function PublicLayout({
       <SiteHeader />
       {children}
       <SiteFooter />
+      <MobileBottomNav />
     </>
   );
 }
