@@ -1,8 +1,8 @@
 import { createClient } from "@libsql/client";
 import { and, asc, desc, eq, gt, like, lt, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
-import { adminUsers, InsertUser, postViews, posts, readers, searchQueries, users } from "../drizzle/schema";
-import { ENV } from "./_core/env";
+import { adminUsers, InsertUser, postViews, posts, readers, searchQueries, users } from "../drizzle/schema.js";
+import { ENV } from "./_core/env.js";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 

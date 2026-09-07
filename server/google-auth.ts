@@ -1,11 +1,11 @@
 import { OAuth2Client } from "google-auth-library";
 import type { Express } from "express";
 import { eq } from "drizzle-orm";
-import { readers } from "../drizzle/schema";
-import { createToken, randomToken } from "./auth";
-import { getDb, getReaderByEmail } from "./db";
-import { getSessionCookieOptions } from "./_core/cookies";
-import { appBaseUrl } from "./_core/env";
+import { readers } from "../drizzle/schema.js";
+import { createToken, randomToken } from "./auth.js";
+import { getDb, getReaderByEmail } from "./db.js";
+import { getSessionCookieOptions } from "./_core/cookies.js";
+import { appBaseUrl } from "./_core/env.js";
 
 export function registerGoogleAuthRoutes(app: Express) {
   app.get("/api/auth/google/callback", async (req, res) => {

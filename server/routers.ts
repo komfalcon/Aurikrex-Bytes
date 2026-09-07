@@ -1,16 +1,16 @@
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { adminUsers, posts, readers } from "../drizzle/schema";
-import { createToken, hashPassword, isValidPassword, normalizeEmail, randomToken, readToken, verifyPassword } from "./auth";
-import { getAdminByEmail, getAdminById, getAdminByRememberToken, getAnalytics, getDb, getPostById, getPublishedPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts, listTodaysPublishedPosts, recordPostView, recordSearchQuery, searchPublishedPosts } from "./db";
-import { cloudinaryConfigured, getCloudinaryUploadSignature, sendAuthEmail } from "./services";
+import { adminUsers, posts, readers } from "../drizzle/schema.js";
+import { createToken, hashPassword, isValidPassword, normalizeEmail, randomToken, readToken, verifyPassword } from "./auth.js";
+import { getAdminByEmail, getAdminById, getAdminByRememberToken, getAnalytics, getDb, getPostById, getPublishedPostById, getReaderByEmail, getReaderByResetToken, getReaderByVerificationToken, listAdmins, listPosts, listTodaysPublishedPosts, recordPostView, recordSearchQuery, searchPublishedPosts } from "./db.js";
+import { cloudinaryConfigured, getCloudinaryUploadSignature, sendAuthEmail } from "./services.js";
 import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies";
-import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
-import { assertActiveAdmin, assertPermission, assertPostTransition } from "./permissions";
-import { appBaseUrl } from "./_core/env";
+import { getSessionCookieOptions } from "./_core/cookies.js";
+import { systemRouter } from "./_core/systemRouter.js";
+import { publicProcedure, router } from "./_core/trpc.js";
+import { assertActiveAdmin, assertPermission, assertPostTransition } from "./permissions.js";
+import { appBaseUrl } from "./_core/env.js";
 
 const ADMIN_COOKIE = "aurikrex_admin_session";
 const ADMIN_DEVICE_COOKIE = "aurikrex_admin_device";
