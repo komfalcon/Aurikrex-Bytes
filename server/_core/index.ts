@@ -34,7 +34,10 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function setupApp() {
-  validateProductionEnvironment();
+  const environmentIssues = validateProductionEnvironment();
+  if (environmentIssues.length) {
+    console.error(`[Environment] Production configuration incomplete: ${environmentIssues.join("; ")}`);
+  }
   const app = express();
   let server: Server | undefined;
   if (!process.env.VERCEL) {
