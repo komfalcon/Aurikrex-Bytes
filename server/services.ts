@@ -4,6 +4,9 @@ import nodemailer from "nodemailer";
 function mailTransport() {
   const host = process.env.SMTP_HOST;
   if (!host) return null;
+  // Mailgun signs mail for verified domains at the relay. The optional Nodemailer
+  // DKIM hook below is disabled unless all three provider-specific variables are
+  // deliberately supplied for a future SMTP provider; none are required for Mailgun.
   return nodemailer.createTransport({
     host,
     port: Number(process.env.SMTP_PORT || 587),
