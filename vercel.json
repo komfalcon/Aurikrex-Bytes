@@ -2,7 +2,7 @@
   "version": 2,
   "builds": [
     {
-      "src": "dist/index.js",
+      "src": "api/index.js",
       "use": "@vercel/node"
     },
     {
@@ -55,19 +55,19 @@
   "rewrites": [
     {
       "source": "/robots.txt",
-      "destination": "/dist/index.js"
+      "destination": "/api/index.js"
     },
     {
       "source": "/sitemap.xml",
-      "destination": "/dist/index.js"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/(.*)",
-      "destination": "/dist/index.js"
+      "destination": "/api/index.js"
     },
     {
       "source": "/manus-storage/(.*)",
-      "destination": "/dist/index.js"
+      "destination": "/api/index.js"
     },
     {
       "source": "/(.*)",
