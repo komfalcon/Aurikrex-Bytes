@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidPassword } from "./auth";
+import { isValidPassword } from "./auth.js";
 
 describe("reader password policy", () => {
   it("requires length, a number, and a symbol", () => {

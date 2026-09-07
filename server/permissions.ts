@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import type { AdminUser } from "../drizzle/schema";
+import type { AdminUser } from "../drizzle/schema.js";
 
 export type AdminRole = "admin" | "editor";
 export type Permission =

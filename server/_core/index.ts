@@ -3,16 +3,16 @@ import express from "express";
 import { createServer, type Server } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "./oauth";
-import { registerStorageProxy } from "./storageProxy";
-import { registerGoogleAuthRoutes } from "../google-auth";
-import { appRouter } from "../routers";
-import { createContext } from "./context";
-import { serveStatic, setupVite } from "./vite";
-import { registerSeoRoutes } from "./seoRoutes";
-import { authRateLimit, securityHeaders } from "./security";
-import { validateProductionEnvironment } from "./env";
-import { publishDuePosts } from "../db";
+import { registerOAuthRoutes } from "./oauth.js";
+import { registerStorageProxy } from "./storageProxy.js";
+import { registerGoogleAuthRoutes } from "../google-auth.js";
+import { appRouter } from "../routers.js";
+import { createContext } from "./context.js";
+import { serveStatic, setupVite } from "./vite.js";
+import { registerSeoRoutes } from "./seoRoutes.js";
+import { authRateLimit, securityHeaders } from "./security.js";
+import { validateProductionEnvironment } from "./env.js";
+import { publishDuePosts } from "../db.js";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {

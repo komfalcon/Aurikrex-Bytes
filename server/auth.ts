@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import { ENV } from "./_core/env";
+import { ENV } from "./_core/env.js";
 
 export type SessionPayload = { kind: "admin" | "reader"; id: number; email: string; role?: "admin" | "editor"; verified?: boolean };
 

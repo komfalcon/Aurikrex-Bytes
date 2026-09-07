@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertPermission, canTransitionPost, hasPermission } from "./permissions";
+import { assertPermission, canTransitionPost, hasPermission } from "./permissions.js";
 
 describe("role permissions", () => {
   it("allows editors to create, edit, and submit but not publish, schedule, or manage users", () => {
