@@ -8,3 +8,16 @@ export const ENV = {
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
 };
+
+export function appBaseUrl() {
+  return (process.env.APP_BASE_URL || (ENV.isProduction ? "" : "http://localhost:3000")).replace(/\/$/, "");
+}
+
+export function validateProductionEnvironment() {
+  if (!ENV.isProduction) return;
+  const secret = process.env.JWT_SECRET || "";
+  if (secret.length < 32 || /local|dev|placeholder|change[-_ ]?me|secret/i.test(secret)) {
+    throw new Error("JWT_SECRET must be a strong, production-only secret of at least 32 characters.");
+  }
+  if (!appBaseUrl().startsWith("https://")) throw new Error("APP_BASE_URL must be an HTTPS production URL.");
+}

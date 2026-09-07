@@ -4,7 +4,15 @@ import nodemailer from "nodemailer";
 function mailTransport() {
   const host = process.env.SMTP_HOST;
   if (!host) return null;
-  return nodemailer.createTransport({ host, port: Number(process.env.SMTP_PORT || 587), secure: Number(process.env.SMTP_PORT) === 465, auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD } });
+  return nodemailer.createTransport({
+    host,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: Number(process.env.SMTP_PORT) === 465,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+    dkim: process.env.SMTP_DKIM_PRIVATE_KEY && process.env.SMTP_DKIM_DOMAIN && process.env.SMTP_DKIM_SELECTOR
+      ? { domainName: process.env.SMTP_DKIM_DOMAIN, keySelector: process.env.SMTP_DKIM_SELECTOR, privateKey: process.env.SMTP_DKIM_PRIVATE_KEY }
+      : undefined,
+  });
 }
 
 export async function sendEmail(to: string, subject: string, html: string, fromAddress?: string) {
@@ -18,7 +26,10 @@ export async function sendEmail(to: string, subject: string, html: string, fromA
 }
 
 export async function sendAuthEmail(to: string, subject: string, html: string) {
-  // Use support@aurikrex.tech for OTP and auth emails
+  await sendEmail(to, subject, html, process.env.SMTP_FROM || "info@aurikrex.tech");
+}
+
+export async function sendSupportEmail(to: string, subject: string, html: string) {
   await sendEmail(to, subject, html, process.env.SMTP_FROM_SUPPORT || "support@aurikrex.tech");
 }
 

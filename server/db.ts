@@ -1,5 +1,5 @@
 import { createClient } from "@libsql/client";
-import { and, asc, desc, eq, gt, like, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, like, lt, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { adminUsers, InsertUser, postViews, posts, readers, searchQueries, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -30,6 +30,12 @@ export async function getReaderByVerificationToken(token: string) { const db = a
 export async function getReaderByResetToken(token: string) { const db = await getDb(); if (!db) return undefined; const result = await db.select().from(readers).where(and(eq(readers.resetToken, token), gt(readers.resetTokenExpires, new Date()))).limit(1); return result[0]; }
 export async function listPosts() { const db = await getDb(); if (!db) return []; return db.select().from(posts).orderBy(posts.updatedAt); }
 export async function getPostById(id: number) { const db = await getDb(); if (!db) return undefined; const result = await db.select().from(posts).where(eq(posts.id, id)).limit(1); return result[0]; }
+export async function publishDuePosts() {
+  const db = await getDb(); if (!db) return 0;
+  const due = await db.select({ id: posts.id }).from(posts).where(and(eq(posts.status, "scheduled"), lt(posts.scheduledTime, new Date())));
+  for (const post of due) await db.update(posts).set({ status: "published", publishedTime: new Date(), scheduledTime: null, updatedAt: new Date() }).where(and(eq(posts.id, post.id), eq(posts.status, "scheduled")));
+  return due.length;
+}
 export async function listPublishedPosts() { const db = await getDb(); if (!db) return []; return db.select({ id: posts.id, headline: posts.headline, imageUrl: posts.imageUrl, publishedTime: posts.publishedTime, updatedAt: posts.updatedAt }).from(posts).where(eq(posts.status, "published")).orderBy(desc(posts.publishedTime), desc(posts.id)); }
 function localCalendarDay(value: Date, timeZone: string) { return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(value); }
 export async function listTodaysPublishedPosts(timeZone = process.env.APP_TIMEZONE || "UTC") { const db = await getDb(); if (!db) return []; const today = localCalendarDay(new Date(), timeZone); const published = await db.select().from(posts).where(eq(posts.status, "published")).orderBy(asc(posts.publishedTime)); return published.filter(post => post.publishedTime && localCalendarDay(post.publishedTime, timeZone) === today); }

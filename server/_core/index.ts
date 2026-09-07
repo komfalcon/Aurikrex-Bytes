@@ -11,6 +11,8 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { registerSeoRoutes } from "./seoRoutes";
 import { authRateLimit, securityHeaders } from "./security";
+import { validateProductionEnvironment } from "./env";
+import { publishDuePosts } from "../db";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -32,6 +34,7 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function setupApp() {
+  validateProductionEnvironment();
   const app = express();
   let server: Server | undefined;
   if (!process.env.VERCEL) {
@@ -42,6 +45,11 @@ async function setupApp() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
+  app.get("/api/cron/publish", async (req, res) => {
+    const authorization = req.headers.authorization;
+    if (process.env.CRON_SECRET && authorization !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).json({ error: "Unauthorized" });
+    try { return res.json({ published: await publishDuePosts() }); } catch (error) { console.error("[Cron] publish failed", error); return res.status(500).json({ error: "Publish job failed" }); }
+  });
   app.use(authRateLimit);
   registerStorageProxy(app);
   registerOAuthRoutes(app);

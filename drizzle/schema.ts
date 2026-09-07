@@ -41,6 +41,7 @@ export const adminUsers = sqliteTable("admin_users", {
 
 export const readers = sqliteTable("readers", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull().default(""),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash"),
   googleId: text("google_id").unique(),
