@@ -223,6 +223,7 @@ export async function listPublishedPosts() {
     .select({
       id: posts.id,
       headline: posts.headline,
+      body: posts.body,
       imageUrl: posts.imageUrl,
       publishedTime: posts.publishedTime,
       updatedAt: posts.updatedAt,
