@@ -516,6 +516,13 @@ h2 {
   padding-bottom: 120px;
   max-width: 900px;
 }
+@media (min-width: 801px) {
+  .detail-page { max-width: 980px; }
+  .detail-page article { max-width: 880px; margin-inline: auto; }
+  .detail-page h1 { max-width: 780px; font-size: clamp(3rem, 4.3vw, 4.8rem); line-height: 1.06; }
+  .detail-body, .detail-actions { max-width: 680px; margin-inline: auto; }
+  .detail-body p { text-shadow: none; filter: none; -webkit-text-stroke: 0; }
+}
 .back-link {
   color: var(--blue);
   font-size: 13px;
@@ -550,6 +557,18 @@ h2 {
   line-height: 1.8;
   margin: 0 0 24px;
 }
+.post-card-link { display: flex; flex: 1; flex-direction: column; }
+.post-card-actions { padding: 0 22px 18px; background: var(--surface); }
+.engagement-actions { display: flex; align-items: center; gap: 5px; }
+.engagement-button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 8px; padding: 7px 8px; background: transparent; color: var(--muted); font-size: 11px; transition: color .18s, background .18s, transform .18s; }
+.engagement-button:hover, .engagement-button.active { color: var(--blue); background: var(--surface-2); }
+.fire-button.active { color: #f97316; }
+.fire-button:active { transform: scale(1.12); }
+.share-control { position: relative; }
+.share-menu { position: absolute; z-index: 5; bottom: calc(100% + 8px); left: 0; display: grid; min-width: 130px; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); }
+.share-menu button, .share-menu a { display: flex; align-items: center; gap: 7px; border: 0; border-radius: 6px; padding: 8px 9px; background: transparent; color: var(--ink); font-size: 11px; text-align: left; white-space: nowrap; }
+.share-menu button:hover, .share-menu a:hover { background: var(--surface-2); color: var(--blue); }
+.detail-actions { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 16px; }
 .detail-loading {
   height: 500px;
   background: var(--surface-2);
@@ -2777,4 +2796,12 @@ button,
     width: 44px;
     height: 44px;
   }
+}
+
+@media (min-width: 801px) {
+  .detail-page { max-width: 980px; }
+  .detail-page article { max-width: 880px; margin-inline: auto; }
+  .detail-page h1 { max-width: 780px; font-size: clamp(3rem, 4.3vw, 4.8rem); line-height: 1.06; }
+  .detail-body, .detail-actions { max-width: 680px; margin-inline: auto; }
+  .detail-body p { text-shadow: none; filter: none; -webkit-text-stroke: 0; }
 }
