@@ -1,5 +1,5 @@
 import { createClient } from "@libsql/client";
-import { and, asc, desc, eq, gt, inArray, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import {
   adminUsers,
@@ -230,7 +230,7 @@ export async function publishDuePosts() {
     .select({ id: posts.id })
     .from(posts)
     .where(
-      and(eq(posts.status, "scheduled"), lt(posts.scheduledTime, new Date()))
+        and(eq(posts.status, "scheduled"), lte(posts.scheduledTime, new Date()))
     );
   for (const post of due)
     await db
@@ -449,14 +449,16 @@ export async function getAnalytics() {
     return {
       totalReaders: 0,
       totalViews: 0,
+      totalReactions: 0,
       mostRead: [],
+      mostReacted: [],
       topSearches: [],
       viewsByHour: Array.from({ length: 24 }, (_, hour) => ({
         hour,
         views: 0,
       })),
     };
-  const [published, views, searches, readerRows] = await Promise.all([
+  const [published, views, searches, readerRows, reactions] = await Promise.all([
     db
       .select({ id: posts.id, headline: posts.headline, status: posts.status })
       .from(posts)
@@ -464,6 +466,7 @@ export async function getAnalytics() {
     db.select().from(postViews),
     db.select().from(searchQueries),
     db.select({ id: readers.id }).from(readers),
+    db.select().from(postReactions),
   ]);
   const titles = new Map(published.map(post => [post.id, post.headline]));
   const viewCounts = new Map<number, number>();
@@ -483,13 +486,22 @@ export async function getAnalytics() {
   const searchCounts = new Map<string, number>();
   for (const entry of searches)
     searchCounts.set(entry.query, (searchCounts.get(entry.query) || 0) + 1);
+  const reactionCounts = new Map<number, number>();
+  for (const reaction of reactions)
+    if (titles.has(reaction.postId))
+      reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1);
   return {
     totalReaders: readerRows.length,
     totalViews: views.length,
+    totalReactions: reactions.length,
     mostRead: Array.from(viewCounts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10)
       .map(([id, viewCount]) => ({ id, headline: titles.get(id), viewCount })),
+    mostReacted: Array.from(reactionCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([id, reactionCount]) => ({ id, headline: titles.get(id), reactionCount })),
     topSearches: Array.from(searchCounts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10)
