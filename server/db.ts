@@ -23,6 +23,7 @@ async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
   );
   const repairs = [
     ["name", "text DEFAULT '' NOT NULL"],
+    ["verification_token_used", "text"],
     ["current_streak", "integer DEFAULT 0 NOT NULL"],
     ["longest_streak", "integer DEFAULT 0 NOT NULL"],
     ["last_active_date", "text"],
