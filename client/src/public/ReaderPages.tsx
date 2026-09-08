@@ -1078,6 +1078,10 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const [verificationState, setVerificationState] = useState<
     "idle" | "verified" | "already_verified" | "error"
   >("idle");
+  const google = trpc.reader.googleStart.useQuery(undefined, {
+    enabled: mode === "login" || mode === "signup",
+    retry: false,
+  });
   const requirements = [
     { label: "At least 8 characters", valid: password.length >= 8 },
     { label: "One number", valid: /\d/.test(password) },
@@ -1385,7 +1389,14 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                     <div className="auth-divider">
                       <span>or continue with</span>
                     </div>
-                    <a className="google-button" href="/login">
+                    <a
+                      className={`google-button ${google.isLoading ? "is-loading" : ""}`}
+                      href={google.data?.url}
+                      aria-disabled={!google.data?.url}
+                      onClick={event => {
+                        if (!google.data?.url) event.preventDefault();
+                      }}
+                    >
                       <GoogleIcon />
                       <span>Continue with Google</span>
                     </a>
