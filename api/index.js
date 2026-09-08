@@ -30,7 +30,7 @@ import { parse as parseCookieHeader2 } from "cookie";
 
 // server/db.ts
 import { createClient } from "@libsql/client";
-import { and, asc, desc, eq, gt, inArray, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 
 // drizzle/schema.ts
@@ -327,7 +327,7 @@ async function publishDuePosts() {
   const db = await getDb();
   if (!db) return 0;
   const due = await db.select({ id: posts.id }).from(posts).where(
-    and(eq(posts.status, "scheduled"), lt(posts.scheduledTime, /* @__PURE__ */ new Date()))
+    and(eq(posts.status, "scheduled"), lte(posts.scheduledTime, /* @__PURE__ */ new Date()))
   );
   for (const post of due)
     await db.update(posts).set({
@@ -497,18 +497,21 @@ async function getAnalytics() {
     return {
       totalReaders: 0,
       totalViews: 0,
+      totalReactions: 0,
       mostRead: [],
+      mostReacted: [],
       topSearches: [],
       viewsByHour: Array.from({ length: 24 }, (_, hour) => ({
         hour,
         views: 0
       }))
     };
-  const [published, views, searches, readerRows] = await Promise.all([
+  const [published, views, searches, readerRows, reactions] = await Promise.all([
     db.select({ id: posts.id, headline: posts.headline, status: posts.status }).from(posts).where(eq(posts.status, "published")),
     db.select().from(postViews),
     db.select().from(searchQueries),
-    db.select({ id: readers.id }).from(readers)
+    db.select({ id: readers.id }).from(readers),
+    db.select().from(postReactions)
   ]);
   const titles = new Map(published.map((post) => [post.id, post.headline]));
   const viewCounts = /* @__PURE__ */ new Map();
@@ -527,10 +530,16 @@ async function getAnalytics() {
   const searchCounts = /* @__PURE__ */ new Map();
   for (const entry of searches)
     searchCounts.set(entry.query, (searchCounts.get(entry.query) || 0) + 1);
+  const reactionCounts = /* @__PURE__ */ new Map();
+  for (const reaction of reactions)
+    if (titles.has(reaction.postId))
+      reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1);
   return {
     totalReaders: readerRows.length,
     totalViews: views.length,
+    totalReactions: reactions.length,
     mostRead: Array.from(viewCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, viewCount]) => ({ id, headline: titles.get(id), viewCount })),
+    mostReacted: Array.from(reactionCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, reactionCount]) => ({ id, headline: titles.get(id), reactionCount })),
     topSearches: Array.from(searchCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([query, count]) => ({ query, count })),
     viewsByHour: Array.from({ length: 24 }, (_, hour) => ({
       hour,
@@ -1820,26 +1829,187 @@ async function createContext(opts) {
 }
 
 // server/_core/seoRoutes.ts
+import fs from "fs";
+import path from "path";
 var siteUrl = () => (process.env.APP_BASE_URL || "https://aurikrex.tech").replace(/\/$/, "");
 var xmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+var htmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+var cleanText = (value) => value.replace(/\s+/g, " ").trim();
+var excerpt = (value, length = 160) => {
+  const text2 = cleanText(value);
+  return text2.length > length ? `${text2.slice(0, length).trim()}\u2026` : text2;
+};
+var absoluteUrl = (value) => {
+  try {
+    return new URL(value, siteUrl()).toString();
+  } catch {
+    return `${siteUrl()}/logo-512.png`;
+  }
+};
+var safeJson = (value) => JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+function createPostSeo(post) {
+  return {
+    title: `${post.headline} \u2014 Aurikrex Bytes`,
+    description: excerpt(post.body),
+    canonicalUrl: `${siteUrl()}/post/${post.id}`,
+    imageUrl: absoluteUrl(post.imageUrl || "/logo-512.png"),
+    headline: post.headline,
+    publishedTime: post.publishedTime || post.updatedAt
+  };
+}
+function buildMetaTags(seo) {
+  const published = seo.publishedTime ? new Date(seo.publishedTime).toISOString() : void 0;
+  const tags = [
+    `<title>${htmlEscape(seo.title)}</title>`,
+    `<meta name="description" content="${htmlEscape(seo.description)}">`,
+    `<meta name="robots" content="index,follow,max-image-preview:large">`,
+    `<meta property="og:site_name" content="Aurikrex Bytes">`,
+    `<meta property="og:title" content="${htmlEscape(seo.headline)}">`,
+    `<meta property="og:description" content="${htmlEscape(seo.description)}">`,
+    `<meta property="og:type" content="article">`,
+    `<meta property="og:url" content="${htmlEscape(seo.canonicalUrl)}">`,
+    `<meta property="og:image" content="${htmlEscape(seo.imageUrl)}">`,
+    `<meta property="og:image:alt" content="${htmlEscape(seo.headline)}">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${htmlEscape(seo.headline)}">`,
+    `<meta name="twitter:description" content="${htmlEscape(seo.description)}">`,
+    `<meta name="twitter:image" content="${htmlEscape(seo.imageUrl)}">`,
+    `<link rel="canonical" href="${htmlEscape(seo.canonicalUrl)}">`
+  ];
+  if (published)
+    tags.push(
+      `<meta property="article:published_time" content="${published}">`
+    );
+  tags.push(
+    `<script type="application/ld+json">${safeJson({
+      "@context": "https://schema.org",
+      "@type": "NewsArticle",
+      headline: seo.headline,
+      description: seo.description,
+      image: [seo.imageUrl],
+      datePublished: published,
+      dateModified: published,
+      author: {
+        "@type": "Organization",
+        name: "Aurikrex Bytes",
+        url: siteUrl()
+      },
+      publisher: {
+        "@type": "Organization",
+        name: "Aurikrex Bytes",
+        url: siteUrl(),
+        logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png` }
+      },
+      mainEntityOfPage: { "@type": "WebPage", "@id": seo.canonicalUrl }
+    })}</script>`
+  );
+  return tags.join("\n    ");
+}
+function injectPostSeo(template, seo) {
+  const withoutDefaultSeo = template.replace(/<title>[\s\S]*?<\/title>/i, "").replace(/<meta\s+name=["']description["'][^>]*>/gi, "").replace(/<meta\s+name=["']robots["'][^>]*>/gi, "").replace(/<meta\s+property=["']og:[^"']+["'][^>]*>/gi, "").replace(/<meta\s+name=["']twitter:[^"']+["'][^>]*>/gi, "").replace(/<link\s+rel=["']canonical["'][^>]*>/gi, "").replace(/<meta\s+property=["']article:[^"']+["'][^>]*>/gi, "");
+  return withoutDefaultSeo.replace(
+    /<\/head>/i,
+    `    ${buildMetaTags(seo)}
+  </head>`
+  );
+}
+function renderShareDocument(seo) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    ${buildMetaTags(seo)}
+  </head>
+  <body>
+    <main>
+      <h1>${htmlEscape(seo.headline)}</h1>
+      <p>${htmlEscape(seo.description)}</p>
+      <a href="${htmlEscape(seo.canonicalUrl)}">Read the story on Aurikrex Bytes</a>
+    </main>
+  </body>
+</html>`;
+}
+async function readProductionShell() {
+  const shellPath = path.resolve(import.meta.dirname, "public", "index.html");
+  return fs.promises.readFile(shellPath, "utf8");
+}
+async function sendPostPreview(req, res, next, mode) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return next();
+  try {
+    const post = await getPostById(id);
+    if (!post || post.status !== "published")
+      return res.status(404).send("Story not found");
+    const seo = createPostSeo(post);
+    if (mode === "share") {
+      return res.status(200).type("html").send(renderShareDocument(seo));
+    }
+    const template = await readProductionShell();
+    return res.status(200).type("html").send(injectPostSeo(template, seo));
+  } catch (error) {
+    console.warn(
+      "[SEO] Dynamic post metadata could not be rendered:",
+      error instanceof Error ? error.message : String(error)
+    );
+    return next(error);
+  }
+}
 function registerSeoRoutes(app) {
   app.get("/robots.txt", (_req, res) => {
-    res.type("text/plain").send(["User-agent: *", "Allow: /", "Disallow: /admin", "Disallow: /falcon-system-auth", "Disallow: /api", `Sitemap: ${siteUrl()}/sitemap.xml`, ""].join("\n"));
+    res.type("text/plain").send(
+      [
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /admin",
+        "Disallow: /falcon-system-auth",
+        "Disallow: /api",
+        `Sitemap: ${siteUrl()}/sitemap.xml`,
+        ""
+      ].join("\n")
+    );
   });
   app.get("/sitemap.xml", async (_req, res) => {
-    const staticPaths = ["/", "/archive", "/how-it-works", "/help", "/contact", "/privacy", "/terms"];
-    const urls = staticPaths.map((path) => `<url><loc>${xmlEscape(`${siteUrl()}${path}`)}</loc></url>`);
+    const staticPaths = [
+      "/",
+      "/archive",
+      "/how-it-works",
+      "/help",
+      "/contact",
+      "/privacy",
+      "/terms"
+    ];
+    const urls = staticPaths.map(
+      (pathValue) => `<url><loc>${xmlEscape(`${siteUrl()}${pathValue}`)}</loc></url>`
+    );
     try {
       const posts2 = await listPublishedPosts();
       for (const post of posts2) {
         const lastmod = post.publishedTime || post.updatedAt;
-        urls.push(`<url><loc>${xmlEscape(`${siteUrl()}/post/${post.id}`)}</loc>${lastmod ? `<lastmod>${new Date(lastmod).toISOString()}</lastmod>` : ""}</url>`);
+        urls.push(
+          `<url><loc>${xmlEscape(`${siteUrl()}/post/${post.id}`)}</loc>${lastmod ? `<lastmod>${new Date(lastmod).toISOString()}</lastmod>` : ""}</url>`
+        );
       }
     } catch (error) {
-      console.warn("[SEO] Sitemap could not load published posts:", error instanceof Error ? error.message : String(error));
+      console.warn(
+        "[SEO] Sitemap could not load published posts:",
+        error instanceof Error ? error.message : String(error)
+      );
     }
-    res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`);
+    res.type("application/xml").send(
+      `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`
+    );
   });
+  app.get("/post/:id", (req, res, next) => {
+    if (process.env.NODE_ENV === "development") return next();
+    return void sendPostPreview(req, res, next, "shell");
+  });
+  app.get(
+    "/api/share/post/:id",
+    (req, res, next) => {
+      return void sendPostPreview(req, res, next, "share");
+    }
+  );
 }
 
 // server/_core/security.ts
