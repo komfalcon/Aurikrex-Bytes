@@ -1,6 +1,7 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import fs from "fs";
 import path from "path";
+import sharp from "sharp";
 import { getPostById, listPublishedPosts } from "../db.js";
 
 const siteUrl = () =>
@@ -56,11 +57,14 @@ type PostSeo = {
 };
 
 export function createPostSeo(post: SeoPost): PostSeo {
+  const canonicalUrl = `${siteUrl()}/post/${post.id}`;
+  const imageUrl = `${siteUrl()}/api/share/post/${post.id}/image`;
+
   return {
     title: `${post.headline} — Aurikrex Bytes`,
     description: excerpt(post.body),
-    canonicalUrl: `${siteUrl()}/post/${post.id}`,
-    imageUrl: absoluteUrl(post.imageUrl || "/logo-512.png"),
+    canonicalUrl,
+    imageUrl,
     headline: post.headline,
     publishedTime: post.publishedTime || post.updatedAt,
   };
@@ -155,11 +159,56 @@ async function readProductionShell() {
   return fs.promises.readFile(shellPath, "utf8");
 }
 
+async function generateShareCard(post: SeoPost) {
+  const title = cleanText(post.headline).slice(0, 72) || "Aurikrex Bytes";
+  const body = cleanText(post.body).slice(0, 170) || "Aurikrex Bytes";
+  const textColor = "#f5f7ff";
+  const panelColor = "#0f172a";
+  const accentColor = "#8b5cf6";
+
+  const svg = `
+    <svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#0b1020"/>
+          <stop offset="100%" stop-color="#111827"/>
+        </linearGradient>
+        <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#8b5cf6"/>
+          <stop offset="100%" stop-color="#22d3ee"/>
+        </linearGradient>
+      </defs>
+      <rect width="1200" height="630" fill="url(#bg)"/>
+      <rect x="58" y="54" width="1084" height="522" rx="28" fill="${panelColor}" fill-opacity="0.82" stroke="rgba(255,255,255,0.1)"/>
+      <rect x="92" y="90" width="180" height="40" rx="20" fill="url(#accent)"/>
+      <text x="118" y="118" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#ffffff">AURIKREX</text>
+      <text x="92" y="220" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#a5b4fc">BYTES</text>
+      <text x="92" y="290" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800" fill="${textColor}">${escapeXml(title)}</text>
+      <text x="92" y="380" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="#dbe3ff">${escapeXml(body)}</text>
+      <text x="92" y="510" font-family="Arial, Helvetica, sans-serif" font-size="22" fill="#a5b4fc">Read the full story →</text>
+      <circle cx="1040" cy="220" r="118" fill="rgba(139, 92, 246, 0.2)"/>
+      <circle cx="1040" cy="220" r="88" fill="rgba(34, 211, 238, 0.18)"/>
+      <text x="1005" y="238" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700" fill="#ffffff">AB</text>
+    </svg>
+  `;
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+function escapeXml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 async function sendPostPreview(
   req: Request,
   res: Response,
   next: NextFunction,
-  mode: "shell" | "share"
+  mode: "shell" | "share" | "image"
 ) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return next();
@@ -168,6 +217,13 @@ async function sendPostPreview(
     const post = await getPostById(id);
     if (!post || post.status !== "published")
       return res.status(404).send("Story not found");
+
+    if (mode === "image") {
+      const png = await generateShareCard(post);
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=3600");
+      return res.status(200).send(png);
+    }
 
     const seo = createPostSeo(post);
     if (mode === "share") {
@@ -250,6 +306,13 @@ export function registerSeoRoutes(app: Express) {
     "/api/share/post/:id",
     (req: Request, res: Response, next: NextFunction) => {
       return void sendPostPreview(req, res, next, "share");
+    }
+  );
+
+  app.get(
+    "/api/share/post/:id/image",
+    (req: Request, res: Response, next: NextFunction) => {
+      return void sendPostPreview(req, res, next, "image");
     }
   );
 }
