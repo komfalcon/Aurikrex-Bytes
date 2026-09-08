@@ -54,6 +54,17 @@
   ],
   "rewrites": [
     {
+      "source": "/post/:id",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|TelegramBot|WhatsApp|Googlebot|bingbot|Discordbot|Pinterest|Applebot).*"
+        }
+      ],
+      "destination": "/api/share/post/:id"
+    },
+    {
       "source": "/robots.txt",
       "destination": "/api/index.js"
     },
