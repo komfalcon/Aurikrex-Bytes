@@ -298,16 +298,26 @@ function ShareButton({ post }: { post: any }) {
   };
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(shareUrl);
+      else {
+        const input = document.createElement("textarea");
+        input.value = shareUrl;
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        input.remove();
+      }
       toast.success("Link copied");
       setOpen(false);
     } catch {
       toast.error("Copy failed — use the share link directly");
     }
   };
-  return <div className="share-control">
-    <button className="engagement-button" onClick={e => { e.preventDefault(); e.stopPropagation(); void share(); }} aria-label="Share post" title="Share post"><Share2 size={15} /></button>
-    {open && <div className="share-menu" onClick={e => e.stopPropagation()}><button onClick={e => { e.preventDefault(); void copy(); }}><Check size={14} /> Copy link</button><a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(post.headline)}&url=${encodeURIComponent(shareUrl)}`} target="_blank" rel="noreferrer">Share to X</a></div>}
+  return <div className="share-control" onClick={e => { e.preventDefault(); e.stopPropagation(); }}>
+    <button type="button" className="engagement-button" onClick={e => { e.preventDefault(); e.stopPropagation(); void share(); }} aria-label="Share post" title="Share post"><Share2 size={15} /></button>
+    {open && <div className="share-menu" onClick={e => e.stopPropagation()}><button type="button" onClick={e => { e.preventDefault(); void copy(); }}><Check size={14} /> Copy link</button><a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(post.headline)}&url=${encodeURIComponent(shareUrl)}`} target="_blank" rel="noreferrer">Share to X</a><a href={shareUrl} target="_blank" rel="noreferrer">Open post</a></div>}
   </div>;
 }
 
