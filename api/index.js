@@ -30,11 +30,11 @@ import { parse as parseCookieHeader2 } from "cookie";
 
 // server/db.ts
 import { createClient } from "@libsql/client";
-import { and, asc, desc, eq, gt, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, like, lt, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 
 // drizzle/schema.ts
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 var now = () => /* @__PURE__ */ new Date();
 var POST_STATUSES = [
   "draft",
@@ -97,6 +97,18 @@ var postViews = sqliteTable("post_views", {
   readerId: integer("reader_id"),
   viewedAt: integer("viewed_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
 });
+var postReactions = sqliteTable("post_reactions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  postId: integer("post_id").notNull(),
+  readerId: integer("reader_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+}, (table) => ({ postReaderUnique: uniqueIndex("post_reactions_post_reader_unique").on(table.postId, table.readerId) }));
+var postBookmarks = sqliteTable("post_bookmarks", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  postId: integer("post_id").notNull(),
+  readerId: integer("reader_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+}, (table) => ({ postReaderUnique: uniqueIndex("post_bookmarks_post_reader_unique").on(table.postId, table.readerId) }));
 var searchQueries = sqliteTable("search_queries", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   query: text("query").notNull(),
@@ -310,10 +322,10 @@ async function publishDuePosts() {
     }).where(and(eq(posts.id, post.id), eq(posts.status, "scheduled")));
   return due.length;
 }
-async function listPublishedPosts() {
+async function listPublishedPosts(readerId) {
   const db = await getDb();
   if (!db) return [];
-  return db.select({
+  const rows = await db.select({
     id: posts.id,
     headline: posts.headline,
     body: posts.body,
@@ -321,6 +333,28 @@ async function listPublishedPosts() {
     publishedTime: posts.publishedTime,
     updatedAt: posts.updatedAt
   }).from(posts).where(eq(posts.status, "published")).orderBy(desc(posts.publishedTime), desc(posts.id));
+  return addEngagement(rows, readerId);
+}
+async function addEngagement(rows, readerId) {
+  const db = await getDb();
+  if (!db || !rows.length) return rows.map((row) => ({ ...row, reactionCount: 0, hasReacted: false, isBookmarked: false }));
+  const ids = rows.map((row) => row.id);
+  let reactions;
+  let bookmarks;
+  try {
+    [reactions, bookmarks] = await Promise.all([
+      db.select().from(postReactions).where(inArray(postReactions.postId, ids)),
+      db.select().from(postBookmarks).where(inArray(postBookmarks.postId, ids))
+    ]);
+  } catch (error) {
+    console.warn("[Database] Engagement tables are unavailable; serving posts without engagement state", error);
+    return rows.map((row) => ({ ...row, reactionCount: 0, hasReacted: false, isBookmarked: false }));
+  }
+  const reactionCounts = /* @__PURE__ */ new Map();
+  reactions.forEach((reaction) => reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1));
+  const reacted = new Set(reactions.filter((reaction) => reaction.readerId === readerId).map((reaction) => reaction.postId));
+  const saved = new Set(bookmarks.filter((bookmark) => bookmark.readerId === readerId).map((bookmark) => bookmark.postId));
+  return rows.map((row) => ({ ...row, reactionCount: reactionCounts.get(row.id) || 0, hasReacted: reacted.has(row.id), isBookmarked: saved.has(row.id) }));
 }
 function localCalendarDay(value, timeZone) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -351,8 +385,8 @@ async function getReaderDashboard(readerId, timeZone = process.env.APP_TIMEZONE 
       lastActiveDate: streak.lastActiveDate
     }).where(eq(readers.id, readerId));
   const [todayPosts, allPosts] = await Promise.all([
-    listTodaysPublishedPosts(timeZone),
-    listPublishedPosts()
+    listTodaysPublishedPosts(timeZone, readerId),
+    listPublishedPosts(readerId)
   ]);
   return {
     reader: { id: reader.id, name: reader.name, email: reader.email },
@@ -361,20 +395,59 @@ async function getReaderDashboard(readerId, timeZone = process.env.APP_TIMEZONE 
     allPosts
   };
 }
-async function listTodaysPublishedPosts(timeZone = process.env.APP_TIMEZONE || "UTC") {
+async function listTodaysPublishedPosts(timeZone = process.env.APP_TIMEZONE || "UTC", readerId) {
   const db = await getDb();
   if (!db) return [];
   const today = localCalendarDay(/* @__PURE__ */ new Date(), timeZone);
   const published = await db.select().from(posts).where(eq(posts.status, "published")).orderBy(asc(posts.publishedTime));
-  return published.filter(
+  return addEngagement(published.filter(
     (post) => post.publishedTime && localCalendarDay(post.publishedTime, timeZone) === today
-  );
+  ), readerId);
 }
 async function getPublishedPostById(id) {
   const db = await getDb();
   if (!db) return void 0;
   const result = await db.select().from(posts).where(and(eq(posts.id, id), eq(posts.status, "published"))).limit(1);
-  return result[0];
+  return result[0] ? (await addEngagement(result))[0] : void 0;
+}
+async function getReaderPostEngagement(postId, readerId) {
+  const db = await getDb();
+  if (!db) return { reactionCount: 0, hasReacted: false, isBookmarked: false };
+  const [reactions, bookmark] = await Promise.all([
+    db.select().from(postReactions).where(eq(postReactions.postId, postId)),
+    db.select().from(postBookmarks).where(and(eq(postBookmarks.postId, postId), eq(postBookmarks.readerId, readerId))).limit(1)
+  ]);
+  return { reactionCount: reactions.length, hasReacted: reactions.some((reaction) => reaction.readerId === readerId), isBookmarked: Boolean(bookmark[0]) };
+}
+async function togglePostReaction(postId, readerId) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const existing = await db.select().from(postReactions).where(and(eq(postReactions.postId, postId), eq(postReactions.readerId, readerId))).limit(1);
+  if (existing[0]) await db.delete(postReactions).where(eq(postReactions.id, existing[0].id));
+  else await db.insert(postReactions).values({ postId, readerId, createdAt: /* @__PURE__ */ new Date() });
+  return getReaderPostEngagement(postId, readerId);
+}
+async function togglePostBookmark(postId, readerId) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const existing = await db.select().from(postBookmarks).where(and(eq(postBookmarks.postId, postId), eq(postBookmarks.readerId, readerId))).limit(1);
+  if (existing[0]) await db.delete(postBookmarks).where(eq(postBookmarks.id, existing[0].id));
+  else await db.insert(postBookmarks).values({ postId, readerId, createdAt: /* @__PURE__ */ new Date() });
+  return getReaderPostEngagement(postId, readerId);
+}
+async function listSavedPosts(readerId) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    id: posts.id,
+    headline: posts.headline,
+    body: posts.body,
+    imageUrl: posts.imageUrl,
+    publishedTime: posts.publishedTime,
+    updatedAt: posts.updatedAt,
+    savedAt: postBookmarks.createdAt
+  }).from(postBookmarks).innerJoin(posts, eq(posts.id, postBookmarks.postId)).where(and(eq(postBookmarks.readerId, readerId), eq(posts.status, "published"))).orderBy(desc(postBookmarks.createdAt));
+  return addEngagement(rows, readerId);
 }
 async function searchPublishedPosts(query, page, pageSize) {
   const db = await getDb();
@@ -387,7 +460,7 @@ async function searchPublishedPosts(query, page, pageSize) {
   const where = search ? and(eq(posts.status, "published"), search) : eq(posts.status, "published");
   const rows = await db.select().from(posts).where(where).orderBy(desc(posts.publishedTime), desc(posts.id)).limit(pageSize + 1).offset((page - 1) * pageSize);
   return {
-    posts: rows.slice(0, pageSize),
+    posts: await addEngagement(rows.slice(0, pageSize)),
     nextPage: rows.length > pageSize ? page + 1 : null
   };
 }
@@ -1493,6 +1566,10 @@ var appRouter = router({
       if (!dashboard) throw genericNotFound();
       return dashboard;
     }),
+    saved: publicProcedure.query(async ({ ctx }) => listSavedPosts((await requireReader(ctx)).id)),
+    engagement: publicProcedure.input(z2.object({ postId: z2.number().int().positive() })).query(async ({ input, ctx }) => getReaderPostEngagement(input.postId, (await requireReader(ctx)).id)),
+    toggleReaction: publicProcedure.input(z2.object({ postId: z2.number().int().positive() })).mutation(async ({ input, ctx }) => togglePostReaction(input.postId, (await requireReader(ctx)).id)),
+    toggleBookmark: publicProcedure.input(z2.object({ postId: z2.number().int().positive() })).mutation(async ({ input, ctx }) => togglePostBookmark(input.postId, (await requireReader(ctx)).id)),
     signup: publicProcedure.input(
       z2.object({
         name: z2.string().trim().min(1).max(120),
