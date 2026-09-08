@@ -1121,6 +1121,15 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
     onSuccess: () => setMessage("A fresh verification email is on its way."),
     onError: e => setMessage(e.message),
   });
+  useEffect(() => {
+    if (mode === "verify" && token && verificationState === "idle" && !verify.isPending)
+      verify.mutate({ token });
+  }, [mode, token, verificationState, verify.isPending]);
+  useEffect(() => {
+    if (mode !== "verify" || !["verified", "already_verified"].includes(verificationState)) return;
+    const timer = window.setTimeout(() => navigate(authRoutes.login), 1800);
+    return () => window.clearTimeout(timer);
+  }, [mode, navigate, verificationState]);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (mode === "login") login.mutate({ email, password, remember: true });
@@ -1182,7 +1191,7 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
         <h2>Email verified</h2>
         <p className="auth-lede">
           Your Aurikrex Bytes account is ready. You can sign in and start your
-          daily briefing.
+          daily briefing. Redirecting you to login…
         </p>
         <Link className="button button-full" href={authRoutes.login}>
           Proceed to login <ArrowRight size={16} />
@@ -1195,7 +1204,7 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
         </div>
         <h2>This email is already verified</h2>
         <p className="auth-lede">
-          This link has already done its job. Sign in to continue reading.
+          This link has already done its job. Redirecting you to login…
         </p>
         <Link className="button button-full" href={authRoutes.login}>
           Go to login <ArrowRight size={16} />
