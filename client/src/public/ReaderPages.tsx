@@ -100,8 +100,18 @@ function ThemeToggle() {
 export function SiteHeader() {
   const [menu, setMenu] = useState(false);
   const [, navigate] = useLocation();
+  const utils = trpc.useUtils();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
-  const logout = trpc.auth.logout.useMutation({ onSuccess: () => navigate("/") });
+  const logout = trpc.auth.logout.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.reader.session.reset(),
+        utils.reader.dashboard.reset(),
+      ]);
+      setMenu(false);
+      navigate("/");
+    },
+  });
   const signedIn = Boolean(session.data);
   const homePath = signedIn ? "/dashboard" : "/";
   return (
