@@ -180,6 +180,22 @@ async function repairReaderSchema(db) {
     console.info(`[Database] Applied missing readers.${name} column`);
   }
 }
+async function repairEngagementSchema(db) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS post_reactions (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    post_id integer NOT NULL,
+    reader_id integer NOT NULL,
+    created_at integer NOT NULL
+  )`));
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS post_bookmarks (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    post_id integer NOT NULL,
+    reader_id integer NOT NULL,
+    created_at integer NOT NULL
+  )`));
+  await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_reactions_post_reader_unique ON post_reactions (post_id, reader_id)"));
+  await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_bookmarks_post_reader_unique ON post_bookmarks (post_id, reader_id)"));
+}
 async function getDb() {
   if (!_db && process.env.TURSO_DATABASE_URL) {
     try {
@@ -189,8 +205,8 @@ async function getDb() {
           authToken: process.env.TURSO_AUTH_TOKEN
         })
       );
-      _schemaRepair = repairReaderSchema(_db).catch((error) => {
-        console.error("[Database] Reader schema repair failed:", error);
+      _schemaRepair = Promise.all([repairReaderSchema(_db), repairEngagementSchema(_db)]).then(() => void 0).catch((error) => {
+        console.error("[Database] Schema repair failed:", error);
         throw error;
       });
     } catch (error) {
