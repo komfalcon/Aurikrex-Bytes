@@ -159,40 +159,90 @@ async function readProductionShell() {
   return fs.promises.readFile(shellPath, "utf8");
 }
 
-async function generateShareCard(post: SeoPost) {
-  const title = cleanText(post.headline).slice(0, 72) || "Aurikrex Bytes";
-  const body = cleanText(post.body).slice(0, 170) || "Aurikrex Bytes";
-  const textColor = "#f5f7ff";
-  const panelColor = "#0f172a";
-  const accentColor = "#8b5cf6";
+async function fetchRemoteImageBuffer(url: string) {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return Buffer.from(await response.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
 
-  const svg = `
-    <svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg">
+async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
+  const title = cleanText(post.headline).slice(0, 72) || "Aurikrex Bytes";
+  const body = cleanText(post.body).slice(0, 160) || "A daily curated technology briefing.";
+  const titleLines = wrapTitle(title, 46);
+  const bodyText = escapeXml(body);
+
+  let coverMarkup = `<rect x="0" y="0" width="1200" height="630" fill="url(#bg)"/>`;
+  if (coverBuffer) {
+    const imageBase64 = coverBuffer.toString("base64");
+    coverMarkup = `
       <defs>
-        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="#0b1020"/>
-          <stop offset="100%" stop-color="#111827"/>
-        </linearGradient>
-        <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stop-color="#8b5cf6"/>
-          <stop offset="100%" stop-color="#22d3ee"/>
-        </linearGradient>
+        <pattern id="grain" patternUnits="userSpaceOnUse" width="40" height="40">
+          <rect width="40" height="40" fill="#101826" fill-opacity="0.08"/>
+          <circle cx="4" cy="4" r="1" fill="#ffffff" fill-opacity="0.06"/>
+          <circle cx="24" cy="8" r="1" fill="#ffffff" fill-opacity="0.04"/>
+          <circle cx="20" cy="26" r="1" fill="#ffffff" fill-opacity="0.05"/>
+        </pattern>
       </defs>
-      <rect width="1200" height="630" fill="url(#bg)"/>
-      <rect x="58" y="54" width="1084" height="522" rx="28" fill="${panelColor}" fill-opacity="0.82" stroke="rgba(255,255,255,0.1)"/>
-      <rect x="92" y="90" width="180" height="40" rx="20" fill="url(#accent)"/>
-      <text x="118" y="118" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#ffffff">AURIKREX</text>
-      <text x="92" y="220" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#a5b4fc">BYTES</text>
-      <text x="92" y="290" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800" fill="${textColor}">${escapeXml(title)}</text>
-      <text x="92" y="380" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="#dbe3ff">${escapeXml(body)}</text>
-      <text x="92" y="510" font-family="Arial, Helvetica, sans-serif" font-size="22" fill="#a5b4fc">Read the full story →</text>
-      <circle cx="1040" cy="220" r="118" fill="rgba(139, 92, 246, 0.2)"/>
-      <circle cx="1040" cy="220" r="88" fill="rgba(34, 211, 238, 0.18)"/>
-      <text x="1005" y="238" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700" fill="#ffffff">AB</text>
-    </svg>
-  `;
+      <rect x="0" y="0" width="1200" height="630" fill="url(#bg)"/>
+      <image x="660" y="0" width="540" height="630" href="data:image/png;base64,${imageBase64}" preserveAspectRatio="xMidYMid slice"/>
+      <rect x="660" y="0" width="540" height="630" fill="url(#grain)"/>
+      <rect x="660" y="0" width="540" height="630" fill="#0b1220" opacity="0.50"/>
+    `;
+  } else {
+    coverMarkup = `<rect x="0" y="0" width="1200" height="630" fill="url(#bg)"/><circle cx="950" cy="330" r="180" fill="#8b5cf6" opacity="0.32"/><path d="M850 90 C998 120 1050 250 1000 405 C960 525 845 530 790 440 C760 385 770 250 850 90" fill="#22d3ee" opacity="0.2"/>`;
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#101726"/>
+        <stop offset="1" stop-color="#17184a"/>
+      </linearGradient>
+      <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#8b5cf6"/>
+        <stop offset="1" stop-color="#22d3ee"/>
+      </linearGradient>
+      <filter id="shadow" x="-10%" y="-10%" width="130%" height="140%">
+        <feDropShadow dx="0" dy="12" stdDeviation="20" flood-color="#000000" flood-opacity="0.45"/>
+      </filter>
+    </defs>
+    ${coverMarkup}
+    <rect x="70" y="70" width="500" height="490" rx="24" fill="#07111f" fill-opacity="0.72" stroke="#b8a2ff" stroke-opacity="0.35" filter="url(#shadow)"/>
+    <text x="110" y="130" fill="#a78bfa" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="2">AURIKREX BYTES</text>
+    <rect x="110" y="150" width="120" height="4" fill="url(#line)"/>
+    <text x="110" y="250" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
+    <text x="110" y="390" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="400">${bodyText}</text>
+    <text x="110" y="505" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
+    <text x="110" y="540" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">aurikrex.tech</text>
+  </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+function wrapTitle(title: string, maxCharsPerLine: number) {
+  const words = title.split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxCharsPerLine && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.slice(0, 3);
+}
+
+async function generateShareCard(post: SeoPost) {
+  const coverBuffer = post.imageUrl ? await fetchRemoteImageBuffer(post.imageUrl) : null;
+  return await buildShareSvg(post, coverBuffer);
 }
 
 function escapeXml(value: string) {
@@ -219,10 +269,16 @@ async function sendPostPreview(
       return res.status(404).send("Story not found");
 
     if (mode === "image") {
-      const png = await generateShareCard(post);
+      const shareDir = path.resolve(import.meta.dirname, "../../client/public/share-cards");
+      await fs.promises.mkdir(shareDir, { recursive: true });
+      const shareFile = path.resolve(shareDir, `${id}.png`);
+      if (!fs.existsSync(shareFile)) {
+        const png = await generateShareCard(post);
+        await fs.promises.writeFile(shareFile, png);
+      }
       res.setHeader("Content-Type", "image/png");
       res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=3600");
-      return res.status(200).send(png);
+      return res.status(200).sendFile(shareFile);
     }
 
     const seo = createPostSeo(post);
