@@ -562,6 +562,7 @@ h2 {
 .engagement-actions { display: flex; align-items: center; gap: 5px; }
 .engagement-button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 8px; padding: 7px 8px; background: transparent; color: var(--muted); font-size: 11px; transition: color .18s, background .18s, transform .18s; }
 .engagement-button:hover, .engagement-button.active { color: var(--blue); background: var(--surface-2); }
+.fire-button { transition-duration: .09s; }
 .fire-button.active { color: #f97316; }
 .fire-button:active { transform: scale(1.12); }
 .share-control { position: relative; }

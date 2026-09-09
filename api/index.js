@@ -323,20 +323,17 @@ async function getPostById(id) {
   const result = await db.select().from(posts).where(eq(posts.id, id)).limit(1);
   return result[0];
 }
-async function publishDuePosts() {
+async function publishDuePosts(now2 = /* @__PURE__ */ new Date()) {
   const db = await getDb();
   if (!db) return 0;
-  const due = await db.select({ id: posts.id }).from(posts).where(
-    and(eq(posts.status, "scheduled"), lte(posts.scheduledTime, /* @__PURE__ */ new Date()))
-  );
-  for (const post of due)
-    await db.update(posts).set({
-      status: "published",
-      publishedTime: /* @__PURE__ */ new Date(),
-      scheduledTime: null,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(and(eq(posts.id, post.id), eq(posts.status, "scheduled")));
-  return due.length;
+  const publishedAt = /* @__PURE__ */ new Date();
+  const result = await db.update(posts).set({
+    status: "published",
+    publishedTime: publishedAt,
+    scheduledTime: null,
+    updatedAt: publishedAt
+  }).where(and(eq(posts.status, "scheduled"), lte(posts.scheduledTime, now2)));
+  return Number(result.rowsAffected || 0);
 }
 async function listPublishedPosts(readerId) {
   const db = await getDb();
@@ -400,6 +397,7 @@ async function getReaderDashboard(readerId, timeZone = process.env.APP_TIMEZONE 
       longestStreak: streak.longestStreak,
       lastActiveDate: streak.lastActiveDate
     }).where(eq(readers.id, readerId));
+  await publishDuePosts();
   const [todayPosts, allPosts] = await Promise.all([
     listTodaysPublishedPosts(timeZone, readerId),
     listPublishedPosts(readerId)
@@ -1243,7 +1241,7 @@ function canTransitionPost(role, from, to) {
   if (from === "draft" && to === "pending_review") return role === "editor" || role === "admin";
   if (from === "draft" && (to === "scheduled" || to === "published")) return role === "admin";
   if (from === "pending_review" && (to === "scheduled" || to === "published")) return role === "admin";
-  if (from === "scheduled" && to === "draft") return role === "admin";
+  if (from === "scheduled" && (to === "draft" || to === "published")) return role === "admin";
   return false;
 }
 function assertPostTransition(role, from, to) {
@@ -1341,10 +1339,12 @@ var appRouter = router({
     session: publicProcedure.query(async ({ ctx }) => requireAdmin(ctx)),
     posts: publicProcedure.query(async ({ ctx }) => {
       await requireAdmin(ctx);
+      await publishDuePosts();
       return listPosts();
     }),
     post: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).query(async ({ input, ctx }) => {
       await requireAdmin(ctx);
+      await publishDuePosts();
       const post = await getPostById(input.id);
       if (!post) throw genericNotFound();
       return post;
@@ -1786,8 +1786,14 @@ var appRouter = router({
     })
   }),
   publicPosts: router({
-    list: publicProcedure.query(() => listPosts()),
-    today: publicProcedure.query(() => listTodaysPublishedPosts()),
+    list: publicProcedure.query(async () => {
+      await publishDuePosts();
+      return listPosts();
+    }),
+    today: publicProcedure.query(async () => {
+      await publishDuePosts();
+      return listTodaysPublishedPosts();
+    }),
     archive: publicProcedure.input(
       z2.object({
         query: z2.string().max(120).default(""),
@@ -1795,6 +1801,7 @@ var appRouter = router({
         pageSize: z2.number().int().min(1).max(24).default(12)
       })
     ).query(async ({ input }) => {
+      await publishDuePosts();
       const result = await searchPublishedPosts(
         input.query,
         input.page,
@@ -1805,6 +1812,7 @@ var appRouter = router({
       return result;
     }),
     byId: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).query(async ({ input }) => {
+      await publishDuePosts();
       const post = await getPublishedPostById(input.id);
       if (!post) throw genericNotFound();
       await recordPostView(post.id);

@@ -223,26 +223,20 @@ export async function getPostById(id: number) {
   const result = await db.select().from(posts).where(eq(posts.id, id)).limit(1);
   return result[0];
 }
-export async function publishDuePosts() {
+export async function publishDuePosts(now = new Date()) {
   const db = await getDb();
   if (!db) return 0;
-  const due = await db
-    .select({ id: posts.id })
-    .from(posts)
-    .where(
-        and(eq(posts.status, "scheduled"), lte(posts.scheduledTime, new Date()))
-    );
-  for (const post of due)
-    await db
-      .update(posts)
-      .set({
-        status: "published",
-        publishedTime: new Date(),
-        scheduledTime: null,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(posts.id, post.id), eq(posts.status, "scheduled")));
-  return due.length;
+  const publishedAt = new Date();
+  const result = await db
+    .update(posts)
+    .set({
+      status: "published",
+      publishedTime: publishedAt,
+      scheduledTime: null,
+      updatedAt: publishedAt,
+    })
+    .where(and(eq(posts.status, "scheduled"), lte(posts.scheduledTime, now)));
+  return Number(result.rowsAffected || 0);
 }
 export async function listPublishedPosts(readerId?: number) {
   const db = await getDb();
@@ -317,6 +311,7 @@ export async function getReaderDashboard(
         lastActiveDate: streak.lastActiveDate,
       })
       .where(eq(readers.id, readerId));
+  await publishDuePosts();
   const [todayPosts, allPosts] = await Promise.all([
     listTodaysPublishedPosts(timeZone, readerId),
     listPublishedPosts(readerId),
