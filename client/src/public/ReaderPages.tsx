@@ -321,6 +321,16 @@ function ShareButton({ post }: { post: any }) {
   </div>;
 }
 
+function SignalReactionIcon({ active }: { active: boolean }) {
+  return (
+    <svg className="signal-reaction-mark" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2.5 14 8l5.5 2-5.5 2-2 5.5-2-5.5-5.5-2L10 8l2-5.5Z" fill="currentColor" />
+      <path d="m18.2 14.2.75 2.15 2.15.75-2.15.75-.75 2.15-.75-2.15-2.15-.75 2.15-.75.75-2.15Z" fill={active ? "#f6c85f" : "#88a9e8"} />
+      <circle cx="12" cy="10.5" r="1.9" fill={active ? "#fff3c4" : "#f0b83f"} />
+    </svg>
+  );
+}
+
 function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (saved: boolean) => void }) {
   const [, navigate] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
@@ -345,7 +355,7 @@ function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (save
   const requireLogin = () => { if (!session.data) navigate("/login"); return Boolean(session.data); };
   const state = { ...post, ...(engagement.data || {}) };
   return <div className="engagement-actions" onClick={e => e.preventDefault()}>
-    <button className={`engagement-button fire-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove fire reaction" : "React with fire"} title="Fire reaction"><Flame size={15} fill={state.hasReacted ? "currentColor" : "none"} /><span>{state.reactionCount || 0}</span></button>
+    <button className={`engagement-button signal-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove Aurikrex signal" : "Send Aurikrex signal"} title="Aurikrex signal reaction"><SignalReactionIcon active={Boolean(state.hasReacted)} /><span>{state.reactionCount || 0}</span></button>
     <button className={`engagement-button ${state.isBookmarked ? "active" : ""}`} onClick={() => requireLogin() && bookmark.mutate({ postId: post.id })} aria-label={state.isBookmarked ? "Remove bookmark" : "Save post"} title={state.isBookmarked ? "Remove bookmark" : "Save post"}><Bookmark size={15} fill={state.isBookmarked ? "currentColor" : "none"} /></button>
     <ShareButton post={state} />
   </div>;
