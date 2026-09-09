@@ -471,6 +471,7 @@ export async function getAnalytics() {
   const titles = new Map(published.map(post => [post.id, post.headline]));
   const viewCounts = new Map<number, number>();
   const hourCounts = new Map<number, number>();
+  const reactionCounts = new Map<number, number>();
   for (const view of views) {
     if (!titles.has(view.postId)) continue;
     viewCounts.set(view.postId, (viewCounts.get(view.postId) || 0) + 1);
@@ -483,13 +484,13 @@ export async function getAnalytics() {
       ) % 24;
     hourCounts.set(hour, (hourCounts.get(hour) || 0) + 1);
   }
+  for (const reaction of reactions) {
+    if (titles.has(reaction.postId))
+      reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1);
+  }
   const searchCounts = new Map<string, number>();
   for (const entry of searches)
     searchCounts.set(entry.query, (searchCounts.get(entry.query) || 0) + 1);
-  const reactionCounts = new Map<number, number>();
-  for (const reaction of reactions)
-    if (titles.has(reaction.postId))
-      reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1);
   return {
     totalReaders: readerRows.length,
     totalViews: views.length,

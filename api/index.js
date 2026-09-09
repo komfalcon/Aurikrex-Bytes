@@ -516,6 +516,7 @@ async function getAnalytics() {
   const titles = new Map(published.map((post) => [post.id, post.headline]));
   const viewCounts = /* @__PURE__ */ new Map();
   const hourCounts = /* @__PURE__ */ new Map();
+  const reactionCounts = /* @__PURE__ */ new Map();
   for (const view of views) {
     if (!titles.has(view.postId)) continue;
     viewCounts.set(view.postId, (viewCounts.get(view.postId) || 0) + 1);
@@ -527,13 +528,13 @@ async function getAnalytics() {
     ) % 24;
     hourCounts.set(hour, (hourCounts.get(hour) || 0) + 1);
   }
+  for (const reaction of reactions) {
+    if (titles.has(reaction.postId))
+      reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1);
+  }
   const searchCounts = /* @__PURE__ */ new Map();
   for (const entry of searches)
     searchCounts.set(entry.query, (searchCounts.get(entry.query) || 0) + 1);
-  const reactionCounts = /* @__PURE__ */ new Map();
-  for (const reaction of reactions)
-    if (titles.has(reaction.postId))
-      reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1);
   return {
     totalReaders: readerRows.length,
     totalViews: views.length,

@@ -1087,10 +1087,10 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [token] = useState(
-    () => new URLSearchParams(location.split("?")[1] || "").get("token") || ""
+    () => new URLSearchParams(window.location.search).get("token") || ""
   );
   const [message, setMessage] = useState(() =>
-    new URLSearchParams(location.split("?")[1] || "").get("error") === "oauth"
+    new URLSearchParams(window.location.search).get("error") === "oauth"
       ? "Google sign-in failed. Please try again."
       : ""
   );
