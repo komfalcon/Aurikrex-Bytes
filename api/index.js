@@ -497,22 +497,26 @@ async function getAnalytics() {
     return {
       totalReaders: 0,
       totalViews: 0,
+      totalReactions: 0,
       mostRead: [],
+      mostReacted: [],
       topSearches: [],
       viewsByHour: Array.from({ length: 24 }, (_, hour) => ({
         hour,
         views: 0
       }))
     };
-  const [published, views, searches, readerRows] = await Promise.all([
+  const [published, views, searches, readerRows, reactions] = await Promise.all([
     db.select({ id: posts.id, headline: posts.headline, status: posts.status }).from(posts).where(eq(posts.status, "published")),
     db.select().from(postViews),
     db.select().from(searchQueries),
-    db.select({ id: readers.id }).from(readers)
+    db.select({ id: readers.id }).from(readers),
+    db.select().from(postReactions)
   ]);
   const titles = new Map(published.map((post) => [post.id, post.headline]));
   const viewCounts = /* @__PURE__ */ new Map();
   const hourCounts = /* @__PURE__ */ new Map();
+  const reactionCounts = /* @__PURE__ */ new Map();
   for (const view of views) {
     if (!titles.has(view.postId)) continue;
     viewCounts.set(view.postId, (viewCounts.get(view.postId) || 0) + 1);
@@ -524,13 +528,19 @@ async function getAnalytics() {
     ) % 24;
     hourCounts.set(hour, (hourCounts.get(hour) || 0) + 1);
   }
+  for (const reaction of reactions) {
+    if (titles.has(reaction.postId))
+      reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1);
+  }
   const searchCounts = /* @__PURE__ */ new Map();
   for (const entry of searches)
     searchCounts.set(entry.query, (searchCounts.get(entry.query) || 0) + 1);
   return {
     totalReaders: readerRows.length,
     totalViews: views.length,
+    totalReactions: reactions.length,
     mostRead: Array.from(viewCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, viewCount]) => ({ id, headline: titles.get(id), viewCount })),
+    mostReacted: Array.from(reactionCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, reactionCount]) => ({ id, headline: titles.get(id), reactionCount })),
     topSearches: Array.from(searchCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([query, count]) => ({ query, count })),
     viewsByHour: Array.from({ length: 24 }, (_, hour) => ({
       hour,
