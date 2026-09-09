@@ -1,5 +1,5 @@
 import { createClient } from "@libsql/client";
-import { and, asc, desc, eq, gt, inArray, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import {
   adminUsers,
@@ -230,7 +230,7 @@ export async function publishDuePosts() {
     .select({ id: posts.id })
     .from(posts)
     .where(
-      and(eq(posts.status, "scheduled"), lt(posts.scheduledTime, new Date()))
+        and(eq(posts.status, "scheduled"), lte(posts.scheduledTime, new Date()))
     );
   for (const post of due)
     await db
