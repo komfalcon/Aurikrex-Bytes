@@ -320,17 +320,41 @@ function ShareButton({ post }: { post: any }) {
   </div>;
 }
 
+function SignalReactionIcon({ active }: { active: boolean }) {
+  return (
+    <svg className="signal-reaction-mark" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2.5 14 8l5.5 2-5.5 2-2 5.5-2-5.5-5.5-2L10 8l2-5.5Z" fill="currentColor" />
+      <path d="m18.2 14.2.75 2.15 2.15.75-2.15.75-.75 2.15-.75-2.15-2.15-.75 2.15-.75.75-2.15Z" fill={active ? "#f6c85f" : "#88a9e8"} />
+      <circle cx="12" cy="10.5" r="1.9" fill={active ? "#fff3c4" : "#f0b83f"} />
+    </svg>
+  );
+}
+
 function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (saved: boolean) => void }) {
   const [, navigate] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
   const engagement = trpc.reader.engagement.useQuery({ postId: post.id }, { enabled: Boolean(session.data), retry: false });
   const utils = trpc.useUtils();
-  const reaction = trpc.reader.toggleReaction.useMutation({ onSuccess: () => { utils.reader.engagement.invalidate({ postId: post.id }); utils.reader.dashboard.invalidate(); utils.publicPosts.archive.invalidate(); utils.publicPosts.byId.invalidate({ id: post.id }); } });
-  const bookmark = trpc.reader.toggleBookmark.useMutation({ onSuccess: data => { onBookmark?.(data.isBookmarked); utils.reader.engagement.invalidate({ postId: post.id }); utils.reader.dashboard.invalidate(); utils.reader.saved.invalidate(); utils.publicPosts.archive.invalidate(); utils.publicPosts.byId.invalidate({ id: post.id }); } });
+  const reaction = trpc.reader.toggleReaction.useMutation({
+    onMutate: async () => {
+      await utils.reader.engagement.cancel({ postId: post.id });
+      const previous = utils.reader.engagement.getData({ postId: post.id });
+      utils.reader.engagement.setData({ postId: post.id }, current => {
+        const next = current || { reactionCount: 0, hasReacted: false, isBookmarked: false };
+        return { ...next, hasReacted: !next.hasReacted, reactionCount: Math.max(0, next.reactionCount + (next.hasReacted ? -1 : 1)) };
+      });
+      return { previous };
+    },
+    onError: (_error, _input, context) => {
+      if (context?.previous) utils.reader.engagement.setData({ postId: post.id }, context.previous);
+    },
+    onSettled: () => void utils.reader.engagement.invalidate({ postId: post.id }),
+  });
+  const bookmark = trpc.reader.toggleBookmark.useMutation({ onSuccess: data => { onBookmark?.(data.isBookmarked); void utils.reader.engagement.invalidate({ postId: post.id }); void utils.reader.dashboard.invalidate(); void utils.reader.saved.invalidate(); } });
   const requireLogin = () => { if (!session.data) navigate("/login"); return Boolean(session.data); };
   const state = { ...post, ...(engagement.data || {}) };
   return <div className="engagement-actions" onClick={e => e.preventDefault()}>
-    <button className={`engagement-button fire-button ${state.hasReacted ? "active" : ""}`} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove fire reaction" : "React with fire"} title="Fire reaction"><Flame size={15} fill={state.hasReacted ? "currentColor" : "none"} /><span>{state.reactionCount || 0}</span></button>
+    <button className={`engagement-button signal-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove Aurikrex signal" : "Send Aurikrex signal"} title="Aurikrex signal reaction"><SignalReactionIcon active={Boolean(state.hasReacted)} /><span>{state.reactionCount || 0}</span></button>
     <button className={`engagement-button ${state.isBookmarked ? "active" : ""}`} onClick={() => requireLogin() && bookmark.mutate({ postId: post.id })} aria-label={state.isBookmarked ? "Remove bookmark" : "Save post"} title={state.isBookmarked ? "Remove bookmark" : "Save post"}><Bookmark size={15} fill={state.isBookmarked ? "currentColor" : "none"} /></button>
     <ShareButton post={state} />
   </div>;

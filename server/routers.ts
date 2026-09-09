@@ -29,6 +29,7 @@ import {
   listPosts,
   listSavedPosts,
   listTodaysPublishedPosts,
+  publishDuePosts,
   recordPostView,
   recordSearchQuery,
   searchPublishedPosts,
@@ -165,12 +166,14 @@ export const appRouter = router({
     session: publicProcedure.query(async ({ ctx }) => requireAdmin(ctx)),
     posts: publicProcedure.query(async ({ ctx }) => {
       await requireAdmin(ctx);
+      await publishDuePosts();
       return listPosts();
     }),
     post: publicProcedure
       .input(z.object({ id: z.number().int().positive() }))
       .query(async ({ input, ctx }) => {
         await requireAdmin(ctx);
+        await publishDuePosts();
         const post = await getPostById(input.id);
         if (!post) throw genericNotFound();
         return post;
@@ -702,8 +705,14 @@ export const appRouter = router({
     }),
   }),
   publicPosts: router({
-    list: publicProcedure.query(() => listPosts()),
-    today: publicProcedure.query(() => listTodaysPublishedPosts()),
+    list: publicProcedure.query(async () => {
+      await publishDuePosts();
+      return listPosts();
+    }),
+    today: publicProcedure.query(async () => {
+      await publishDuePosts();
+      return listTodaysPublishedPosts();
+    }),
     archive: publicProcedure
       .input(
         z.object({
@@ -713,6 +722,7 @@ export const appRouter = router({
         })
       )
       .query(async ({ input }) => {
+        await publishDuePosts();
         const result = await searchPublishedPosts(
           input.query,
           input.page,
@@ -725,6 +735,7 @@ export const appRouter = router({
     byId: publicProcedure
       .input(z.object({ id: z.number().int().positive() }))
       .query(async ({ input }) => {
+        await publishDuePosts();
         const post = await getPublishedPostById(input.id);
         if (!post) throw genericNotFound();
         await recordPostView(post.id);

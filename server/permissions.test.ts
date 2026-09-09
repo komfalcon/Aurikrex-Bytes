@@ -20,6 +20,7 @@ describe("role permissions", () => {
     expect(canTransitionPost("admin", "pending_review", "published")).toBe(true);
     expect(canTransitionPost("admin", "pending_review", "scheduled")).toBe(true);
     expect(canTransitionPost("admin", "scheduled", "draft")).toBe(true);
+    expect(canTransitionPost("admin", "scheduled", "published")).toBe(true);
     expect(canTransitionPost("editor", "pending_review", "published")).toBe(false);
   });
 });

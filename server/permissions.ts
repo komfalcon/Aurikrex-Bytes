@@ -41,7 +41,7 @@ export function canTransitionPost(role: AdminRole, from: string, to: string) {
   if (from === "draft" && to === "pending_review") return role === "editor" || role === "admin";
   if (from === "draft" && (to === "scheduled" || to === "published")) return role === "admin";
   if (from === "pending_review" && (to === "scheduled" || to === "published")) return role === "admin";
-  if (from === "scheduled" && to === "draft") return role === "admin";
+  if (from === "scheduled" && (to === "draft" || to === "published")) return role === "admin";
   return false;
 }
 
