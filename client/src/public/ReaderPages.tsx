@@ -99,17 +99,16 @@ function ThemeToggle() {
 }
 export function SiteHeader() {
   const [menu, setMenu] = useState(false);
-  const [, navigate] = useLocation();
   const utils = trpc.useUtils();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
   const logout = trpc.auth.logout.useMutation({
-    onSuccess: async () => {
-      await Promise.all([
-        utils.reader.session.reset(),
-        utils.reader.dashboard.reset(),
-      ]);
+    onSuccess: () => {
+      // Clear the shared auth snapshot before leaving the dashboard. A normal
+      // reset can briefly refetch stale data and the home route would redirect
+      // back to /dashboard during that window.
+      utils.reader.session.setData(undefined, undefined);
       setMenu(false);
-      navigate("/");
+      window.location.replace("/");
     },
   });
   const signedIn = Boolean(session.data);
