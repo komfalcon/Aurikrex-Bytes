@@ -427,6 +427,83 @@ function FeedViewModeControl({
   );
 }
 
+function ReadingViewPreviewCard({ post, compact = false, index = 0 }: { post: any; compact?: boolean; index?: number }) {
+  const previewPost = index === 0
+    ? post
+    : { ...post, headline: "The context behind the next important shift", body: "A second Byte preview keeps the useful detail visible without taking over the page." };
+  return (
+    <article className={`reading-preview-card ${compact ? "reading-preview-card-compact" : ""}`}>
+      <div className="reading-preview-image">
+        {previewPost.imageUrl ? <img src={optimizedImage(previewPost.imageUrl, compact ? 240 : 480)} alt="" /> : <Sparkles size={compact ? 12 : 16} />}
+      </div>
+      <div className="reading-preview-copy">
+        <span className="reading-preview-meta">Today · 4 min read</span>
+        <strong>{previewPost.headline}</strong>
+        <span>{excerpt(previewPost.body, compact ? 68 : 108)}</span>
+        <span className="reading-preview-action">Read story <ArrowRight size={11} /></span>
+      </div>
+      <div className="reading-preview-engagement" aria-hidden="true"><FireReactionIcon active={index === 0} /><span>{index === 0 ? "12" : "8"}</span><Bookmark size={11} /><Share2 size={11} /></div>
+    </article>
+  );
+}
+
+function ReadingViewOnboarding({
+  value,
+  post,
+  onChange,
+  onContinue,
+  onSkip,
+}: {
+  value: FeedViewMode;
+  post: any;
+  onChange: (value: FeedViewMode) => void;
+  onContinue: () => void;
+  onSkip: () => void;
+}) {
+  const options: Array<{ mode: FeedViewMode; title: string; description: string }> = [
+    { mode: "editorial", title: "Editorial", description: "Best for focused reading and the full publication experience." },
+    { mode: "compact", title: "Compact", description: "Best for scanning more stories quickly while keeping the useful detail." },
+  ];
+  return (
+    <section className="reading-onboarding" aria-labelledby="reading-onboarding-title">
+      <div className="reading-onboarding-intro">
+        <span className="eyebrow">A better way to browse</span>
+        <h2 id="reading-onboarding-title">Choose your reading view</h2>
+        <p>Pick the rhythm that suits your morning. You can change it any time from the briefing header.</p>
+      </div>
+      <div className="reading-onboarding-options" role="radiogroup" aria-label="Reading view options">
+        {options.map(option => {
+          const selected = value === option.mode;
+          return (
+            <button
+              key={option.mode}
+              type="button"
+              className={`reading-onboarding-option ${selected ? "selected" : ""}`}
+              role="radio"
+              aria-checked={selected}
+              onClick={() => onChange(option.mode)}
+            >
+              <div className="reading-onboarding-option-head">
+                <div><span className="reading-onboarding-option-kicker">{option.mode === "editorial" ? "One Byte at a time" : "More signal per screen"}</span><h3>{option.title}</h3></div>
+                <span className="reading-onboarding-check" aria-hidden="true">{selected ? <Check size={15} /> : null}</span>
+              </div>
+              <div className={`reading-preview reading-preview-${option.mode}`}>
+                <ReadingViewPreviewCard post={post} compact={option.mode === "compact"} />
+                {option.mode === "compact" && <ReadingViewPreviewCard post={post} compact index={1} />}
+              </div>
+              <p>{option.description}</p>
+            </button>
+          );
+        })}
+      </div>
+      <div className="reading-onboarding-actions">
+        <button type="button" className="button" onClick={onContinue}>Continue <ArrowRight size={15} /></button>
+        <button type="button" className="text-link" onClick={onSkip}>Choose later</button>
+      </div>
+    </section>
+  );
+}
+
 function PostCard({
   post,
   featured = false,
@@ -652,23 +729,53 @@ export function Home() {
 export function ReaderDashboard() {
   const [, navigate] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const utils = trpc.useUtils();
   const [tab, setTab] = useState<"today" | "all">("today");
   const [viewMode, setViewMode] = useState<FeedViewMode>(getInitialFeedViewMode);
+  const [preferenceHydrated, setPreferenceHydrated] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const dashboard = trpc.reader.dashboard.useQuery(
     { timeZone },
     { enabled: Boolean(session.data), retry: false }
   );
+  const savePreference = trpc.reader.setFeedPreference.useMutation();
   useEffect(() => {
     if (!session.isLoading && !session.data) navigate("/login");
   }, [navigate, session.data, session.isLoading]);
   useEffect(() => {
+    if (!dashboard.data || preferenceHydrated) return;
+    setViewMode(dashboard.data.reader.feedViewMode === "compact" ? "compact" : "editorial");
+    setShowOnboarding(!dashboard.data.reader.feedViewOnboardingCompleted);
+    setPreferenceHydrated(true);
+  }, [dashboard.data, preferenceHydrated]);
+  useEffect(() => {
     window.localStorage.setItem(FEED_VIEW_MODE_KEY, viewMode);
   }, [viewMode]);
+  const persistPreference = (nextMode: FeedViewMode, completeOnboarding: boolean) => {
+    const previousMode = viewMode;
+    setViewMode(nextMode);
+    if (completeOnboarding) setShowOnboarding(false);
+    savePreference.mutate(
+      { feedViewMode: nextMode, onboardingCompleted: completeOnboarding || Boolean(dashboard.data?.reader.feedViewOnboardingCompleted) },
+      {
+        onSuccess: () => {
+          if (completeOnboarding) setShowOnboarding(false);
+        },
+        onError: () => {
+          setViewMode(previousMode);
+          if (completeOnboarding) setShowOnboarding(true);
+          toast.error("Your reading preference could not be saved. Please try again.");
+        },
+        onSettled: () => void utils.reader.dashboard.invalidate({ timeZone }),
+      }
+    );
+  };
   if (session.isLoading || (!session.data && !dashboard.error))
     return <div className="route-loading">Opening your briefing…</div>;
   const data = dashboard.data;
   const posts = tab === "today" ? data?.todayPosts ?? [] : data?.allPosts ?? [];
+  const previewPost = posts[0] ?? data?.allPosts?.[0] ?? { headline: "The useful context behind what matters", body: "A considered look at the stories shaping the day.", imageUrl: null };
   const firstName = data?.reader.name?.trim().split(/\s+/)[0] || "reader";
   return (
     <PublicLayout seo={{ title: "Your dashboard — Aurikrex Bytes", description: "Your daily Aurikrex Bytes briefing and reading streak.", path: "/dashboard", robots: "noindex,nofollow" }}>
@@ -685,15 +792,25 @@ export function ReaderDashboard() {
             <small>Best: {data?.streak.longestStreak ?? 0} days</small>
           </div>
         </section>
+        {showOnboarding && (
+          <ReadingViewOnboarding
+            value={viewMode}
+            post={previewPost}
+            onChange={setViewMode}
+            onContinue={() => persistPreference(viewMode, true)}
+            onSkip={() => persistPreference("editorial", true)}
+          />
+        )}
         <section className="dashboard-feed">
           <div className="section-heading dashboard-heading">
             <div><span className="eyebrow">Your briefing</span><h2>{tab === "today" ? "Today’s Bytes" : "All Bytes"}</h2></div>
             <div className="dashboard-heading-tools">
               <div className="reader-tabs" role="tablist" aria-label="Reader feed">
-                <button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Today</button>
-                <button className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
+                <button type="button" role="tab" aria-selected={tab === "today"} className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Today</button>
+                <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
               </div>
-              <FeedViewModeControl value={viewMode} onChange={setViewMode} />
+              <FeedViewModeControl value={viewMode} onChange={mode => persistPreference(mode, false)} />
+              <span className="feed-view-helper">Controls your mobile reading view</span>
             </div>
           </div>
           {dashboard.isLoading ? <div className={`skeleton-grid skeleton-grid-${viewMode}`}><div /><div /><div /></div> : posts.length ? <div className={`post-grid post-grid-${viewMode}`}>{posts.map((post: any, index: number) => <PostCard key={post.id} post={post} featured={tab === "today" && index === 0} />)}</div> : <EmptyToday />}

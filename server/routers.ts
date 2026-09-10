@@ -35,6 +35,7 @@ import {
   searchPublishedPosts,
   togglePostBookmark,
   togglePostReaction,
+  updateReaderFeedPreference,
 } from "./db.js";
 import {
   cloudinaryConfigured,
@@ -466,6 +467,20 @@ export const appRouter = router({
     }),
   }),
   reader: router({
+    setFeedPreference: publicProcedure
+      .input(
+        z.object({
+          feedViewMode: z.enum(["editorial", "compact"]),
+          onboardingCompleted: z.boolean().default(true),
+        })
+      )
+      .mutation(async ({ input, ctx }) =>
+        updateReaderFeedPreference(
+          (await requireReader(ctx)).id,
+          input.feedViewMode,
+          input.onboardingCompleted
+        )
+      ),
     dashboard: publicProcedure
       .input(z.object({ timeZone: z.string().min(1).max(80).default("UTC") }))
       .query(async ({ input, ctx }) => {
