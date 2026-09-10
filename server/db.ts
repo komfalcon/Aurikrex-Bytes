@@ -29,6 +29,8 @@ async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
     ["current_streak", "integer DEFAULT 0 NOT NULL"],
     ["longest_streak", "integer DEFAULT 0 NOT NULL"],
     ["last_active_date", "text"],
+    ["feed_view_mode", "text DEFAULT 'editorial' NOT NULL"],
+    ["feed_view_onboarding_completed", "integer DEFAULT 0 NOT NULL"],
   ] as const;
   for (const [name, definition] of repairs) {
     if (names.has(name)) continue;
@@ -177,6 +179,19 @@ export async function getReaderById(id: number) {
     .limit(1);
   return result[0];
 }
+export async function updateReaderFeedPreference(
+  readerId: number,
+  feedViewMode: "editorial" | "compact",
+  onboardingCompleted = true
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  await db
+    .update(readers)
+    .set({ feedViewMode, feedViewOnboardingCompleted: onboardingCompleted })
+    .where(eq(readers.id, readerId));
+  return { feedViewMode, feedViewOnboardingCompleted: onboardingCompleted };
+}
 export async function getReaderByVerificationToken(token: string) {
   const db = await getDb();
   if (!db) return undefined;
@@ -317,7 +332,13 @@ export async function getReaderDashboard(
     listPublishedPosts(readerId),
   ]);
   return {
-    reader: { id: reader.id, name: reader.name, email: reader.email },
+    reader: {
+      id: reader.id,
+      name: reader.name,
+      email: reader.email,
+      feedViewMode: reader.feedViewMode,
+      feedViewOnboardingCompleted: reader.feedViewOnboardingCompleted,
+    },
     streak,
     todayPosts,
     allPosts,
