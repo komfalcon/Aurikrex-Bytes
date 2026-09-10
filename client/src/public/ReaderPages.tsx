@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useState, type ComponentProps } from "react";
+import { FormEvent, ReactNode, useEffect, useId, useState, type ComponentProps } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
@@ -46,6 +46,15 @@ const optimizedImage = (url: string, width: number) =>
   !url.includes("f_auto")
     ? url.replace("/upload/", `/upload/f_auto,q_auto,w_${width}/`)
     : url;
+
+type FeedViewMode = "editorial" | "compact";
+const FEED_VIEW_MODE_KEY = "aurikrex-feed-view-mode";
+const getInitialFeedViewMode = (): FeedViewMode => {
+  if (typeof window === "undefined") return "editorial";
+  return window.localStorage.getItem(FEED_VIEW_MODE_KEY) === "compact"
+    ? "compact"
+    : "editorial";
+};
 export function Logo({ compact = false, href = "/" }: { compact?: boolean; href?: string }) {
   return (
     <Link
@@ -320,12 +329,26 @@ function ShareButton({ post }: { post: any }) {
   </div>;
 }
 
-function SignalReactionIcon({ active }: { active: boolean }) {
+function FireReactionIcon({ active }: { active: boolean }) {
+  const gradientId = `fire-reaction-${useId().replace(/:/g, "")}`;
   return (
-    <svg className="signal-reaction-mark" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 2.5 14 8l5.5 2-5.5 2-2 5.5-2-5.5-5.5-2L10 8l2-5.5Z" fill="currentColor" />
-      <path d="m18.2 14.2.75 2.15 2.15.75-2.15.75-.75 2.15-.75-2.15-2.15-.75 2.15-.75.75-2.15Z" fill={active ? "#f6c85f" : "#88a9e8"} />
-      <circle cx="12" cy="10.5" r="1.9" fill={active ? "#fff3c4" : "#f0b83f"} />
+    <svg className="fire-reaction-mark" viewBox="0 0 24 24" aria-hidden="true">
+      <defs>
+        <linearGradient id={gradientId} x1="12" y1="22" x2="12" y2="2" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#1d4ed8" />
+          <stop offset="0.5" stopColor="#7c3aed" />
+          <stop offset="1" stopColor="#f6c85f" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M12 2.25c.32 2.14-.2 3.65-1.64 5.08-1.15 1.14-2.61 2.24-2.61 4.48 0 1.24.54 2.37 1.4 3.16-.06-1.78.73-3.17 2.17-4.38.93-.79 1.54-1.71 1.55-3.02 2.25 1.62 4.6 4.37 4.6 7.35 0 1.03-.24 1.99-.68 2.85.57-.29 1.11-.71 1.57-1.22-.16 3.89-2.86 6.53-6.36 6.53-4.1 0-6.9-2.73-6.9-6.58 0-3.3 1.9-5.72 4.01-7.81C10.68 6.98 11.51 5.13 12 2.25Z"
+        fill={`url(#${gradientId})`}
+      />
+      <path
+        d="M12.2 11.35c.86 1.03 1.45 2.12 1.45 3.48 0 1.26-.63 2.27-1.66 2.93-.9-.64-1.4-1.57-1.4-2.58 0-1.45.86-2.56 1.61-3.83Z"
+        fill={active ? "#fff2be" : "#f8d77b"}
+        opacity={active ? 1 : 0.78}
+      />
     </svg>
   );
 }
@@ -354,10 +377,54 @@ function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (save
   const requireLogin = () => { if (!session.data) navigate("/login"); return Boolean(session.data); };
   const state = { ...post, ...(engagement.data || {}) };
   return <div className="engagement-actions" onClick={e => e.preventDefault()}>
-    <button className={`engagement-button signal-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove Aurikrex signal" : "Send Aurikrex signal"} title="Aurikrex signal reaction"><SignalReactionIcon active={Boolean(state.hasReacted)} /><span>{state.reactionCount || 0}</span></button>
+    <button className={`engagement-button fire-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove Aurikrex fire reaction" : "Send Aurikrex fire reaction"} title="Aurikrex fire reaction"><FireReactionIcon active={Boolean(state.hasReacted)} /><span>{state.reactionCount || 0}</span></button>
     <button className={`engagement-button ${state.isBookmarked ? "active" : ""}`} onClick={() => requireLogin() && bookmark.mutate({ postId: post.id })} aria-label={state.isBookmarked ? "Remove bookmark" : "Save post"} title={state.isBookmarked ? "Remove bookmark" : "Save post"}><Bookmark size={15} fill={state.isBookmarked ? "currentColor" : "none"} /></button>
     <ShareButton post={state} />
   </div>;
+}
+
+function FeedViewModeControl({
+  value,
+  onChange,
+}: {
+  value: FeedViewMode;
+  onChange: (value: FeedViewMode) => void;
+}) {
+  return (
+    <div className="feed-view-control" role="group" aria-label="Mobile feed view">
+      <span className="feed-view-label">Mobile view</span>
+      <div className="feed-view-options">
+        <button
+          type="button"
+          className={value === "editorial" ? "active" : ""}
+          aria-pressed={value === "editorial"}
+          title="Editorial view"
+          onClick={() => onChange("editorial")}
+        >
+          <svg viewBox="0 0 18 18" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="13" height="4" rx="1" />
+            <rect x="2.5" y="11.5" width="13" height="4" rx="1" />
+          </svg>
+          Editorial
+        </button>
+        <button
+          type="button"
+          className={value === "compact" ? "active" : ""}
+          aria-pressed={value === "compact"}
+          title="Compact view"
+          onClick={() => onChange("compact")}
+        >
+          <svg viewBox="0 0 18 18" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="5" height="5" rx="1" />
+            <rect x="10.5" y="2.5" width="5" height="5" rx="1" />
+            <rect x="2.5" y="10.5" width="5" height="5" rx="1" />
+            <rect x="10.5" y="10.5" width="5" height="5" rx="1" />
+          </svg>
+          Compact
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function PostCard({
@@ -586,6 +653,7 @@ export function ReaderDashboard() {
   const [, navigate] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
   const [tab, setTab] = useState<"today" | "all">("today");
+  const [viewMode, setViewMode] = useState<FeedViewMode>(getInitialFeedViewMode);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const dashboard = trpc.reader.dashboard.useQuery(
     { timeZone },
@@ -594,6 +662,9 @@ export function ReaderDashboard() {
   useEffect(() => {
     if (!session.isLoading && !session.data) navigate("/login");
   }, [navigate, session.data, session.isLoading]);
+  useEffect(() => {
+    window.localStorage.setItem(FEED_VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
   if (session.isLoading || (!session.data && !dashboard.error))
     return <div className="route-loading">Opening your briefing…</div>;
   const data = dashboard.data;
@@ -617,12 +688,15 @@ export function ReaderDashboard() {
         <section className="dashboard-feed">
           <div className="section-heading dashboard-heading">
             <div><span className="eyebrow">Your briefing</span><h2>{tab === "today" ? "Today’s Bytes" : "All Bytes"}</h2></div>
-            <div className="reader-tabs" role="tablist" aria-label="Reader feed">
-              <button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Today</button>
-              <button className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
+            <div className="dashboard-heading-tools">
+              <div className="reader-tabs" role="tablist" aria-label="Reader feed">
+                <button className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Today</button>
+                <button className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
+              </div>
+              <FeedViewModeControl value={viewMode} onChange={setViewMode} />
             </div>
           </div>
-          {dashboard.isLoading ? <div className="skeleton-grid"><div /><div /><div /></div> : posts.length ? <div className="post-grid">{posts.map((post: any, index: number) => <PostCard key={post.id} post={post} featured={tab === "today" && index === 0} />)}</div> : <EmptyToday />}
+          {dashboard.isLoading ? <div className={`skeleton-grid skeleton-grid-${viewMode}`}><div /><div /><div /></div> : posts.length ? <div className={`post-grid post-grid-${viewMode}`}>{posts.map((post: any, index: number) => <PostCard key={post.id} post={post} featured={tab === "today" && index === 0} />)}</div> : <EmptyToday />}
         </section>
       </main>
     </PublicLayout>
