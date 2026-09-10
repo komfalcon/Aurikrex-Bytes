@@ -3222,3 +3222,117 @@ button,
     justify-content: center;
   }
 }
+
+/* Compact reading view density pass: scoped below the existing mobile mode layer. */
+@media (max-width: 800px) {
+  .reader-dashboard .post-grid-compact {
+    gap: 12px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card,
+  .reader-dashboard .post-grid-compact .post-card-featured {
+    display: flex;
+    flex-direction: column;
+    border-radius: 12px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card .card-image,
+  .reader-dashboard .post-grid-compact .post-card-featured .card-image {
+    min-height: 118px;
+    height: 118px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card-body {
+    padding: 12px 14px 8px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-meta {
+    gap: 6px;
+    font-size: 9px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card h2,
+  .reader-dashboard .post-grid-compact .post-card-featured h2 {
+    display: -webkit-box;
+    overflow: hidden;
+    margin: 7px 0 6px;
+    font-size: 19px;
+    line-height: 1.08;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card p {
+    margin-bottom: 4px;
+    font-size: 12px;
+    line-height: 1.4;
+    -webkit-line-clamp: 2;
+  }
+
+  .reader-dashboard .post-grid-compact .read-more {
+    min-height: 36px;
+    gap: 5px;
+    font-size: 11px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card-actions {
+    min-height: 42px;
+    padding: 0 12px 8px;
+  }
+
+  .reader-dashboard .post-grid-compact .engagement-actions {
+    min-height: 34px;
+    gap: 4px;
+  }
+
+  .reader-dashboard .post-grid-compact .engagement-button {
+    min-width: 38px;
+    min-height: 38px;
+    padding: 7px;
+    gap: 4px;
+  }
+
+  .reader-dashboard .post-grid-compact .fire-reaction-mark {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+@media (min-width: 560px) and (max-width: 800px), (orientation: landscape) and (min-width: 480px) and (max-width: 800px) {
+  .reader-dashboard .post-grid-compact {
+    gap: 14px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card .card-image,
+  .reader-dashboard .post-grid-compact .post-card-featured .card-image {
+    min-height: 128px;
+    height: 128px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card h2,
+  .reader-dashboard .post-grid-compact .post-card-featured h2 {
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 460px) {
+  .reader-dashboard .post-grid-compact .post-card-body {
+    padding-inline: 12px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card .card-image,
+  .reader-dashboard .post-grid-compact .post-card-featured .card-image {
+    min-height: 108px;
+    height: 108px;
+  }
+
+  .reader-dashboard .post-grid-compact .post-card h2,
+  .reader-dashboard .post-grid-compact .post-card-featured h2 {
+    font-size: 18px;
+  }
+}
+
+.install-prompt button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--blue) 48%, transparent);
+  outline-offset: 3px;
+}
