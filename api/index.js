@@ -2145,7 +2145,7 @@ function registerSeoRoutes(app) {
   });
   app.get("/post/:id", (req, res, next) => {
     if (process.env.NODE_ENV === "development") return next();
-    return void sendPostPreview(req, res, next, "shell");
+    return void sendPostPreview(req, res, next, "share");
   });
   app.get(
     "/api/share/post/:id",

@@ -369,11 +369,12 @@ export function registerSeoRoutes(app: Express) {
       );
   });
 
-  // In a normal production server, serve the SPA shell with article-specific tags.
-  // Development delegates to Vite, which owns the HTML fallback.
+  // Serve the share document (with correct OG tags) for any bot that hits /post/:id directly.
+  // "share" mode returns a self-contained HTML page — no file reading, no crash on Vercel.
+  // Development delegates to Vite which owns the HTML fallback.
   app.get("/post/:id", (req: Request, res: Response, next: NextFunction) => {
     if (process.env.NODE_ENV === "development") return next();
-    return void sendPostPreview(req, res, next, "shell");
+    return void sendPostPreview(req, res, next, "share");
   });
 
   // Vercel sends crawler requests here so social clients receive metadata without
