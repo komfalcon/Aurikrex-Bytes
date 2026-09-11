@@ -57,13 +57,20 @@ type PostSeo = {
   publishedTime?: Date | null;
 };
 
+// Helper to resize Cloudinary images for social previews (1200x630, compressed)
+function optimizeCloudinaryUrl(url: string) {
+  if (!url.includes("res.cloudinary.com")) return absoluteUrl(url);
+  // Insert transformation parameters right after /upload/
+  return url.replace("/upload/", "/upload/w_1200,h_630,c_fill,q_auto,f_auto/");
+}
+
 export function createPostSeo(post: SeoPost): PostSeo {
   const canonicalUrl = `${siteUrl()}/post/${post.id}`;
   // Use the post's Cloudinary image directly as the social preview.
   // It's already a public CDN URL — no server-side generation, no sharp, no timeouts.
   // Fall back to the site logo for posts that somehow have no image.
   const imageUrl = post.imageUrl
-    ? absoluteUrl(post.imageUrl)
+    ? optimizeCloudinaryUrl(post.imageUrl)
     : `${siteUrl()}/logo-512.png`;
 
   return {

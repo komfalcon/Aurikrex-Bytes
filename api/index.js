@@ -1886,9 +1886,13 @@ var absoluteUrl = (value) => {
   }
 };
 var safeJson = (value) => JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+function optimizeCloudinaryUrl(url) {
+  if (!url.includes("res.cloudinary.com")) return absoluteUrl(url);
+  return url.replace("/upload/", "/upload/w_1200,h_630,c_fill,q_auto,f_auto/");
+}
 function createPostSeo(post) {
   const canonicalUrl = `${siteUrl()}/post/${post.id}`;
-  const imageUrl = post.imageUrl ? absoluteUrl(post.imageUrl) : `${siteUrl()}/logo-512.png`;
+  const imageUrl = post.imageUrl ? optimizeCloudinaryUrl(post.imageUrl) : `${siteUrl()}/logo-512.png`;
   return {
     title: `${post.headline} \u2014 Aurikrex Bytes`,
     description: excerpt(post.body),
