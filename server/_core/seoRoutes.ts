@@ -1,5 +1,6 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import sharp from "sharp";
 import { getPostById, listPublishedPosts } from "../db.js";
@@ -171,9 +172,10 @@ async function fetchRemoteImageBuffer(url: string) {
 
 async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
   const title = cleanText(post.headline).slice(0, 72) || "Aurikrex Bytes";
-  const body = cleanText(post.body).slice(0, 160) || "A daily curated technology briefing.";
+  const body = cleanText(post.body).slice(0, 200) || "A daily curated technology briefing.";
   const titleLines = wrapTitle(title, 46);
-  const bodyText = escapeXml(body);
+  // Wrap body into lines of ~48 chars at font-size 22, max 3 lines
+  const bodyLines = wrapTitle(body, 48).slice(0, 3);
 
   let coverMarkup = `<rect x="0" y="0" width="1200" height="630" fill="url(#bg)"/>`;
   if (coverBuffer) {
@@ -196,6 +198,9 @@ async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
     coverMarkup = `<rect x="0" y="0" width="1200" height="630" fill="url(#bg)"/><circle cx="950" cy="330" r="180" fill="#8b5cf6" opacity="0.32"/><path d="M850 90 C998 120 1050 250 1000 405 C960 525 845 530 790 440 C760 385 770 250 850 90" fill="#22d3ee" opacity="0.2"/>`;
   }
 
+  // Position body text dynamically below the title block
+  const bodyY = 185 + titleLines.length * 58 + 28;
+
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
     <defs>
       <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -214,10 +219,10 @@ async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
     <rect x="70" y="70" width="500" height="490" rx="24" fill="#07111f" fill-opacity="0.72" stroke="#b8a2ff" stroke-opacity="0.35" filter="url(#shadow)"/>
     <text x="110" y="130" fill="#a78bfa" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="2">AURIKREX BYTES</text>
     <rect x="110" y="150" width="120" height="4" fill="url(#line)"/>
-    <text x="110" y="250" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
-    <text x="110" y="390" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="400">${bodyText}</text>
-    <text x="110" y="505" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
-    <text x="110" y="540" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">aurikrex.tech</text>
+    <text x="110" y="185" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
+    <text x="110" y="${bodyY}" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${bodyLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 30}">${escapeXml(line)}</tspan>`).join("")}</text>
+    <text x="110" y="510" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
+    <text x="110" y="543" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">aurikrex.tech</text>
   </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
@@ -269,16 +274,26 @@ async function sendPostPreview(
       return res.status(404).send("Story not found");
 
     if (mode === "image") {
-      const shareDir = path.resolve(import.meta.dirname, "../../client/public/share-cards");
-      await fs.promises.mkdir(shareDir, { recursive: true });
-      const shareFile = path.resolve(shareDir, `${id}.png`);
-      if (!fs.existsSync(shareFile)) {
-        const png = await generateShareCard(post);
-        await fs.promises.writeFile(shareFile, png);
+      // Cache to /tmp — writable in both local dev and Vercel serverless (unlike the static build dir).
+      const tmpDir = path.join(os.tmpdir(), "ab-share-cards");
+      const cacheFile = path.join(tmpDir, `post-${id}.png`);
+      let png: Buffer;
+      try {
+        await fs.promises.mkdir(tmpDir, { recursive: true });
+        if (fs.existsSync(cacheFile)) {
+          png = await fs.promises.readFile(cacheFile);
+        } else {
+          png = await generateShareCard(post);
+          // Best-effort write; ignore errors (e.g. read-only FS edge cases)
+          await fs.promises.writeFile(cacheFile, png).catch(() => undefined);
+        }
+      } catch {
+        // Fallback: generate fresh on every request if cache is unavailable
+        png = await generateShareCard(post);
       }
       res.setHeader("Content-Type", "image/png");
       res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=3600");
-      return res.status(200).sendFile(shareFile);
+      return res.status(200).end(png);
     }
 
     const seo = createPostSeo(post);
