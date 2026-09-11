@@ -562,11 +562,19 @@ h2 {
 .engagement-actions { display: flex; align-items: center; gap: 5px; }
 .engagement-button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 8px; padding: 7px 8px; background: transparent; color: var(--muted); font-size: 11px; transition: color .18s, background .18s, transform .18s; }
 .engagement-button:hover, .engagement-button.active { color: var(--blue); background: var(--surface-2); }
+@keyframes fire-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.4) rotate(-8deg); }
+  100% { transform: scale(1) rotate(0); }
+}
 .fire-button { transition-duration: .16s; }
-.fire-button .fire-reaction-mark { width: 17px; height: 17px; transition: transform .16s, filter .16s; }
+.fire-button .fire-reaction-mark { width: 17px; height: 17px; transition: transform .16s, filter .16s, fill .2s, stroke .2s; }
 .fire-button:hover .fire-reaction-mark { transform: translateY(-1px) scale(1.06); filter: drop-shadow(0 2px 3px rgba(124, 58, 237, .25)); }
 .fire-button.active { color: #7c3aed; background: linear-gradient(135deg, rgba(29, 78, 216, .12), rgba(124, 58, 237, .15), rgba(246, 200, 95, .2)); box-shadow: inset 0 0 0 1px rgba(124, 58, 237, .18); }
-.fire-button.active .fire-reaction-mark { filter: drop-shadow(0 2px 3px rgba(246, 200, 95, .4)); }
+.fire-button.active .fire-reaction-mark { 
+  filter: drop-shadow(0 2px 3px rgba(246, 200, 95, .4));
+  animation: fire-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
 .fire-button:active { transform: scale(.97); }
 .share-control { position: relative; }
 .share-menu { position: absolute; z-index: 5; bottom: calc(100% + 8px); left: 0; display: grid; min-width: 130px; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); }

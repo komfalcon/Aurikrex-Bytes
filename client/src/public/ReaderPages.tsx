@@ -353,22 +353,28 @@ function FireReactionIcon({ active }: { active: boolean }) {
   const gradientId = `fire-reaction-${useId().replace(/:/g, "")}`;
   return (
     <svg className="fire-reaction-mark" viewBox="0 0 24 24" aria-hidden="true">
-      <defs>
-        <linearGradient id={gradientId} x1="12" y1="22" x2="12" y2="2" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#1d4ed8" />
-          <stop offset="0.5" stopColor="#7c3aed" />
-          <stop offset="1" stopColor="#f6c85f" />
-        </linearGradient>
-      </defs>
+      {active && (
+        <defs>
+          <linearGradient id={gradientId} x1="12" y1="22" x2="12" y2="2" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#1d4ed8" />
+            <stop offset="0.5" stopColor="#7c3aed" />
+            <stop offset="1" stopColor="#f6c85f" />
+          </linearGradient>
+        </defs>
+      )}
       <path
         d="M12 2.25c.32 2.14-.2 3.65-1.64 5.08-1.15 1.14-2.61 2.24-2.61 4.48 0 1.24.54 2.37 1.4 3.16-.06-1.78.73-3.17 2.17-4.38.93-.79 1.54-1.71 1.55-3.02 2.25 1.62 4.6 4.37 4.6 7.35 0 1.03-.24 1.99-.68 2.85.57-.29 1.11-.71 1.57-1.22-.16 3.89-2.86 6.53-6.36 6.53-4.1 0-6.9-2.73-6.9-6.58 0-3.3 1.9-5.72 4.01-7.81C10.68 6.98 11.51 5.13 12 2.25Z"
-        fill={`url(#${gradientId})`}
+        fill={active ? `url(#${gradientId})` : "none"}
+        stroke={active ? "none" : "currentColor"}
+        strokeWidth={active ? 0 : 1.5}
+        strokeLinejoin="round"
       />
-      <path
-        d="M12.2 11.35c.86 1.03 1.45 2.12 1.45 3.48 0 1.26-.63 2.27-1.66 2.93-.9-.64-1.4-1.57-1.4-2.58 0-1.45.86-2.56 1.61-3.83Z"
-        fill={active ? "#fff2be" : "#f8d77b"}
-        opacity={active ? 1 : 0.78}
-      />
+      {active && (
+        <path
+          d="M12.2 11.35c.86 1.03 1.45 2.12 1.45 3.48 0 1.26-.63 2.27-1.66 2.93-.9-.64-1.4-1.57-1.4-2.58 0-1.45.86-2.56 1.61-3.83Z"
+          fill="#fff2be"
+        />
+      )}
     </svg>
   );
 }
