@@ -59,7 +59,12 @@ type PostSeo = {
 
 export function createPostSeo(post: SeoPost): PostSeo {
   const canonicalUrl = `${siteUrl()}/post/${post.id}`;
-  const imageUrl = `${siteUrl()}/api/share/post/${post.id}/image`;
+  // Use the post's Cloudinary image directly as the social preview.
+  // It's already a public CDN URL — no server-side generation, no sharp, no timeouts.
+  // Fall back to the site logo for posts that somehow have no image.
+  const imageUrl = post.imageUrl
+    ? absoluteUrl(post.imageUrl)
+    : `${siteUrl()}/logo-512.png`;
 
   return {
     title: `${post.headline} — Aurikrex Bytes`,

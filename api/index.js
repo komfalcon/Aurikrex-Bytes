@@ -1878,10 +1878,17 @@ var excerpt = (value, length = 160) => {
   const text2 = cleanText(value);
   return text2.length > length ? `${text2.slice(0, length).trim()}\u2026` : text2;
 };
+var absoluteUrl = (value) => {
+  try {
+    return new URL(value, siteUrl()).toString();
+  } catch {
+    return `${siteUrl()}/logo-512.png`;
+  }
+};
 var safeJson = (value) => JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
 function createPostSeo(post) {
   const canonicalUrl = `${siteUrl()}/post/${post.id}`;
-  const imageUrl = `${siteUrl()}/api/share/post/${post.id}/image`;
+  const imageUrl = post.imageUrl ? absoluteUrl(post.imageUrl) : `${siteUrl()}/logo-512.png`;
   return {
     title: `${post.headline} \u2014 Aurikrex Bytes`,
     description: excerpt(post.body),
