@@ -89,6 +89,8 @@ var readers = sqliteTable("readers", {
   currentStreak: integer("current_streak").notNull().default(0),
   longestStreak: integer("longest_streak").notNull().default(0),
   lastActiveDate: text("last_active_date"),
+  feedViewMode: text("feed_view_mode", { enum: ["editorial", "compact"] }).notNull().default("editorial"),
+  feedViewOnboardingCompleted: integer("feed_view_onboarding_completed", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
 });
 var postViews = sqliteTable("post_views", {
@@ -172,7 +174,9 @@ async function repairReaderSchema(db) {
     ["verification_token_used", "text"],
     ["current_streak", "integer DEFAULT 0 NOT NULL"],
     ["longest_streak", "integer DEFAULT 0 NOT NULL"],
-    ["last_active_date", "text"]
+    ["last_active_date", "text"],
+    ["feed_view_mode", "text DEFAULT 'editorial' NOT NULL"],
+    ["feed_view_onboarding_completed", "integer DEFAULT 0 NOT NULL"]
   ];
   for (const [name, definition] of repairs) {
     if (names.has(name)) continue;
@@ -289,6 +293,12 @@ async function getReaderById(id) {
   const result = await db.select().from(readers).where(eq(readers.id, id)).limit(1);
   return result[0];
 }
+async function updateReaderFeedPreference(readerId, feedViewMode, onboardingCompleted = true) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  await db.update(readers).set({ feedViewMode, feedViewOnboardingCompleted: onboardingCompleted }).where(eq(readers.id, readerId));
+  return { feedViewMode, feedViewOnboardingCompleted: onboardingCompleted };
+}
 async function getReaderByVerificationToken(token) {
   const db = await getDb();
   if (!db) return void 0;
@@ -403,7 +413,13 @@ async function getReaderDashboard(readerId, timeZone = process.env.APP_TIMEZONE 
     listPublishedPosts(readerId)
   ]);
   return {
-    reader: { id: reader.id, name: reader.name, email: reader.email },
+    reader: {
+      id: reader.id,
+      name: reader.name,
+      email: reader.email,
+      feedViewMode: reader.feedViewMode,
+      feedViewOnboardingCompleted: reader.feedViewOnboardingCompleted
+    },
     streak,
     todayPosts,
     allPosts
@@ -1587,6 +1603,18 @@ var appRouter = router({
     })
   }),
   reader: router({
+    setFeedPreference: publicProcedure.input(
+      z2.object({
+        feedViewMode: z2.enum(["editorial", "compact"]),
+        onboardingCompleted: z2.boolean().default(true)
+      })
+    ).mutation(
+      async ({ input, ctx }) => updateReaderFeedPreference(
+        (await requireReader(ctx)).id,
+        input.feedViewMode,
+        input.onboardingCompleted
+      )
+    ),
     dashboard: publicProcedure.input(z2.object({ timeZone: z2.string().min(1).max(80).default("UTC") })).query(async ({ input, ctx }) => {
       const session = await requireReader(ctx);
       const dashboard = await getReaderDashboard(session.id, input.timeZone);
@@ -1839,6 +1867,7 @@ async function createContext(opts) {
 
 // server/_core/seoRoutes.ts
 import fs from "fs";
+import os from "os";
 import path from "path";
 import sharp from "sharp";
 var siteUrl = () => (process.env.APP_BASE_URL || "https://aurikrex.tech").replace(/\/$/, "");
@@ -1950,9 +1979,9 @@ async function fetchRemoteImageBuffer(url) {
 }
 async function buildShareSvg(post, coverBuffer) {
   const title = cleanText(post.headline).slice(0, 72) || "Aurikrex Bytes";
-  const body = cleanText(post.body).slice(0, 160) || "A daily curated technology briefing.";
+  const body = cleanText(post.body).slice(0, 200) || "A daily curated technology briefing.";
   const titleLines = wrapTitle(title, 46);
-  const bodyText = escapeXml(body);
+  const bodyLines = wrapTitle(body, 48).slice(0, 3);
   let coverMarkup = `<rect x="0" y="0" width="1200" height="630" fill="url(#bg)"/>`;
   if (coverBuffer) {
     const imageBase64 = coverBuffer.toString("base64");
@@ -1973,6 +2002,7 @@ async function buildShareSvg(post, coverBuffer) {
   } else {
     coverMarkup = `<rect x="0" y="0" width="1200" height="630" fill="url(#bg)"/><circle cx="950" cy="330" r="180" fill="#8b5cf6" opacity="0.32"/><path d="M850 90 C998 120 1050 250 1000 405 C960 525 845 530 790 440 C760 385 770 250 850 90" fill="#22d3ee" opacity="0.2"/>`;
   }
+  const bodyY = 185 + titleLines.length * 58 + 28;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
     <defs>
       <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -1991,10 +2021,10 @@ async function buildShareSvg(post, coverBuffer) {
     <rect x="70" y="70" width="500" height="490" rx="24" fill="#07111f" fill-opacity="0.72" stroke="#b8a2ff" stroke-opacity="0.35" filter="url(#shadow)"/>
     <text x="110" y="130" fill="#a78bfa" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="2">AURIKREX BYTES</text>
     <rect x="110" y="150" width="120" height="4" fill="url(#line)"/>
-    <text x="110" y="250" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i === 0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
-    <text x="110" y="390" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="400">${bodyText}</text>
-    <text x="110" y="505" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
-    <text x="110" y="540" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">aurikrex.tech</text>
+    <text x="110" y="185" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i === 0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
+    <text x="110" y="${bodyY}" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${bodyLines.map((line, i) => `<tspan x="110" dy="${i === 0 ? 0 : 30}">${escapeXml(line)}</tspan>`).join("")}</text>
+    <text x="110" y="510" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
+    <text x="110" y="543" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">aurikrex.tech</text>
   </svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
@@ -2029,16 +2059,23 @@ async function sendPostPreview(req, res, next, mode) {
     if (!post || post.status !== "published")
       return res.status(404).send("Story not found");
     if (mode === "image") {
-      const shareDir = path.resolve(import.meta.dirname, "../../client/public/share-cards");
-      await fs.promises.mkdir(shareDir, { recursive: true });
-      const shareFile = path.resolve(shareDir, `${id}.png`);
-      if (!fs.existsSync(shareFile)) {
-        const png = await generateShareCard(post);
-        await fs.promises.writeFile(shareFile, png);
+      const tmpDir = path.join(os.tmpdir(), "ab-share-cards");
+      const cacheFile = path.join(tmpDir, `post-${id}.png`);
+      let png;
+      try {
+        await fs.promises.mkdir(tmpDir, { recursive: true });
+        if (fs.existsSync(cacheFile)) {
+          png = await fs.promises.readFile(cacheFile);
+        } else {
+          png = await generateShareCard(post);
+          await fs.promises.writeFile(cacheFile, png).catch(() => void 0);
+        }
+      } catch {
+        png = await generateShareCard(post);
       }
       res.setHeader("Content-Type", "image/png");
       res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=3600");
-      return res.status(200).sendFile(shareFile);
+      return res.status(200).end(png);
     }
     const seo = createPostSeo(post);
     if (mode === "share") {
