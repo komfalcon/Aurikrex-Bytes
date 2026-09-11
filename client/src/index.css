@@ -919,9 +919,6 @@ details p {
   }
 }
 @media (max-width: 460px) {
-  .button-small {
-    display: none;
-  }
   .hero-actions {
     align-items: flex-start;
     flex-direction: column;
