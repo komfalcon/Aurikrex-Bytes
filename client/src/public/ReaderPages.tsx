@@ -295,6 +295,26 @@ function ShareButton({ post }: { post: any }) {
   const share = async () => {
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
       const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
+      
+      try {
+        if (post.imageUrl && navigator.canShare) {
+          // Resize to a reasonable social card size
+          const imageUrl = post.imageUrl.includes("res.cloudinary.com")
+            ? post.imageUrl.replace("/upload/", "/upload/w_1200,h_630,c_fill,q_auto,f_auto/")
+            : post.imageUrl;
+            
+          const response = await fetch(imageUrl);
+          const blob = await response.blob();
+          const file = new File([blob], `post-${post.id}.jpg`, { type: blob.type || "image/jpeg" });
+          
+          if (navigator.canShare({ files: [file] })) {
+            payload.files = [file];
+          }
+        }
+      } catch (e) {
+        console.warn("Could not attach share image:", e);
+      }
+
       try {
         await navigator.share(payload);
       } catch (error) {
