@@ -476,11 +476,17 @@ export const appRouter = router({
         auth: z.string(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const session = await requireReader(ctx);
+        let readerId: number | null = null;
+        try {
+          const session = await requireReader(ctx);
+          readerId = session.id;
+        } catch {
+          // Guest subscription without active session
+        }
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         await db.insert(pushSubscriptions).values({
-          readerId: session.id,
+          readerId,
           endpoint: input.endpoint,
           p256dh: input.p256dh,
           auth: input.auth,

@@ -133,6 +133,7 @@ export function SiteHeader() {
         <Link href="/how-it-works">About</Link>
       </nav>
       <div className="header-actions">
+        <PushSubscribeButton variant="header" />
         <ThemeToggle />
         {signedIn ? (
           <button className="header-login text-button" onClick={() => logout.mutate()}>
@@ -837,7 +838,7 @@ export function ReaderDashboard() {
                 <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
               </div>
               <FeedViewModeControl value={viewMode} onChange={mode => persistPreference(mode, false)} />
-              <PushSubscribeButton />
+              <PushSubscribeButton variant="button" />
               <span className="feed-view-helper">Controls your mobile reading view</span>
             </div>
           </div>

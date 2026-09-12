@@ -3341,3 +3341,28 @@ button,
   outline: 3px solid color-mix(in srgb, var(--blue) 48%, transparent);
   outline-offset: 3px;
 }
+
+.push-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  border: 1px solid var(--line, rgba(128,128,128,0.2));
+  background: var(--surface, transparent);
+  color: var(--ink, currentColor);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.push-toggle:hover {
+  opacity: 0.85;
+}
+
+.push-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
