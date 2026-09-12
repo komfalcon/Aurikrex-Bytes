@@ -1,0 +1,15 @@
+﻿name: Evening Push Notifications
+
+on:
+  schedule:
+    # 6:00 PM UTC every day
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-notifications:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Push Notifications API
+        run: |
+          curl -fail -s -X GET "https://aurikrex.tech/api/cron/notify"
