@@ -9,7 +9,7 @@ const BODY_LIMIT = 800;
 type FormErrors = { imageUrl?: string; headline?: string; body?: string; submit?: string };
 
 export function NewPostPage() {
-  const session = trpc.admin.session.useQuery();
+  const session = trpc.admin.session.useQuery(undefined, { retry: false });
   const [, editParams] = useRoute("/admin/new/:draftId");
   const editId = editParams?.draftId ? Number(editParams.draftId) : undefined;
   const existing = trpc.admin.post.useQuery({ id: editId || 0 }, { enabled: Boolean(editId) });
@@ -44,7 +44,7 @@ export function NewPostPage() {
 function statusText(status: string, scheduledTime: Date | null) { if (status === "pending_review") return "Pending Review"; if (status === "scheduled") return `Scheduled for ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(scheduledTime as Date))}`; if (status === "published") return "Published"; return "Draft"; }
 
 export function PreviewPage() {
-  const [, params] = useRoute("/admin/preview/:draftId"); const [location, navigate] = useLocation(); const session = trpc.admin.session.useQuery(); const id = Number(params?.draftId || 0); const post = trpc.admin.post.useQuery({ id }, { enabled: Boolean(session.data && id) });
+  const [, params] = useRoute("/admin/preview/:draftId"); const [location, navigate] = useLocation(); const session = trpc.admin.session.useQuery(undefined, { retry: false }); const id = Number(params?.draftId || 0); const post = trpc.admin.post.useQuery({ id }, { enabled: Boolean(session.data && id) });
   const utils = trpc.useUtils(); const submit = trpc.admin.submitPost.useMutation({ onSuccess: () => { void utils.admin.posts.invalidate(); navigate("/admin?message=submitted"); } }); const publish = trpc.admin.publishPost.useMutation({ onSuccess: () => { void utils.admin.posts.invalidate(); navigate("/admin?message=published"); } }); const schedule = trpc.admin.schedulePost.useMutation({ onSuccess: () => { void utils.admin.posts.invalidate(); navigate("/admin?message=scheduled"); } }); const approve = trpc.admin.approvePost.useMutation({ onSuccess: () => { void utils.admin.posts.invalidate(); navigate("/admin?message=approved"); } }); const reject = trpc.admin.rejectPost.useMutation({ onSuccess: () => { void utils.admin.posts.invalidate(); navigate("/admin?message=rejected"); } });
   const [scheduleTime, setScheduleTime] = useState(""); const [rejectionNote, setRejectionNote] = useState(""); const [error, setError] = useState("");
   if (session.isLoading || post.isLoading) return <main className="auth-wrap"><p className="muted">Loading preview…</p></main>;

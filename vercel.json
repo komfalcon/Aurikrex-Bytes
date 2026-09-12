@@ -54,12 +54,34 @@
   ],
   "rewrites": [
     {
+      "source": "/(archive|help|contact|privacy|terms)",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|telegrambot|whatsapp|googlebot|bingbot|discordbot|pinterest|applebot).*"
+        }
+      ],
+      "destination": "/api/share/static?path=$1"
+    },
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|telegrambot|whatsapp|googlebot|bingbot|discordbot|pinterest|applebot).*"
+        }
+      ],
+      "destination": "/api/share/static?path=root"
+    },
+    {
       "source": "/post/:id",
       "has": [
         {
           "type": "header",
           "key": "user-agent",
-          "value": ".*(facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|TelegramBot|WhatsApp|Googlebot|bingbot|Discordbot|Pinterest|Applebot).*"
+          "value": "(?i).*(facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|telegrambot|whatsapp|googlebot|bingbot|discordbot|pinterest|applebot).*"
         }
       ],
       "destination": "/api/share/post/:id"

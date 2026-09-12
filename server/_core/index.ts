@@ -43,10 +43,10 @@ async function setupApp() {
   if (!process.env.VERCEL) {
     server = createServer(app);
   }
-  // Configure body parser with larger size limit for file uploads
+  // Configure body parser with a reasonable size limit
   app.use(securityHeaders);
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.use(express.json({ limit: "2mb" }));
+  app.use(express.urlencoded({ limit: "2mb", extended: true }));
   registerSeoRoutes(app);
   app.get("/api/cron/publish", async (req, res) => {
     const authorization = req.headers.authorization;

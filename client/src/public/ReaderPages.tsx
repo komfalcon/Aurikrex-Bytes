@@ -241,8 +241,8 @@ export function SiteFooter() {
         </div>
       </div>
       <div className="footer-bottom">
-        <span>© {new Date().getFullYear()} Aurikrex Bytes</span>
-        <span>Made for the signal-seekers.</span>
+        <span>&copy; {new Date().getFullYear()} Aurikrex Bytes.</span>{" "}
+        <span className="footer-tagline">Made for the signal-seekers.</span>
       </div>
     </footer>
   );

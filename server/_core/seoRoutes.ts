@@ -24,7 +24,7 @@ const htmlEscape = (value: string) =>
 const cleanText = (value: string) => value.replace(/\s+/g, " ").trim();
 const excerpt = (value: string, length = 160) => {
   const text = cleanText(value);
-  return text.length > length ? `${text.slice(0, length).trim()}…` : text;
+  return text.length > length ? `${text.slice(0, length).trim()}Ã¢â‚¬Â¦` : text;
 };
 const absoluteUrl = (value: string) => {
   try {
@@ -67,14 +67,14 @@ function optimizeCloudinaryUrl(url: string) {
 export function createPostSeo(post: SeoPost): PostSeo {
   const canonicalUrl = `${siteUrl()}/post/${post.id}`;
   // Use the post's Cloudinary image directly as the social preview.
-  // It's already a public CDN URL — no server-side generation, no sharp, no timeouts.
+  // It's already a public CDN URL Ã¢â‚¬â€ no server-side generation, no sharp, no timeouts.
   // Fall back to the site logo for posts that somehow have no image.
   const imageUrl = post.imageUrl
     ? optimizeCloudinaryUrl(post.imageUrl)
     : `${siteUrl()}/logo-512.png`;
 
   return {
-    title: `${post.headline} — Aurikrex Bytes`,
+    title: `${post.headline} Ã¢â‚¬â€ Aurikrex Bytes`,
     description: excerpt(post.body),
     canonicalUrl,
     imageUrl,
@@ -286,7 +286,7 @@ async function sendPostPreview(
       return res.status(404).send("Story not found");
 
     if (mode === "image") {
-      // Cache to /tmp — writable in both local dev and Vercel serverless (unlike the static build dir).
+      // Cache to /tmp Ã¢â‚¬â€ writable in both local dev and Vercel serverless (unlike the static build dir).
       const tmpDir = path.join(os.tmpdir(), "ab-share-cards");
       const cacheFile = path.join(tmpDir, `post-${id}.png`);
       let png: Buffer;
@@ -377,7 +377,7 @@ export function registerSeoRoutes(app: Express) {
   });
 
   // Serve the share document (with correct OG tags) for any bot that hits /post/:id directly.
-  // "share" mode returns a self-contained HTML page — no file reading, no crash on Vercel.
+  // "share" mode returns a self-contained HTML page Ã¢â‚¬â€ no file reading, no crash on Vercel.
   // Development delegates to Vite which owns the HTML fallback.
   app.get("/post/:id", (req: Request, res: Response, next: NextFunction) => {
     if (process.env.NODE_ENV === "development") return next();
@@ -392,11 +392,33 @@ export function registerSeoRoutes(app: Express) {
       return void sendPostPreview(req, res, next, "share");
     }
   );
-
+  
   app.get(
     "/api/share/post/:id/image",
     (req: Request, res: Response, next: NextFunction) => {
       return void sendPostPreview(req, res, next, "image");
     }
   );
+
+  app.get("/api/share/static", (req: Request, res: Response) => {
+    const pathValue = req.query.path as string;
+    const staticMap: Record<string, { title: string; description: string }> = {
+      "root": { title: "Aurikrex Bytes â€” What matters in tech", description: "A focused editorial desk for shaping the next considered brief." },
+      "archive": { title: "All Bytes â€” Aurikrex Bytes archive", description: "Read all published editions of Aurikrex Bytes." },
+      "help": { title: "Help Center â€” Aurikrex Bytes", description: "Support and FAQs for Aurikrex Bytes." },
+      "contact": { title: "Contact Us â€” Aurikrex Bytes", description: "Get in touch with the Aurikrex Bytes team." },
+      "privacy": { title: "Privacy Policy â€” Aurikrex Bytes", description: "Privacy policy for Aurikrex Bytes." },
+      "terms": { title: "Terms of Service â€” Aurikrex Bytes", description: "Terms of Service for Aurikrex Bytes." }
+    };
+    const metadata = staticMap[pathValue] || staticMap["root"];
+    const seo: PostSeo = {
+      title: metadata.title,
+      description: metadata.description,
+      headline: metadata.title,
+      canonicalUrl: `${siteUrl()}/${pathValue === "root" ? "" : pathValue || ""}`,
+      imageUrl: `${siteUrl()}/logo-512.png`
+    };
+    return res.status(200).type("html").send(renderShareDocument(seo));
+  });
 }
+

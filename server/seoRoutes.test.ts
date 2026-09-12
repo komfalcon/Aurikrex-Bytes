@@ -16,7 +16,7 @@ describe("post share metadata", () => {
       description:
         "A considered briefing about the latest technology shift. With context for the people building what comes next.",
       canonicalUrl: "https://aurikrex.tech/post/42",
-      imageUrl: "https://aurikrex.tech/api/share/post/42/image",
+      imageUrl: "https://images.example.com/ai-card.jpg",
       headline: "AI & the future <today>",
     });
   });
@@ -32,7 +32,7 @@ describe("post share metadata", () => {
       '<meta property="og:title" content="AI &amp; the future &lt;today&gt;">'
     );
     expect(rendered).toContain(
-      '<meta property="og:image" content="https://aurikrex.tech/api/share/post/42/image">'
+      '<meta property="og:image" content="https://images.example.com/ai-card.jpg">'
     );
     expect(rendered).not.toContain("<title>Default</title>");
     expect(rendered).not.toContain('content="Default"');
