@@ -8,6 +8,7 @@ import { registerStorageProxy } from "./storageProxy.js";
 import { registerGoogleAuthRoutes } from "../google-auth.js";
 import { appRouter } from "../routers.js";
 import { createContext } from "./context.js";
+import { sendDailyPushNotifications } from "../push.js";
 import { serveStatic, setupVite } from "./vite.js";
 import { registerSeoRoutes } from "./seoRoutes.js";
 import { authRateLimit, securityHeaders } from "./security.js";
@@ -59,6 +60,20 @@ async function setupApp() {
     } catch (error) {
       console.error("[Cron] publish failed", error);
       return res.status(500).json({ error: "Publish job failed" });
+    }
+  });
+  app.get("/api/cron/notify", async (req, res) => {
+    const authorization = req.headers.authorization;
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const sent = await sendDailyPushNotifications();
+      return res.json({ sent });
+    } catch (error) {
+      console.error("[Cron] notify failed", error);
+      return res.status(500).json({ error: "Notify job failed" });
     }
   });
   app.use(authRateLimit);

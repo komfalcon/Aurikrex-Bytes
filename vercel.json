@@ -106,5 +106,19 @@
       "source": "/(.*)",
       "destination": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/notify",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/notify",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/publish",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }

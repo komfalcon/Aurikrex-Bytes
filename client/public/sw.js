@@ -30,3 +30,42 @@ self.addEventListener("fetch", event => {
     return response;
   }).catch(() => caches.match("/"))));
 });
+
+self.addEventListener("push", event => {
+  if (!event.data) return;
+  try {
+    const data = event.data.json();
+    event.waitUntil(
+      self.registration.showNotification(data.title || "Aurikrex Bytes", {
+        body: data.body || "New content available!",
+        icon: "/logo-192.png",
+        badge: "/logo-192.png",
+        data: { url: data.url || "/" }
+      })
+    );
+  } catch (err) {
+    console.error("Error parsing push payload", err);
+  }
+});
+
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const urlToOpen = new URL(event.notification.data?.url || "/", self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(windowClients => {
+      let matchingClient = null;
+      for (let i = 0; i < windowClients.length; i++) {
+        const windowClient = windowClients[i];
+        if (windowClient.url === urlToOpen) {
+          matchingClient = windowClient;
+          break;
+        }
+      }
+      if (matchingClient) {
+        return matchingClient.focus();
+      } else {
+        return self.clients.openWindow(urlToOpen);
+      }
+    })
+  );
+});

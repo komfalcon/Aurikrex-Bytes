@@ -1,7 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { adminUsers, posts, readers } from "../drizzle/schema.js";
+import { adminUsers, posts, readers, pushSubscriptions } from "../drizzle/schema.js";
+import { ENV } from "./_core/env.js";
 import {
   createToken,
   hashPassword,
@@ -467,6 +468,25 @@ export const appRouter = router({
     }),
   }),
   reader: router({
+    vapidPublicKey: publicProcedure.query(() => ENV.vapidPublicKey),
+    subscribePush: publicProcedure
+      .input(z.object({
+        endpoint: z.string().url(),
+        p256dh: z.string(),
+        auth: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const session = await requireReader(ctx);
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        await db.insert(pushSubscriptions).values({
+          readerId: session.id,
+          endpoint: input.endpoint,
+          p256dh: input.p256dh,
+          auth: input.auth,
+        });
+        return { success: true };
+      }),
     setFeedPreference: publicProcedure
       .input(
         z.object({

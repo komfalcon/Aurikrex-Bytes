@@ -116,6 +116,14 @@ var searchQueries = sqliteTable("search_queries", {
   query: text("query").notNull(),
   searchedAt: integer("searched_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
 });
+var pushSubscriptions = sqliteTable("push_subscriptions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  readerId: integer("reader_id").references(() => readers.id, { onDelete: "cascade" }),
+  endpoint: text("endpoint").notNull(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+});
 
 // server/_core/env.ts
 var ENV = {
@@ -126,7 +134,9 @@ var ENV = {
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
-  forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? ""
+  forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? "",
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? ""
 };
 function appBaseUrl() {
   return (process.env.APP_BASE_URL || (ENV.isProduction ? "" : "http://localhost:3000")).replace(/\/$/, "");
@@ -185,6 +195,14 @@ async function repairReaderSchema(db) {
   }
 }
 async function repairEngagementSchema(db) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    reader_id integer,
+    endpoint text NOT NULL,
+    p256dh text NOT NULL,
+    auth text NOT NULL,
+    created_at integer NOT NULL
+  )`));
   await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS post_reactions (
     id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
     post_id integer NOT NULL,
@@ -1603,6 +1621,23 @@ var appRouter = router({
     })
   }),
   reader: router({
+    vapidPublicKey: publicProcedure.query(() => ENV.vapidPublicKey),
+    subscribePush: publicProcedure.input(z2.object({
+      endpoint: z2.string().url(),
+      p256dh: z2.string(),
+      auth: z2.string()
+    })).mutation(async ({ input, ctx }) => {
+      const session = await requireReader(ctx);
+      const db = await getDb();
+      if (!db) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR" });
+      await db.insert(pushSubscriptions).values({
+        readerId: session.id,
+        endpoint: input.endpoint,
+        p256dh: input.p256dh,
+        auth: input.auth
+      });
+      return { success: true };
+    }),
     setFeedPreference: publicProcedure.input(
       z2.object({
         feedViewMode: z2.enum(["editorial", "compact"]),
@@ -1876,7 +1911,7 @@ var htmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").r
 var cleanText = (value) => value.replace(/\s+/g, " ").trim();
 var excerpt = (value, length = 160) => {
   const text2 = cleanText(value);
-  return text2.length > length ? `${text2.slice(0, length).trim()}\u2026` : text2;
+  return text2.length > length ? `${text2.slice(0, length).trim()}\xC3\xA2\xE2\u201A\xAC\xC2\xA6` : text2;
 };
 var absoluteUrl = (value) => {
   try {
@@ -1894,7 +1929,7 @@ function createPostSeo(post) {
   const canonicalUrl = `${siteUrl()}/post/${post.id}`;
   const imageUrl = post.imageUrl ? optimizeCloudinaryUrl(post.imageUrl) : `${siteUrl()}/logo-512.png`;
   return {
-    title: `${post.headline} \u2014 Aurikrex Bytes`,
+    title: `${post.headline} \xC3\xA2\xE2\u201A\xAC\xE2\u20AC\x9D Aurikrex Bytes`,
     description: excerpt(post.body),
     canonicalUrl,
     imageUrl,
@@ -2163,6 +2198,26 @@ function registerSeoRoutes(app) {
       return void sendPostPreview(req, res, next, "image");
     }
   );
+  app.get("/api/share/static", (req, res) => {
+    const pathValue = req.query.path;
+    const staticMap = {
+      "root": { title: "Aurikrex Bytes \xE2\u20AC\u201D What matters in tech", description: "A focused editorial desk for shaping the next considered brief." },
+      "archive": { title: "All Bytes \xE2\u20AC\u201D Aurikrex Bytes archive", description: "Read all published editions of Aurikrex Bytes." },
+      "help": { title: "Help Center \xE2\u20AC\u201D Aurikrex Bytes", description: "Support and FAQs for Aurikrex Bytes." },
+      "contact": { title: "Contact Us \xE2\u20AC\u201D Aurikrex Bytes", description: "Get in touch with the Aurikrex Bytes team." },
+      "privacy": { title: "Privacy Policy \xE2\u20AC\u201D Aurikrex Bytes", description: "Privacy policy for Aurikrex Bytes." },
+      "terms": { title: "Terms of Service \xE2\u20AC\u201D Aurikrex Bytes", description: "Terms of Service for Aurikrex Bytes." }
+    };
+    const metadata = staticMap[pathValue] || staticMap["root"];
+    const seo = {
+      title: metadata.title,
+      description: metadata.description,
+      headline: metadata.title,
+      canonicalUrl: `${siteUrl()}/${pathValue === "root" ? "" : pathValue || ""}`,
+      imageUrl: `${siteUrl()}/logo-512.png`
+    };
+    return res.status(200).type("html").send(renderShareDocument(seo));
+  });
 }
 
 // server/_core/security.ts
@@ -2175,7 +2230,7 @@ function securityHeaders(_req, res, next) {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob: https:; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com https://maps.googleapis.com; connect-src 'self' https: wss:; frame-src https://accounts.google.com; form-action 'self' https://accounts.google.com");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob: https://res.cloudinary.com https://*.googleusercontent.com; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com https://maps.googleapis.com; connect-src 'self' https://maps.googleapis.com https://api.cloudinary.com wss:; frame-src https://accounts.google.com; form-action 'self' https://accounts.google.com");
   if (process.env.NODE_ENV === "production" && process.env.APP_BASE_URL?.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   next();
 }

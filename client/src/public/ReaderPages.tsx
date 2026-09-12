@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { PushSubscribeButton } from "@/components/PushSubscribeButton";
 import { useTheme } from "@/contexts/ThemeContext";
 import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
 import Seo from "@/components/Seo";
@@ -836,6 +837,7 @@ export function ReaderDashboard() {
                 <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
               </div>
               <FeedViewModeControl value={viewMode} onChange={mode => persistPreference(mode, false)} />
+              <PushSubscribeButton />
               <span className="feed-view-helper">Controls your mobile reading view</span>
             </div>
           </div>

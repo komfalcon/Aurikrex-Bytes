@@ -11,6 +11,7 @@ import {
   readers,
   searchQueries,
   users,
+  pushSubscriptions,
 } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
 import { updateDailyStreak } from "./streak.js";
@@ -40,6 +41,15 @@ async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
 }
 
 async function repairEngagementSchema(db: ReturnType<typeof drizzle>) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    reader_id integer,
+    endpoint text NOT NULL,
+    p256dh text NOT NULL,
+    auth text NOT NULL,
+    created_at integer NOT NULL
+  )`));
+  
   await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS post_reactions (
     id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
     post_id integer NOT NULL,

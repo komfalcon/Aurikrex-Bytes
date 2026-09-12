@@ -123,3 +123,12 @@ export type PostView = typeof postViews.$inferSelect;
 export type PostReaction = typeof postReactions.$inferSelect;
 export type PostBookmark = typeof postBookmarks.$inferSelect;
 export type SearchQuery = typeof searchQueries.$inferSelect;
+
+export const pushSubscriptions = sqliteTable("push_subscriptions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  readerId: integer("reader_id").references(() => readers.id, { onDelete: "cascade" }),
+  endpoint: text("endpoint").notNull(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+});
