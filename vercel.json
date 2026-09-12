@@ -111,14 +111,6 @@
     {
       "path": "/api/cron/notify",
       "schedule": "1 8 * * *"
-    },
-    {
-      "path": "/api/cron/notify",
-      "schedule": "0 18 * * *"
-    },
-    {
-      "path": "/api/cron/publish",
-      "schedule": "*/5 * * * *"
     }
   ]
 }
