@@ -3366,3 +3366,555 @@ button,
   align-items: center;
   gap: 6px;
 }
+
+
+/* Mobile library elevation pass — intentionally scoped below 800px; desktop layout remains unchanged. */
+@media (max-width: 800px) {
+  html,
+  body {
+    overflow-x: clip;
+  }
+
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    width: 100%;
+    min-height: 64px;
+    padding: 8px 12px;
+    gap: 10px;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+  }
+
+  .site-header .brand {
+    min-width: 0;
+    flex: 1 1 auto;
+    gap: 8px;
+  }
+
+  .site-header .brand img {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+  }
+
+  .site-header .brand span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 14px;
+  }
+
+  .header-actions {
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+
+  .header-actions .push-toggle,
+  .header-actions .icon-button,
+  .header-actions .mobile-menu {
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  .header-actions .push-toggle {
+    display: inline-flex;
+    color: var(--muted);
+  }
+
+  .header-actions .push-toggle span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .header-actions .icon-button:hover,
+  .header-actions .mobile-menu:hover,
+  .header-actions .push-toggle:hover {
+    background: var(--surface-2);
+  }
+
+  .mobile-menu {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .01em;
+  }
+
+  .mobile-nav {
+    top: calc(100% + 8px);
+    left: 12px;
+    right: 12px;
+    width: auto;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, .14);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+  }
+
+  .mobile-nav a,
+  .mobile-nav button {
+    display: flex;
+    min-height: 48px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    border-radius: 11px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .mobile-nav a:hover,
+  .mobile-nav a:focus-visible,
+  .mobile-nav button:hover,
+  .mobile-nav button:focus-visible {
+    background: var(--surface-2);
+  }
+
+  .container,
+  .footer-inner,
+  .footer-bottom {
+    width: calc(100% - 24px);
+  }
+
+  .reader-dashboard {
+    width: calc(100% - 24px);
+    min-width: 0;
+    padding-top: 38px;
+    padding-bottom: calc(112px + env(safe-area-inset-bottom));
+  }
+
+  .dashboard-intro {
+    gap: 20px;
+    padding-bottom: 36px;
+  }
+
+  .dashboard-intro h1 {
+    max-width: 12ch;
+    font-size: clamp(2.45rem, 10.5vw, 3.4rem);
+    line-height: .98;
+    text-wrap: balance;
+  }
+
+  .dashboard-intro p {
+    max-width: 32ch;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .dashboard-intro .streak-card {
+    width: 100%;
+    max-width: none;
+    min-height: 88px;
+    padding: 16px 18px;
+    border-radius: 16px;
+  }
+
+  .streak-card strong {
+    font-size: 36px;
+  }
+
+  .dashboard-feed {
+    min-width: 0;
+  }
+
+  .dashboard-heading {
+    display: block;
+    padding-top: 18px;
+    margin-bottom: 20px;
+  }
+
+  .dashboard-heading > div:first-child {
+    margin-bottom: 18px;
+  }
+
+  .dashboard-heading h2 {
+    font-size: clamp(2rem, 9vw, 2.7rem);
+    line-height: 1;
+  }
+
+  .dashboard-heading-tools {
+    display: grid;
+    width: 100%;
+    gap: 10px;
+  }
+
+  .dashboard-heading-tools .reader-tabs,
+  .dashboard-heading-tools .feed-view-control,
+  .dashboard-heading-tools .push-btn {
+    width: 100%;
+  }
+
+  .dashboard-heading-tools .reader-tabs {
+    order: 1;
+  }
+
+  .dashboard-heading-tools .feed-view-control {
+    order: 2;
+  }
+
+  .dashboard-heading-tools .push-btn {
+    order: 3;
+    min-height: 48px;
+    justify-content: center;
+    border-radius: 12px;
+  }
+
+  .dashboard-heading-tools .feed-view-helper {
+    display: none;
+  }
+
+  .reader-tabs {
+    min-height: 48px;
+    padding: 4px;
+  }
+
+  .reader-tabs button {
+    min-height: 40px;
+    padding-inline: 10px;
+    font-size: 12px;
+  }
+
+  .feed-view-control {
+    min-height: 48px;
+    border-radius: 12px;
+  }
+
+  .feed-view-options button {
+    min-height: 36px;
+  }
+
+  .post-grid,
+  .post-grid-editorial,
+  .post-grid-compact {
+    width: 100%;
+    min-width: 0;
+    gap: 16px;
+  }
+
+  .post-card,
+  .post-card-featured {
+    width: 100%;
+    min-width: 0;
+    overflow: clip;
+    border-radius: 16px;
+  }
+
+  .post-card-link {
+    min-width: 0;
+  }
+
+  .post-card .card-image,
+  .post-card-featured .card-image {
+    height: auto;
+    min-height: 0;
+    aspect-ratio: 16 / 10;
+  }
+
+  .post-card-body {
+    min-width: 0;
+    padding: 18px 18px 20px;
+  }
+
+  .post-card h2,
+  .post-card-featured h2 {
+    display: -webkit-box;
+    overflow: hidden;
+    margin: 10px 0 9px;
+    font-size: clamp(1.5rem, 6.2vw, 1.95rem);
+    line-height: 1.08;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  .post-card-featured h2 {
+    font-size: clamp(1.75rem, 7.4vw, 2.25rem);
+  }
+
+  .post-card p {
+    display: -webkit-box;
+    overflow: hidden;
+    margin-bottom: 12px;
+    font-size: 13px;
+    line-height: 1.55;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  .read-more {
+    min-height: 40px;
+    align-items: center;
+  }
+
+  .post-card-actions {
+    min-height: 56px;
+    padding: 0 14px 10px;
+  }
+
+  .engagement-actions {
+    min-height: 44px;
+    gap: 8px;
+  }
+
+  .engagement-button {
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 11px;
+  }
+
+  .share-menu {
+    right: 0;
+    left: auto;
+    max-width: calc(100vw - 32px);
+  }
+
+  .post-grid-compact {
+    gap: 12px;
+  }
+
+  .post-grid-compact .post-card,
+  .post-grid-compact .post-card-featured {
+    display: block;
+  }
+
+  .post-grid-compact .post-card-link {
+    display: grid;
+    grid-template-columns: 112px minmax(0, 1fr);
+    min-height: 112px;
+  }
+
+  .post-grid-compact .post-card .card-image,
+  .post-grid-compact .post-card-featured .card-image {
+    height: 100%;
+    min-height: 112px;
+    aspect-ratio: auto;
+  }
+
+  .post-grid-compact .post-card-body {
+    padding: 14px 14px 10px;
+  }
+
+  .post-grid-compact .post-card h2,
+  .post-grid-compact .post-card-featured h2 {
+    margin: 7px 0 6px;
+    font-size: 18px;
+    line-height: 1.08;
+    -webkit-line-clamp: 2;
+  }
+
+  .post-grid-compact .post-card p {
+    margin-bottom: 2px;
+    font-size: 12px;
+    line-height: 1.4;
+    -webkit-line-clamp: 2;
+  }
+
+  .post-grid-compact .post-card .read-more {
+    min-height: 30px;
+    font-size: 11px;
+  }
+
+  .post-grid-compact .post-card-actions {
+    min-height: 48px;
+    padding: 0 12px 7px;
+    border-top: 1px solid var(--line);
+  }
+
+  .reading-onboarding {
+    margin-bottom: 32px;
+    padding: 20px 16px;
+    border-radius: 18px;
+  }
+
+  .reading-onboarding-intro {
+    margin-bottom: 20px;
+  }
+
+  .reading-onboarding-intro h2 {
+    font-size: clamp(2rem, 8.5vw, 2.65rem);
+  }
+
+  .reading-onboarding-option {
+    padding: 16px;
+    border-radius: 14px;
+  }
+
+  .reading-onboarding-option h3 {
+    font-size: 23px;
+  }
+
+  .reading-onboarding-actions {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .reading-onboarding-actions .button {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  .reading-onboarding-actions .text-link {
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .page-main,
+  .support-page,
+  .detail-page {
+    width: calc(100% - 24px);
+    min-width: 0;
+    padding-top: 40px;
+    padding-bottom: 112px;
+  }
+
+  .page-intro,
+  .support-intro {
+    margin-bottom: 30px;
+  }
+
+  .page-intro p,
+  .support-intro {
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  .search-wrap {
+    min-height: 50px;
+    margin-bottom: 20px;
+  }
+
+  .detail-page h1 {
+    margin-bottom: 28px;
+    font-size: clamp(2.25rem, 11vw, 3.2rem);
+    line-height: 1.02;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-meta {
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-top: 28px;
+  }
+
+  .detail-image {
+    max-height: none;
+    aspect-ratio: 16 / 10;
+    margin-bottom: 30px;
+  }
+
+  .detail-body p {
+    font-size: 18px;
+    line-height: 1.75;
+    overflow-wrap: anywhere;
+  }
+
+  .step-row,
+  .prose-section {
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 14px;
+    padding: 24px 0;
+  }
+
+  .step-row h2,
+  .prose-section h2 {
+    font-size: 24px;
+  }
+
+  .contact-card {
+    min-height: 0;
+    padding: 22px;
+  }
+
+  .site-footer {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+
+  .mobile-bottom-nav {
+    padding-right: max(8px, env(safe-area-inset-right));
+    padding-left: max(8px, env(safe-area-inset-left));
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+  }
+}
+
+@media (max-width: 460px) {
+  .site-header {
+    padding-inline: 10px;
+  }
+
+  .site-header .brand span {
+    font-size: 13px;
+  }
+
+  .header-actions .push-toggle,
+  .header-actions .icon-button,
+  .header-actions .mobile-menu {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    border-radius: 11px;
+  }
+
+  .mobile-menu {
+    padding-inline: 5px;
+    font-size: 10px;
+  }
+
+  .reader-dashboard {
+    padding-top: 32px;
+  }
+
+  .dashboard-intro h1 {
+    max-width: 11ch;
+    font-size: clamp(2.35rem, 11vw, 3.1rem);
+  }
+
+  .dashboard-intro .streak-card {
+    min-height: 84px;
+  }
+
+  .post-grid-compact .post-card-link {
+    grid-template-columns: 96px minmax(0, 1fr);
+    min-height: 96px;
+  }
+
+  .post-grid-compact .post-card .card-image,
+  .post-grid-compact .post-card-featured .card-image {
+    min-height: 96px;
+  }
+
+  .post-grid-compact .post-card-body {
+    padding: 12px 12px 8px;
+  }
+
+  .post-grid-compact .post-card h2,
+  .post-grid-compact .post-card-featured h2 {
+    font-size: 17px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-header,
+  .mobile-nav,
+  .post-card,
+  .engagement-button {
+    transition: none;
+  }
+}
