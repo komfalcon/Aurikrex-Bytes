@@ -105,7 +105,7 @@ function ThemeToggle() {
       aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
       title="Toggle theme"
     >
-      {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
+      {theme === "light" ? <Moon size={17} strokeWidth={1.8} /> : <Sun size={17} strokeWidth={1.8} />}
     </button>
   );
 }
@@ -154,7 +154,7 @@ export function SiteHeader() {
           aria-expanded={menu}
           aria-controls="mobile-navigation-drawer"
         >
-          {menu ? <X size={20} /> : <Menu size={20} />}
+          {menu ? <X size={20} strokeWidth={1.8} /> : <Menu size={20} strokeWidth={1.8} />}
         </button>
       </div>
       {menu && (
@@ -594,7 +594,12 @@ function PublishedStoryCarousel() {
 
   useEffect(() => {
     if (paused || posts.length < 2) return;
-    const rotation = window.setInterval(() => setActiveIndex(index => (index + 1) % posts.length), 4000);
+    const rotation = window.setInterval(() => {
+      setActiveIndex(current => {
+        const candidates = posts.map((_, index) => index).filter(index => index !== current);
+        return candidates[Math.floor(Math.random() * candidates.length)] ?? current;
+      });
+    }, 1500);
     return () => window.clearInterval(rotation);
   }, [paused, posts.length]);
 
@@ -655,20 +660,6 @@ function PublishedStoryCarousel() {
           );
         })}
       </div>
-      {posts.length > 1 && (
-        <div className="sample-card-indicators" aria-label="Story carousel controls">
-          {posts.map((post: any, index: number) => (
-            <button
-              key={post.id}
-              type="button"
-              className={index === activeIndex ? "is-active" : ""}
-              aria-label={`Show story ${index + 1}`}
-              aria-current={index === activeIndex ? "true" : undefined}
-              onClick={() => { setActiveIndex(index); pauseForInteraction(); resumeAfterInteraction(); }}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -720,7 +711,7 @@ export function Home() {
   }, [navigate, session.data]);
   return (
     <PublicLayout>
-      <main>
+        <main className="landing-page">
         <section className="hero container">
           <div className="hero-copy">
             <span className="eyebrow">
@@ -935,6 +926,10 @@ export function ReaderDashboard() {
             </div>
           </div>
         </section>
+        <div className="dashboard-view-control">
+          <FeedViewModeControl value={viewMode} onChange={mode => persistPreference(mode, false)} />
+          <span className="feed-view-helper">Controls your mobile reading view</span>
+        </div>
         {showOnboarding && (
           <ReadingViewOnboarding
             value={viewMode}
@@ -952,9 +947,6 @@ export function ReaderDashboard() {
                 <button type="button" role="tab" aria-selected={tab === "today"} className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Today</button>
                 <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
               </div>
-              <FeedViewModeControl value={viewMode} onChange={mode => persistPreference(mode, false)} />
-              <PushSubscribeButton variant="button" />
-              <span className="feed-view-helper">Controls your mobile reading view</span>
             </div>
           </div>
           {dashboard.isLoading ? <div className={`skeleton-grid skeleton-grid-${viewMode}`}><div /><div /><div /></div> : posts.length ? <div className={`post-grid post-grid-${viewMode}`}>{posts.map((post: any, index: number) => <PostCard key={post.id} post={post} featured={tab === "today" && index === 0} />)}</div> : <EmptyToday />}
