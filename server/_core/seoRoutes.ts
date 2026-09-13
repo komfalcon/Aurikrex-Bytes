@@ -24,7 +24,7 @@ const htmlEscape = (value: string) =>
 const cleanText = (value: string) => value.replace(/\s+/g, " ").trim();
 const excerpt = (value: string, length = 160) => {
   const text = cleanText(value);
-  return text.length > length ? `${text.slice(0, length).trim()}Ã¢â‚¬Â¦` : text;
+  return text.length > length ? `${text.slice(0, length).trim()}…` : text;
 };
 const absoluteUrl = (value: string) => {
   try {
@@ -74,7 +74,7 @@ export function createPostSeo(post: SeoPost): PostSeo {
     : `${siteUrl()}/logo-512.png`;
 
   return {
-    title: `${post.headline} Ã¢â‚¬â€ Aurikrex Bytes`,
+    title: `${post.headline} — Aurikrex Bytes`,
     description: excerpt(post.body),
     canonicalUrl,
     imageUrl,
