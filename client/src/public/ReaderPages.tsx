@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useId, useState, type ComponentProps } from "react";
+import { FormEvent, ReactNode, useEffect, useId, useRef, useState, type ComponentProps } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
@@ -6,16 +6,18 @@ import {
   BookOpen,
   Check,
   ChevronDown,
+  CircleHelp,
   Clock3,
   Facebook,
+  FileText,
   Flame,
-  Home as HomeIcon,
   Instagram,
   Info,
   Linkedin,
   LogOut,
   Mail,
   MailOpen,
+  Menu,
   Moon,
   Search,
   Share2,
@@ -147,21 +149,45 @@ export function SiteHeader() {
         )}
         <button
           className="mobile-menu"
-          onClick={() => setMenu(!menu)}
-          aria-label="Toggle navigation"
+          onClick={() => setMenu(value => !value)}
+          aria-label={menu ? "Close navigation menu" : "Open navigation menu"}
           aria-expanded={menu}
+          aria-controls="mobile-navigation-drawer"
         >
-          {menu ? <X /> : <span>Menu</span>}
+          {menu ? <X size={20} /> : <Menu size={20} />}
         </button>
       </div>
       {menu && (
-        <nav className="mobile-nav">
-          <Link href={homePath}>{signedIn ? "Dashboard" : "Today"}</Link>
-          {signedIn && <Link href="/saved">Saved</Link>}
-          <Link href="/archive">All Bytes</Link>
-          <Link href="/how-it-works">About</Link>
-          {signedIn ? <button className="mobile-nav-join text-button" onClick={() => logout.mutate()}>Sign out</button> : <><Link href={authRoutes.login}>Sign in</Link><Link className="mobile-nav-join" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link></>}
-        </nav>
+        <>
+          <button className="mobile-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMenu(false)} />
+          <nav id="mobile-navigation-drawer" className="mobile-nav" aria-label="Mobile navigation">
+            <div className="mobile-nav-section">
+              <span className="mobile-nav-label">Read</span>
+              <Link href={homePath} onClick={() => setMenu(false)}>{signedIn ? "Dashboard" : "Today"}</Link>
+              <Link href="/archive" onClick={() => setMenu(false)}><BookOpen size={16} /> All Bytes</Link>
+              {signedIn && <Link href="/saved" onClick={() => setMenu(false)}><Bookmark size={16} /> Saved posts</Link>}
+            </div>
+            <div className="mobile-nav-section">
+              <span className="mobile-nav-label">Explore</span>
+              <Link href="/how-it-works" onClick={() => setMenu(false)}><Info size={16} /> About</Link>
+              <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>
+              <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>
+            </div>
+            <div className="mobile-nav-section mobile-nav-legal">
+              <span className="mobile-nav-label">Legal</span>
+              <Link href="/privacy" onClick={() => setMenu(false)}><ShieldCheck size={16} /> Privacy policy</Link>
+              <Link href="/terms" onClick={() => setMenu(false)}><FileText size={16} /> Terms of service</Link>
+            </div>
+            <div className="mobile-nav-account">
+              {signedIn ? <>
+                <button className="mobile-nav-join text-button" onClick={() => logout.mutate()}><LogOut size={16} /> Sign out</button>
+              </> : <>
+                <Link href={authRoutes.login} onClick={() => setMenu(false)}>Sign in</Link>
+                <Link className="mobile-nav-join" href={authRoutes.signup} onClick={() => setMenu(false)}>Join free <ArrowRight size={14} /></Link>
+              </>}
+            </div>
+          </nav>
+        </>
       )}
     </header>
   );
@@ -249,24 +275,6 @@ export function SiteFooter() {
     </footer>
   );
 }
-function MobileBottomNav() {
-  const [location] = useLocation();
-  const session = trpc.reader.session.useQuery(undefined, { retry: false });
-  const links = [
-    { href: session.data ? "/dashboard" : "/", label: "Today", icon: <HomeIcon size={18} /> },
-    { href: "/archive", label: "All Bytes", icon: <BookOpen size={18} /> },
-    { href: "/how-it-works", label: "About", icon: <Info size={18} /> },
-  ];
-  return (
-    <nav className="mobile-bottom-nav" aria-label="Mobile primary navigation">
-      {links.map(link => (
-        <Link key={link.href} href={link.href} className={location === link.href ? "active" : ""} aria-current={location === link.href ? "page" : undefined}>
-          {link.icon}<span>{link.label}</span>
-        </Link>
-      ))}
-    </nav>
-  );
-}
 export function PublicLayout({
   children,
   seo,
@@ -287,7 +295,6 @@ export function PublicLayout({
       <SiteHeader />
       {children}
       <SiteFooter />
-      <MobileBottomNav />
     </>
   );
 }
@@ -574,6 +581,122 @@ function PostCard({
     </article>
   );
 }
+function PublishedStoryCarousel() {
+  const archive = trpc.publicPosts.archive.useQuery({ query: "", page: 1, pageSize: 5 });
+  const posts = archive.data?.posts ?? [];
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (activeIndex >= posts.length && posts.length > 0) setActiveIndex(0);
+  }, [activeIndex, posts.length]);
+
+  useEffect(() => {
+    if (paused || posts.length < 2) return;
+    const rotation = window.setInterval(() => setActiveIndex(index => (index + 1) % posts.length), 4000);
+    return () => window.clearInterval(rotation);
+  }, [paused, posts.length]);
+
+  useEffect(() => () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+  }, []);
+
+  const pauseForInteraction = () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    setPaused(true);
+  };
+  const resumeAfterInteraction = () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = setTimeout(() => setPaused(false), 5500);
+  };
+
+  const fallback = {
+    headline: "The quiet shift changing how teams build with AI",
+    body: "A considered look at the tools, habits, and decisions shaping the next chapter of work.",
+    imageUrl: null,
+    publishedTime: null,
+    id: null,
+  };
+  const slides = posts.length ? posts : [fallback];
+  return (
+    <div
+      className={`sample-card sample-card-carousel ${paused ? "is-paused" : ""}`}
+      onPointerEnter={posts.length > 1 ? pauseForInteraction : undefined}
+      onPointerLeave={posts.length > 1 ? resumeAfterInteraction : undefined}
+      onPointerDown={posts.length > 1 ? pauseForInteraction : undefined}
+      onPointerUp={posts.length > 1 ? resumeAfterInteraction : undefined}
+      aria-label={posts.length > 1 ? "Latest published Bytes" : "Example Byte preview"}
+    >
+      <div className="sample-card-slides">
+        {slides.map((post: any, index: number) => {
+          const isActive = index === activeIndex;
+          const card = (
+            <>
+              <div className="sample-card-image">
+                {post.imageUrl ? <img src={optimizedImage(post.imageUrl, 700)} alt="" /> : <Sparkles size={22} />}
+                <span>{posts.length ? `Bytes / ${String(post.id).padStart(2, "0")}` : "Preview"}</span>
+              </div>
+              <div>
+                <span className="sample-badge">{posts.length ? "Published Byte" : "Example preview"}</span>
+                <span className="post-meta">{posts.length ? `${formatDate(post.publishedTime)} · 4 min read` : "Today · 4 min read"}</span>
+                <h3>{post.headline}</h3>
+                <p>{excerpt(post.body, 160)}</p>
+                {posts.length ? <span className="read-more">Read story <ArrowRight size={15} /></span> : <span className="read-more">Explore the archive <ArrowRight size={15} /></span>}
+              </div>
+            </>
+          );
+          return posts.length ? (
+            <Link key={post.id} href={`/post/${post.id}`} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive} tabIndex={isActive ? 0 : -1}>
+              {card}
+            </Link>
+          ) : (
+            <div key="fallback" className="sample-card-slide is-active">{card}</div>
+          );
+        })}
+      </div>
+      {posts.length > 1 && (
+        <div className="sample-card-indicators" aria-label="Story carousel controls">
+          {posts.map((post: any, index: number) => (
+            <button
+              key={post.id}
+              type="button"
+              className={index === activeIndex ? "is-active" : ""}
+              aria-label={`Show story ${index + 1}`}
+              aria-current={index === activeIndex ? "true" : undefined}
+              onClick={() => { setActiveIndex(index); pauseForInteraction(); resumeAfterInteraction(); }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getWeekDays(lastActiveDate: string | null | undefined, currentStreak: number, timeZone: string) {
+  const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
+  const today = new Date(`${todayKey}T12:00:00Z`);
+  const startOfWeek = new Date(today);
+  startOfWeek.setUTCDate(today.getUTCDate() - today.getUTCDay());
+  const streakEnd = lastActiveDate || todayKey;
+  const streakEndDate = new Date(`${streakEnd}T12:00:00Z`);
+  const streakStartDate = new Date(streakEndDate);
+  streakStartDate.setUTCDate(streakEndDate.getUTCDate() - Math.max(currentStreak - 1, 0));
+  const dayFormatter = new Intl.DateTimeFormat("en", { weekday: "narrow", timeZone: "UTC" });
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(startOfWeek);
+    date.setUTCDate(startOfWeek.getUTCDate() + index);
+    const key = date.toISOString().slice(0, 10);
+    return {
+      key,
+      label: dayFormatter.format(date),
+      dateLabel: new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date),
+      isToday: key === todayKey,
+      isFuture: key > todayKey,
+      isActive: key >= streakStartDate.toISOString().slice(0, 10) && key <= streakEnd && key <= todayKey,
+    };
+  });
+}
 function EmptyToday() {
   return (
     <div className="empty-state">
@@ -595,8 +718,6 @@ export function Home() {
   useEffect(() => {
     if (session.data) navigate("/dashboard");
   }, [navigate, session.data]);
-  const today = trpc.publicPosts.today.useQuery();
-  const posts = today.data ?? [];
   return (
     <PublicLayout>
       <main>
@@ -679,24 +800,7 @@ export function Home() {
               See the archive <ArrowRight size={15} />
             </Link>
           </div>
-          <div className="sample-card">
-            <div className="sample-card-image">
-              <Sparkles size={22} />
-              <span>Bytes / 08</span>
-            </div>
-            <div>
-              <span className="sample-badge">Example story</span>
-              <span className="post-meta">Today · 4 min read</span>
-              <h3>The quiet shift changing how teams build with AI</h3>
-              <p>
-                A considered look at the tools, habits, and decisions shaping
-                the next chapter of work.
-              </p>
-              <span className="read-more">
-                Read story <ArrowRight size={15} />
-              </span>
-            </div>
-          </div>
+          <PublishedStoryCarousel />
         </section>
         <section className="section why-section">
           <div className="container">
@@ -805,19 +909,30 @@ export function ReaderDashboard() {
   const posts = tab === "today" ? data?.todayPosts ?? [] : data?.allPosts ?? [];
   const previewPost = posts[0] ?? data?.allPosts?.[0] ?? { headline: "The useful context behind what matters", body: "A considered look at the stories shaping the day.", imageUrl: null };
   const firstName = data?.reader.name?.trim().split(/\s+/)[0] || "reader";
+  const weekDays = getWeekDays(data?.streak.lastActiveDate, data?.streak.currentStreak ?? 0, timeZone);
   return (
     <PublicLayout seo={{ title: "Your dashboard — Aurikrex Bytes", description: "Your daily Aurikrex Bytes briefing and reading streak.", path: "/dashboard", robots: "noindex,nofollow" }}>
       <main className="container reader-dashboard">
         <section className="dashboard-intro">
-          <div>
+          <div className="dashboard-welcome">
             <span className="eyebrow"><span className="live-dot" /> Your reading desk</span>
             <h1>Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}, {firstName}.</h1>
             <p>Here’s the signal worth your attention today.</p>
           </div>
           <div className={`streak-card ${data?.streak.increased ? "streak-card-celebrate" : ""}`}>
-            <div className="streak-flame"><Flame size={25} fill="currentColor" /></div>
-            <div><strong>{data?.streak.currentStreak ?? 0}</strong><span>day streak</span></div>
-            <small>Best: {data?.streak.longestStreak ?? 0} days</small>
+            <div className="streak-card-heading">
+              <div className="streak-flame"><Flame size={22} fill="currentColor" /></div>
+              <div><strong>{data?.streak.currentStreak ?? 0}</strong><span>day streak</span></div>
+              <small>Best: {data?.streak.longestStreak ?? 0} days</small>
+            </div>
+            <div className="streak-week" aria-label="Current week reading activity">
+              {weekDays.map(day => (
+                <div className={`streak-day ${day.isActive ? "is-active" : ""} ${day.isToday ? "is-today" : ""} ${day.isFuture ? "is-future" : ""}`} key={day.key} title={`${day.dateLabel}${day.isActive ? " · Read" : " · Not read"}`}>
+                  <span>{day.label}</span>
+                  <i aria-hidden="true"><Flame size={13} fill="currentColor" /></i>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
         {showOnboarding && (
