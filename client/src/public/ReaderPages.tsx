@@ -1863,6 +1863,13 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                           placeholder="At least 8 characters, a number and symbol"
                         />
                       </label>
+                      {mode === "login" && (
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "-6px", marginBottom: "16px" }}>
+                          <Link className="text-link" style={{ fontSize: "13px" }} href={authRoutes.forgotPassword}>
+                            Forgot password?
+                          </Link>
+                        </div>
+                      )}
                       {(mode === "signup" || mode === "reset") && (
                         <>
                           <ul
@@ -1921,19 +1928,15 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                       <span>Continue with Google</span>
                     </a>
                     <div className="auth-links">
-                      <Link href={authLink(authRoutes.signup)}>Create an account</Link>
-                      <Link href={authRoutes.forgotPassword}>
-                        Forgot password?
-                      </Link>
+                      {mode === "login" ? (
+                        <Link href={authLink(authRoutes.signup)}>Create an account</Link>
+                      ) : (
+                        <Link href={authLink(authRoutes.login)}>
+                          Already a reader? Sign in
+                        </Link>
+                      )}
                     </div>
                   </>
-                )}
-                {mode === "signup" && (
-                  <div className="auth-links">
-                    <Link href={authLink(authRoutes.login)}>
-                      Already a reader? Sign in
-                    </Link>
-                  </div>
                 )}
                 <p className="form-message" role="status">
                   {message}

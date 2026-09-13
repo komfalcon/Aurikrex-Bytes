@@ -44,6 +44,7 @@ import {
   getCloudinaryUploadSignature,
   sendAuthEmail,
   verificationEmailHtml,
+  resetPasswordEmailHtml,
 } from "./services.js";
 import { COOKIE_NAME } from "@shared/const";
 import {
@@ -680,7 +681,7 @@ export const appRouter = router({
           await sendAuthEmail(
             reader.email,
             "Reset your Aurikrex Bytes password",
-            `<p>Reset your password: <a href="${url}">${url}</a></p>`
+            resetPasswordEmailHtml(url)
           );
         }
         return { success: true };
