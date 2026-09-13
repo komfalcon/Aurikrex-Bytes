@@ -892,12 +892,24 @@ export function ReaderDashboard() {
   const [viewMode, setViewMode] = useState<FeedViewMode>(getInitialFeedViewMode);
   const [preferenceHydrated, setPreferenceHydrated] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [dashboardSearch, setDashboardSearch] = useState("");
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const dashboard = trpc.reader.dashboard.useQuery(
     { timeZone },
     { enabled: Boolean(session.data), retry: false }
   );
   const savePreference = trpc.reader.setFeedPreference.useMutation();
+
+  const data = dashboard.data;
+  const rawPosts = tab === "today" ? data?.todayPosts ?? [] : data?.allPosts ?? [];
+  const posts = useMemo(() => {
+    if (tab !== "all" || !dashboardSearch.trim()) return rawPosts;
+    const q = dashboardSearch.toLowerCase();
+    return rawPosts.filter((p: any) =>
+      p.headline?.toLowerCase().includes(q) || p.body?.toLowerCase().includes(q)
+    );
+  }, [rawPosts, tab, dashboardSearch]);
+
   useEffect(() => {
     if (!session.isLoading && !session.data) navigate("/login");
   }, [navigate, session.data, session.isLoading]);
@@ -931,16 +943,6 @@ export function ReaderDashboard() {
   };
   if (session.isLoading || (!session.data && !dashboard.error))
     return <div className="route-loading">Opening your briefing…</div>;
-  const data = dashboard.data;
-  const [dashboardSearch, setDashboardSearch] = useState("");
-  const rawPosts = tab === "today" ? data?.todayPosts ?? [] : data?.allPosts ?? [];
-  const posts = useMemo(() => {
-    if (tab !== "all" || !dashboardSearch.trim()) return rawPosts;
-    const q = dashboardSearch.toLowerCase();
-    return rawPosts.filter((p: any) =>
-      p.headline?.toLowerCase().includes(q) || p.body?.toLowerCase().includes(q)
-    );
-  }, [rawPosts, tab, dashboardSearch]);
   const previewPost = posts[0] ?? data?.allPosts?.[0] ?? { headline: "The useful context behind what matters", body: "A considered look at the stories shaping the day.", imageUrl: null };
   const firstName = data?.reader.name?.trim().split(/\s+/)[0] || "reader";
   const weekDays = getWeekDays(data?.streak.lastActiveDate, data?.streak.currentStreak ?? 0, timeZone);
