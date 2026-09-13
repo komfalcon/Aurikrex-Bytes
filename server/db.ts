@@ -548,3 +548,31 @@ export async function getAnalytics() {
     })),
   };
 }
+
+export async function createIngestedPost(input: {
+  headline: string;
+  body: string;
+  imageUrl?: string | null;
+  status?: "draft" | "pending_review" | "scheduled" | "published";
+  scheduledTime?: Date | null;
+  createdBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const status = input.status || "pending_review";
+  const now = new Date();
+  const [created] = await db
+    .insert(posts)
+    .values({
+      headline: input.headline,
+      body: input.body,
+      imageUrl: input.imageUrl || null,
+      status,
+      scheduledTime: input.scheduledTime || null,
+      publishedTime: status === "published" ? now : null,
+      createdBy: input.createdBy || 1,
+      updatedAt: now,
+    })
+    .returning();
+  return created;
+}

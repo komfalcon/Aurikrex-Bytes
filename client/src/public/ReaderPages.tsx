@@ -5,6 +5,7 @@ import {
   Bookmark,
   BookOpen,
   Check,
+  CheckCircle2,
   ChevronDown,
   CircleHelp,
   Clock3,
@@ -70,10 +71,12 @@ function ProtectedLink({
   href,
   children,
   className,
+  onClick,
 }: {
   href: string;
   children: ReactNode;
   className?: string;
+  onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const [, navigate] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
@@ -82,6 +85,7 @@ function ProtectedLink({
       href={href}
       className={className}
       onClick={event => {
+        onClick?.(event);
         if (!session.isLoading && !session.data) {
           event.preventDefault();
           rememberAuthReturnTo(href);
@@ -584,43 +588,130 @@ function ReadingViewOnboarding({
   );
 }
 
+function getReadPostIds(): Set<number> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem("aurikrex_read_posts");
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markPostAsRead(id: number) {
+  if (typeof window === "undefined" || !id) return;
+  try {
+    const set = getReadPostIds();
+    set.add(id);
+    localStorage.setItem("aurikrex_read_posts", JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
+function TodayCompletionCard({
+  streak = 1,
+  readCount = 0,
+  totalCount = 0,
+}: {
+  streak?: number;
+  readCount?: number;
+  totalCount?: number;
+}) {
+  const isFullyRead = totalCount > 0 && readCount >= totalCount;
+
+  const handleShare = () => {
+    const text = `I just completed today's tech briefing on Aurikrex Bytes! 🔥 ${streak}-day streak active.`;
+    const url = "https://aurikrex.tech/";
+    if (typeof navigator !== "undefined" && navigator.share) {
+      navigator.share({ title: "Aurikrex Bytes Briefing Complete", text, url }).catch(() => undefined);
+    } else if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(`${text} ${url}`);
+      toast.success("Streak text copied to clipboard!");
+    }
+  };
+
+  return (
+    <div className="today-completion-card" role="region" aria-label="Today's briefing completion status">
+      <div className="today-completion-icon">
+        <CheckCircle2 size={40} />
+      </div>
+      <h3 className="today-completion-title">
+        {isFullyRead ? "Nice! You've finished today's Bytes. 🎉" : "You've reached the end of today's drop! 👍"}
+      </h3>
+      <p className="today-completion-subtitle">
+        {isFullyRead
+          ? `You've read all ${totalCount} bytes in today's briefing. Great job keeping your mind sharp and your streak alive!`
+          : `You've scrolled through today's briefing. Read each byte to max out your daily learning streak!`}
+      </p>
+
+      <div className="today-completion-streak">
+        <Flame size={18} fill="currentColor" />
+        <span>{streak} Day Streak Active</span>
+      </div>
+
+      <div className="today-completion-actions">
+        <button type="button" className="button" onClick={handleShare}>
+          <Share2 size={16} /> Share My Streak
+        </button>
+        <Link href="/archive" className="button button-outline">
+          Explore Archive <ArrowRight size={15} />
+        </Link>
+      </div>
+
+      <p style={{ fontSize: "13px", color: "var(--muted, #64748b)", marginTop: "8px", marginBottom: 0 }}>
+        ⏰ See you tomorrow at 8:00 AM for your next briefing drop.
+      </p>
+    </div>
+  );
+}
+
 function PostCard({
   post,
   featured = false,
+  isRead = false,
 }: {
   post: any;
   featured?: boolean;
+  isRead?: boolean;
 }) {
   return (
-    <article className={`post-card ${featured ? "post-card-featured" : ""}`}>
-      <ProtectedLink href={`/post/${post.id}`} className="post-card-link">
-      <div className="card-image">
-        {post.imageUrl ? (
-          <img
-            src={optimizedImage(post.imageUrl, featured ? 900 : 600)}
-            alt={post.headline}
-            loading="lazy"
-            decoding="async"
-          />
-        ) : (
-          <div className="image-placeholder">
-            <Sparkles size={22} />
-            <span>Bytes / {String(post.id).padStart(2, "0")}</span>
-          </div>
-        )}
-      </div>
-      <div className="post-card-body">
-        <div className="post-meta">
-          <span>{formatDate(post.publishedTime)}</span>
-          <span>·</span>
-          <span>4 min read</span>
+    <article className={`post-card ${featured ? "post-card-featured" : ""} ${isRead ? "is-read" : ""}`}>
+      <ProtectedLink
+        href={`/post/${post.id}`}
+        className="post-card-link"
+        onClick={() => markPostAsRead(post.id)}
+      >
+        <div className="card-image">
+          {post.imageUrl ? (
+            <img
+              src={optimizedImage(post.imageUrl, featured ? 900 : 600)}
+              alt={post.headline}
+              loading="lazy"
+              decoding="async"
+            />
+          ) : (
+            <div className="image-placeholder">
+              <Sparkles size={22} />
+              <span>Bytes / {String(post.id).padStart(2, "0")}</span>
+            </div>
+          )}
         </div>
-        <h2>{post.headline}</h2>
-        <p>{excerpt(post.body)}</p>
-        <span className="read-more">
-          Read story <ArrowRight size={15} />
-        </span>
-      </div>
+        <div className="post-card-body">
+          <div className="post-meta">
+            <span>{formatDate(post.publishedTime)}</span>
+            <span>·</span>
+            <span>4 min read</span>
+            {isRead && (
+              <span className="post-card-read-badge">
+                · <Check size={13} /> Read
+              </span>
+            )}
+          </div>
+          <h2>{post.headline}</h2>
+          <p>{excerpt(post.body)}</p>
+          <span className="read-more">
+            {isRead ? "Read again" : "Read story"} <ArrowRight size={15} />
+          </span>
+        </div>
       </ProtectedLink>
       <div className="post-card-actions"><EngagementActions post={post} /></div>
     </article>
@@ -899,9 +990,21 @@ export function ReaderDashboard() {
     { enabled: Boolean(session.data), retry: false }
   );
   const savePreference = trpc.reader.setFeedPreference.useMutation();
+  const [readPostIds, setReadPostIds] = useState<Set<number>>(() => getReadPostIds());
+
+  useEffect(() => {
+    const handleFocus = () => setReadPostIds(getReadPostIds());
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, []);
 
   const data = dashboard.data;
-  const rawPosts = tab === "today" ? data?.todayPosts ?? [] : data?.allPosts ?? [];
+  const todayPosts = data?.todayPosts ?? [];
+  const todayReadCount = useMemo(
+    () => todayPosts.filter((p: any) => readPostIds.has(p.id)).length,
+    [todayPosts, readPostIds]
+  );
+  const rawPosts = tab === "today" ? todayPosts : data?.allPosts ?? [];
   const posts = useMemo(() => {
     if (tab !== "all" || !dashboardSearch.trim()) return rawPosts;
     const q = dashboardSearch.toLowerCase();
@@ -1027,7 +1130,31 @@ export function ReaderDashboard() {
               </div>
             </div>
           )}
-          {dashboard.isLoading ? <div className={`skeleton-grid skeleton-grid-${viewMode}`}><div /><div /><div /></div> : posts.length ? <div className={`post-grid post-grid-${viewMode}`}>{posts.map((post: any, index: number) => <PostCard key={post.id} post={post} featured={tab === "today" && index === 0} />)}</div> : <EmptyToday />}
+          {dashboard.isLoading ? (
+            <div className={`skeleton-grid skeleton-grid-${viewMode}`}><div /><div /><div /></div>
+          ) : posts.length ? (
+            <>
+              <div className={`post-grid post-grid-${viewMode}`}>
+                {posts.map((post: any, index: number) => (
+                  <PostCard
+                    key={post.id}
+                    post={post}
+                    featured={tab === "today" && index === 0}
+                    isRead={readPostIds.has(post.id)}
+                  />
+                ))}
+              </div>
+              {tab === "today" && (
+                <TodayCompletionCard
+                  streak={data?.streak.currentStreak}
+                  readCount={todayReadCount}
+                  totalCount={todayPosts.length}
+                />
+              )}
+            </>
+          ) : (
+            <EmptyToday />
+          )}
         </section>
       </main>
     </PublicLayout>
@@ -1176,6 +1303,11 @@ export function PostDetail() {
     { id },
     { enabled: Number.isFinite(id) && Boolean(session.data) }
   );
+  useEffect(() => {
+    if (post.data && Number.isFinite(id)) {
+      markPostAsRead(id);
+    }
+  }, [id, post.data]);
   const engagement = trpc.reader.engagement.useQuery({ postId: id }, { enabled: Boolean(session.data) && Number.isFinite(id), retry: false });
   const detailPost = post.data ? { ...post.data, ...(engagement.data || {}) } : null;
   const seo = post.data
