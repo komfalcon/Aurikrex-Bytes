@@ -28,6 +28,7 @@ import {
   getReaderByVerificationToken,
   listAdmins,
   listPosts,
+  listPublishedPostsForCarousel,
   listSavedPosts,
   listTodaysPublishedPosts,
   publishDuePosts,
@@ -749,6 +750,10 @@ export const appRouter = router({
     list: publicProcedure.query(async () => {
       await publishDuePosts();
       return listPosts();
+    }),
+    carousel: publicProcedure.query(async () => {
+      await publishDuePosts();
+      return { posts: await listPublishedPostsForCarousel() };
     }),
     today: publicProcedure.query(async () => {
       await publishDuePosts();
