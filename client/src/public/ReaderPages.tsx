@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useId, useRef, useState, type ComponentProps } from "react";
+import { FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState, type ComponentProps } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
@@ -932,7 +932,15 @@ export function ReaderDashboard() {
   if (session.isLoading || (!session.data && !dashboard.error))
     return <div className="route-loading">Opening your briefing…</div>;
   const data = dashboard.data;
-  const posts = tab === "today" ? data?.todayPosts ?? [] : data?.allPosts ?? [];
+  const [dashboardSearch, setDashboardSearch] = useState("");
+  const rawPosts = tab === "today" ? data?.todayPosts ?? [] : data?.allPosts ?? [];
+  const posts = useMemo(() => {
+    if (tab !== "all" || !dashboardSearch.trim()) return rawPosts;
+    const q = dashboardSearch.toLowerCase();
+    return rawPosts.filter((p: any) =>
+      p.headline?.toLowerCase().includes(q) || p.body?.toLowerCase().includes(q)
+    );
+  }, [rawPosts, tab, dashboardSearch]);
   const previewPost = posts[0] ?? data?.allPosts?.[0] ?? { headline: "The useful context behind what matters", body: "A considered look at the stories shaping the day.", imageUrl: null };
   const firstName = data?.reader.name?.trim().split(/\s+/)[0] || "reader";
   const weekDays = getWeekDays(data?.streak.lastActiveDate, data?.streak.currentStreak ?? 0, timeZone);
@@ -984,35 +992,63 @@ export function ReaderDashboard() {
               </div>
             </div>
           </div>
+          {tab === "all" && (
+            <div style={{ marginTop: "16px", marginBottom: "20px" }}>
+              <div className="search-wrap">
+                <Search size={18} />
+                <input
+                  value={dashboardSearch}
+                  onChange={e => setDashboardSearch(e.target.value)}
+                  placeholder="Search brands & topics (e.g. Apple, Google, AI, Nvidia)..."
+                  aria-label="Search all bytes"
+                />
+                {dashboardSearch && (
+                  <button onClick={() => setDashboardSearch("")} aria-label="Clear search">
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+              <div className="brand-filter-chips" role="group" aria-label="Brand & trend quick filters">
+                {BRAND_TAGS.map(tag => {
+                  const isActive = tag === "All" ? !dashboardSearch : dashboardSearch.toLowerCase() === tag.toLowerCase();
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      className={`brand-chip ${isActive ? "active" : ""}`}
+                      onClick={() => setDashboardSearch(tag === "All" ? "" : tag)}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {dashboard.isLoading ? <div className={`skeleton-grid skeleton-grid-${viewMode}`}><div /><div /><div /></div> : posts.length ? <div className={`post-grid post-grid-${viewMode}`}>{posts.map((post: any, index: number) => <PostCard key={post.id} post={post} featured={tab === "today" && index === 0} />)}</div> : <EmptyToday />}
         </section>
       </main>
     </PublicLayout>
   );
 }
+const BRAND_TAGS = ["All", "Apple", "Google", "AI", "Nvidia", "Microsoft", "Meta", "Amazon", "Startups", "Security", "Cloud"];
+
 export function Archive() {
-  const [, navigate] = useLocation();
-  const session = trpc.reader.session.useQuery(undefined, { retry: false });
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
-  useEffect(() => {
-    if (!session.isLoading && !session.data) {
-      rememberAuthReturnTo("/archive");
-      navigate(authPathWithReturnTo("/archive"));
-    }
-  }, [navigate, session.data, session.isLoading]);
+
   const archive = trpc.publicPosts.archive.useQuery({
     query,
     page,
     pageSize: 12,
-  }, { enabled: Boolean(session.data) });
-  if (session.isLoading || !session.data) return <div className="route-loading">Opening the archive…</div>;
+  });
+
   return (
     <PublicLayout
       seo={{
         title: "All Bytes — Aurikrex Bytes archive",
         description:
-          "Search every considered Aurikrex Bytes technology story, with useful context ready when you are.",
+          "Search every considered Aurikrex Bytes technology story by brand, topic, or company trend.",
         path: page > 1 ? `/archive?page=${page}` : "/archive",
         prev: page > 1 ? `/archive?page=${page - 1}` : null,
         next: archive.data?.nextPage
@@ -1024,8 +1060,9 @@ export function Archive() {
         <div className="page-intro">
           <span className="eyebrow">The complete record</span>
           <h1>All Bytes</h1>
-          <p>Every story, thoughtfully selected and ready when you are.</p>
+          <p>Search every story by brand, company, topic, or tech trend.</p>
         </div>
+
         <div className="search-wrap">
           <Search size={18} />
           <input
@@ -1034,15 +1071,46 @@ export function Archive() {
               setQuery(e.target.value);
               setPage(1);
             }}
-            placeholder="Search headlines and stories"
+            placeholder="Search brands & topics (e.g. Apple, Google, AI, Nvidia)..."
             aria-label="Search the archive"
           />
           {query && (
-            <button onClick={() => setQuery("")} aria-label="Clear search">
+            <button onClick={() => { setQuery(""); setPage(1); }} aria-label="Clear search">
               <X size={16} />
             </button>
           )}
         </div>
+
+        <div className="brand-filter-chips" role="group" aria-label="Brand and trend quick filters">
+          {BRAND_TAGS.map(tag => {
+            const isActive = tag === "All" ? !query : query.toLowerCase() === tag.toLowerCase();
+            return (
+              <button
+                key={tag}
+                type="button"
+                className={`brand-chip ${isActive ? "active" : ""}`}
+                onClick={() => {
+                  setQuery(tag === "All" ? "" : tag);
+                  setPage(1);
+                }}
+              >
+                {tag}
+              </button>
+            );
+          })}
+        </div>
+
+        {query && (
+          <div className="search-results-info">
+            <span>
+              Showing results for <strong>"{query}"</strong>
+            </span>
+            <button className="text-button" onClick={() => { setQuery(""); setPage(1); }}>
+              Clear filter
+            </button>
+          </div>
+        )}
+
         {archive.isLoading ? (
           <div className="skeleton-grid">
             <div />
@@ -1052,7 +1120,7 @@ export function Archive() {
         ) : archive.data?.posts?.length ? (
           <>
             <div className="post-grid archive-grid">
-              {archive.data?.posts.map((post: any) => (
+              {archive.data.posts.map((post: any) => (
                 <PostCard key={post.id} post={post} />
               ))}
             </div>
@@ -1077,8 +1145,13 @@ export function Archive() {
         ) : (
           <div className="empty-state">
             <Search size={24} />
-            <h2>No stories found</h2>
-            <p>Try a different phrase or browse the latest drop.</p>
+            <h2>No stories found {query ? `matching "${query}"` : ""}</h2>
+            <p>Try searching for a different brand, company, or tech topic.</p>
+            {query && (
+              <button className="button button-outline" onClick={() => { setQuery(""); setPage(1); }}>
+                Clear search & view all bytes
+              </button>
+            )}
           </div>
         )}
       </main>

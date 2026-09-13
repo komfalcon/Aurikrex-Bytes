@@ -345,6 +345,11 @@ async function listPosts() {
   if (!db) return [];
   return db.select().from(posts).orderBy(posts.updatedAt);
 }
+async function listPublishedPostsForCarousel() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(posts).where(eq(posts.status, "published")).orderBy(desc(posts.publishedTime), desc(posts.id));
+}
 async function getPostById(id) {
   const db = await getDb();
   if (!db) return void 0;
@@ -1860,6 +1865,10 @@ var appRouter = router({
       await publishDuePosts();
       return listPosts();
     }),
+    carousel: publicProcedure.query(async () => {
+      await publishDuePosts();
+      return { posts: await listPublishedPostsForCarousel() };
+    }),
     today: publicProcedure.query(async () => {
       await publishDuePosts();
       return listTodaysPublishedPosts();
@@ -1917,7 +1926,7 @@ var htmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").r
 var cleanText = (value) => value.replace(/\s+/g, " ").trim();
 var excerpt = (value, length = 160) => {
   const text2 = cleanText(value);
-  return text2.length > length ? `${text2.slice(0, length).trim()}\xC3\xA2\xE2\u201A\xAC\xC2\xA6` : text2;
+  return text2.length > length ? `${text2.slice(0, length).trim()}\u2026` : text2;
 };
 var absoluteUrl = (value) => {
   try {
@@ -1935,7 +1944,7 @@ function createPostSeo(post) {
   const canonicalUrl = `${siteUrl()}/post/${post.id}`;
   const imageUrl = post.imageUrl ? optimizeCloudinaryUrl(post.imageUrl) : `${siteUrl()}/logo-512.png`;
   return {
-    title: `${post.headline} \xC3\xA2\xE2\u201A\xAC\xE2\u20AC\x9D Aurikrex Bytes`,
+    title: `${post.headline} \u2014 Aurikrex Bytes`,
     description: excerpt(post.body),
     canonicalUrl,
     imageUrl,
