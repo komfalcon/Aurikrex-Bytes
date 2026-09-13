@@ -4391,34 +4391,6 @@ button,
   min-height: inherit;
   object-fit: cover;
 }
-.sample-card-indicators {
-  position: absolute;
-  z-index: 2;
-  right: 26px;
-  bottom: 19px;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.sample-card-indicators button {
-  width: 7px;
-  height: 7px;
-  min-width: 7px;
-  min-height: 7px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: var(--line);
-  transition: width .2s ease, background .2s ease, transform .16s ease;
-}
-.sample-card-indicators button.is-active {
-  width: 20px;
-  border-radius: 999px;
-  background: var(--blue);
-}
-.sample-card-indicators button:active {
-  transform: scale(.9);
-}
 @media (max-width: 800px) {
   .sample-card-carousel {
     min-height: 0;
@@ -4438,14 +4410,103 @@ button,
   .sample-card-slide > div:last-child {
     padding: 22px 20px 54px;
   }
-  .sample-card-indicators {
-    right: 20px;
-    bottom: 20px;
-  }
 }
-@media (prefers-reduced-motion: reduce) {
-  .sample-card-slide,
-  .sample-card-indicators button {
-    transition: none;
+
+/* Mobile UI polish round two */
+.header-actions .push-toggle,
+.header-actions .icon-button,
+.header-actions .mobile-menu {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--blue) 12%);
+  color: var(--ink);
+}
+.header-actions .push-toggle svg,
+.header-actions .icon-button svg,
+.header-actions .mobile-menu svg {
+  stroke-width: 1.8;
+}
+.header-actions .push-toggle:hover,
+.header-actions .icon-button:hover,
+.header-actions .mobile-menu:hover {
+  border-color: color-mix(in srgb, var(--blue) 42%, var(--line));
+  background: color-mix(in srgb, var(--surface-2) 88%, var(--blue) 12%);
+  color: var(--blue);
+}
+
+.dashboard-view-control {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin: -12px 0 34px;
+}
+
+.landing-page .hero-copy,
+.landing-page .hero-note,
+.landing-page .section-heading,
+.landing-page .sample-copy,
+.landing-page .steps-grid,
+.landing-page .why-grid,
+.landing-page .manifesto-inner {
+  text-align: center;
+}
+.landing-page .hero-copy,
+.landing-page .sample-copy,
+.landing-page .hero-note {
+  align-items: center;
+}
+.landing-page .hero-copy > p:not(.eyebrow),
+.landing-page .hero-note p,
+.landing-page .steps-grid p,
+.landing-page .why-grid p,
+.landing-page .sample-copy > p,
+.landing-page .manifesto-inner p {
+  margin-inline: auto;
+  text-align: center;
+}
+.landing-page .hero-copy .eyebrow,
+.landing-page .section-heading .eyebrow,
+.landing-page .sample-copy .eyebrow,
+.landing-page .manifesto-inner .eyebrow {
+  justify-content: center;
+}
+.landing-page .hero-actions,
+.landing-page .manifesto-inner > .button {
+  justify-content: center;
+}
+.landing-page .hero-note {
+  justify-self: center;
+}
+
+@media (max-width: 800px) {
+  .header-actions .push-toggle,
+  .header-actions .icon-button,
+  .header-actions .mobile-menu {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    border-radius: 10px;
+  }
+
+  .dashboard-view-control {
+    justify-content: center;
+    margin: -8px 0 28px;
+  }
+  .dashboard-view-control .feed-view-control {
+    width: 100%;
+    justify-content: center;
+  }
+  .dashboard-view-control .feed-view-helper {
+    display: none;
+  }
+
+  .landing-page .hero-note {
+    text-align: center;
   }
 }
