@@ -58,6 +58,41 @@ const getInitialFeedViewMode = (): FeedViewMode => {
     ? "compact"
     : "editorial";
 };
+const AUTH_RETURN_KEY = "aurikrex-auth-return-to";
+const safeReturnTo = (value: string | null | undefined) =>
+  value && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
+const authPathWithReturnTo = (returnTo: string) =>
+  `${authRoutes.login}?returnTo=${encodeURIComponent(returnTo)}`;
+const rememberAuthReturnTo = (returnTo: string) => {
+  if (typeof window !== "undefined") window.sessionStorage.setItem(AUTH_RETURN_KEY, returnTo);
+};
+function ProtectedLink({
+  href,
+  children,
+  className,
+}: {
+  href: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  return (
+    <Link
+      href={href}
+      className={className}
+      onClick={event => {
+        if (!session.data) {
+          event.preventDefault();
+          rememberAuthReturnTo(href);
+          navigate(authPathWithReturnTo(href));
+        }
+      }}
+    >
+      {children}
+    </Link>
+  );
+}
 export function Logo({ compact = false, href = "/", showMark = true }: { compact?: boolean; href?: string; showMark?: boolean }) {
   return (
     <Link
@@ -298,10 +333,11 @@ export function PublicLayout({
     </>
   );
 }
-function ShareButton({ post }: { post: any }) {
+function ShareButton({ post, onRequireLogin }: { post: any; onRequireLogin: () => boolean }) {
   const [open, setOpen] = useState(false);
   const shareUrl = `https://www.bytes.aurikrex.tech/post/${post.id}`;
   const share = async () => {
+    if (!onRequireLogin()) return;
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
       const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
       
@@ -414,7 +450,7 @@ function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (save
   return <div className="engagement-actions" onClick={e => e.preventDefault()}>
     <button className={`engagement-button fire-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove Aurikrex fire reaction" : "Send Aurikrex fire reaction"} title="Aurikrex fire reaction"><FireReactionIcon active={Boolean(state.hasReacted)} /><span>{state.reactionCount || 0}</span></button>
     <button className={`engagement-button ${state.isBookmarked ? "active" : ""}`} onClick={() => requireLogin() && bookmark.mutate({ postId: post.id })} aria-label={state.isBookmarked ? "Remove bookmark" : "Save post"} title={state.isBookmarked ? "Remove bookmark" : "Save post"}><Bookmark size={15} fill={state.isBookmarked ? "currentColor" : "none"} /></button>
-    <ShareButton post={state} />
+    <ShareButton post={state} onRequireLogin={requireLogin} />
   </div>;
 }
 
@@ -548,7 +584,7 @@ function PostCard({
 }) {
   return (
     <article className={`post-card ${featured ? "post-card-featured" : ""}`}>
-      <Link href={`/post/${post.id}`} className="post-card-link">
+      <ProtectedLink href={`/post/${post.id}`} className="post-card-link">
       <div className="card-image">
         {post.imageUrl ? (
           <img
@@ -576,7 +612,7 @@ function PostCard({
           Read story <ArrowRight size={15} />
         </span>
       </div>
-      </Link>
+      </ProtectedLink>
       <div className="post-card-actions"><EngagementActions post={post} /></div>
     </article>
   );
@@ -636,27 +672,17 @@ function PublishedStoryCarousel() {
       <div className="sample-card-slides">
         {slides.map((post: any, index: number) => {
           const isActive = index === activeIndex;
-          const card = (
-            <>
-              <div className="sample-card-image">
-                {post.imageUrl ? <img src={optimizedImage(post.imageUrl, 700)} alt="" /> : <Sparkles size={22} />}
-                <span>{posts.length ? `Bytes / ${String(post.id).padStart(2, "0")}` : "Preview"}</span>
-              </div>
-              <div>
-                <span className="sample-badge">{posts.length ? "Published Byte" : "Example preview"}</span>
-                <span className="post-meta">{posts.length ? `${formatDate(post.publishedTime)} · 4 min read` : "Today · 4 min read"}</span>
-                <h3>{post.headline}</h3>
-                <p>{excerpt(post.body, 160)}</p>
-                {posts.length ? <span className="read-more">Read story <ArrowRight size={15} /></span> : <span className="read-more">Explore the archive <ArrowRight size={15} /></span>}
-              </div>
-            </>
-          );
           return posts.length ? (
-            <Link key={post.id} href={`/post/${post.id}`} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive} tabIndex={isActive ? 0 : -1}>
-              {card}
-            </Link>
+            <div key={post.id} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive}>
+              <PostCard post={post} />
+            </div>
           ) : (
-            <div key="fallback" className="sample-card-slide is-active">{card}</div>
+            <div key="fallback" className="sample-card-slide is-active">
+              <article className="post-card">
+                <div className="card-image"><div className="image-placeholder"><Sparkles size={22} /><span>Preview</span></div></div>
+                <div className="post-card-body"><div className="post-meta"><span>Today</span><span>·</span><span>4 min read</span></div><h2>{fallback.headline}</h2><p>{fallback.body}</p><span className="read-more">Explore the archive <ArrowRight size={15} /></span></div>
+              </article>
+            </div>
           );
         })}
       </div>
@@ -787,9 +813,9 @@ export function Home() {
               Each card gives you a clear headline, the useful context behind
               it, and a few quiet minutes to understand what matters.
             </p>
-            <Link className="text-link" href="/archive">
+            <ProtectedLink className="text-link" href="/archive">
               See the archive <ArrowRight size={15} />
-            </Link>
+            </ProtectedLink>
           </div>
           <PublishedStoryCarousel />
         </section>
@@ -956,13 +982,22 @@ export function ReaderDashboard() {
   );
 }
 export function Archive() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  useEffect(() => {
+    if (!session.isLoading && !session.data) {
+      rememberAuthReturnTo("/archive");
+      navigate(authPathWithReturnTo("/archive"));
+    }
+  }, [navigate, session.data, session.isLoading]);
   const archive = trpc.publicPosts.archive.useQuery({
     query,
     page,
     pageSize: 12,
-  });
+  }, { enabled: Boolean(session.data) });
+  if (session.isLoading || !session.data) return <div className="route-loading">Opening the archive…</div>;
   return (
     <PublicLayout
       seo={{
@@ -1044,10 +1079,18 @@ export function Archive() {
 export function PostDetail() {
   const [, params] = useRoute("/post/:id");
   const id = Number(params?.id);
+  const [, navigate] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  useEffect(() => {
+    if (!session.isLoading && !session.data && Number.isFinite(id)) {
+      const returnTo = `/post/${id}`;
+      rememberAuthReturnTo(returnTo);
+      navigate(authPathWithReturnTo(returnTo));
+    }
+  }, [id, navigate, session.data, session.isLoading]);
   const post = trpc.publicPosts.byId.useQuery(
     { id },
-    { enabled: Number.isFinite(id) }
+    { enabled: Number.isFinite(id) && Boolean(session.data) }
   );
   const engagement = trpc.reader.engagement.useQuery({ postId: id }, { enabled: Boolean(session.data) && Number.isFinite(id), retry: false });
   const detailPost = post.data ? { ...post.data, ...(engagement.data || {}) } : null;
@@ -1070,6 +1113,7 @@ export function PostDetail() {
           "Read the latest considered technology story from Aurikrex Bytes.",
         path: `/post/${Number.isFinite(id) ? id : ""}`,
       };
+  if (session.isLoading || !session.data) return <div className="route-loading">Opening the story…</div>;
   return (
     <PublicLayout seo={seo}>
       <main className="container detail-page">
@@ -1439,6 +1483,12 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const [token] = useState(
     () => new URLSearchParams(window.location.search).get("token") || ""
   );
+  const [returnTo] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get("returnTo");
+    const fromStorage = window.sessionStorage.getItem(AUTH_RETURN_KEY);
+    return safeReturnTo(fromUrl || fromStorage);
+  });
   const [message, setMessage] = useState(() =>
     new URLSearchParams(window.location.search).get("error") === "oauth"
       ? "Google sign-in failed. Please try again."
@@ -1460,7 +1510,10 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const login = trpc.reader.login.useMutation({
     onSuccess: async r => {
       await utils.reader.session.invalidate();
-      if (r.emailVerified) navigate("/dashboard");
+      if (r.emailVerified) {
+        window.sessionStorage.removeItem(AUTH_RETURN_KEY);
+        navigate(returnTo);
+      }
       else setMessage("Please verify your email before accessing all stories.");
     },
     onError: e => setMessage(e.message),
@@ -1535,6 +1588,10 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
           : mode === "reset"
             ? authRoutes.resetPassword
             : authRoutes.verifyEmail;
+  const authLink = (path: string) =>
+    returnTo === "/dashboard"
+      ? path
+      : `${path}?returnTo=${encodeURIComponent(returnTo)}`;
   const verifyView =
     mode === "verify" && verificationState === "idle" ? (
       <div className="verification-state">
@@ -1780,7 +1837,7 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                       <span>Continue with Google</span>
                     </a>
                     <div className="auth-links">
-                      <Link href={authRoutes.signup}>Create an account</Link>
+                      <Link href={authLink(authRoutes.signup)}>Create an account</Link>
                       <Link href={authRoutes.forgotPassword}>
                         Forgot password?
                       </Link>
@@ -1789,7 +1846,7 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                 )}
                 {mode === "signup" && (
                   <div className="auth-links">
-                    <Link href={authRoutes.login}>
+                    <Link href={authLink(authRoutes.login)}>
                       Already a reader? Sign in
                     </Link>
                   </div>
