@@ -4494,12 +4494,12 @@ button,
   justify-self: center;
 }
 .site-footer .footer-brand-block {
-  align-items: center;
-  text-align: center;
+  align-items: flex-start;
+  text-align: left;
 }
 .site-footer .footer-note,
 .site-footer .footer-founder {
-  text-align: center;
+  text-align: left;
 }
 .sample-card-slide .post-card {
   width: 100%;
