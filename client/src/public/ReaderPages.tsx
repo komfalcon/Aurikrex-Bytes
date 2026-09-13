@@ -58,14 +58,14 @@ const getInitialFeedViewMode = (): FeedViewMode => {
     ? "compact"
     : "editorial";
 };
-export function Logo({ compact = false, href = "/" }: { compact?: boolean; href?: string }) {
+export function Logo({ compact = false, href = "/", showMark = true }: { compact?: boolean; href?: string; showMark?: boolean }) {
   return (
     <Link
       href={href}
       className={`brand ${compact ? "brand-compact" : ""}`}
       aria-label="Aurikrex Bytes home"
     >
-      <img src="/logo.svg" alt="Aurikrex Bytes logo" />
+      {showMark && <img src="/logo.svg" alt="Aurikrex Bytes logo" />}
       <span>
         Aurikrex <b>Bytes</b>
       </span>
@@ -199,7 +199,7 @@ export function SiteFooter() {
     <footer className="site-footer">
       <div className="footer-inner">
         <div className="footer-brand-block">
-          <Logo compact href={readerHome} />
+          <Logo compact href={readerHome} showMark={false} />
           <p className="footer-note">
             A calmer way to keep up.
             <br />
@@ -582,7 +582,7 @@ function PostCard({
   );
 }
 function PublishedStoryCarousel() {
-  const archive = trpc.publicPosts.archive.useQuery({ query: "", page: 1, pageSize: 5 });
+  const archive = trpc.publicPosts.carousel.useQuery();
   const posts = archive.data?.posts ?? [];
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -599,7 +599,7 @@ function PublishedStoryCarousel() {
         const candidates = posts.map((_, index) => index).filter(index => index !== current);
         return candidates[Math.floor(Math.random() * candidates.length)] ?? current;
       });
-    }, 1500);
+    }, 3000);
     return () => window.clearInterval(rotation);
   }, [paused, posts.length]);
 

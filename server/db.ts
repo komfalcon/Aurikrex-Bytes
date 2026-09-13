@@ -242,6 +242,15 @@ export async function listPosts() {
   if (!db) return [];
   return db.select().from(posts).orderBy(posts.updatedAt);
 }
+export async function listPublishedPostsForCarousel() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(posts)
+    .where(eq(posts.status, "published"))
+    .orderBy(desc(posts.publishedTime), desc(posts.id));
+}
 export async function getPostById(id: number) {
   const db = await getDb();
   if (!db) return undefined;

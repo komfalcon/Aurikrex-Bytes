@@ -4425,6 +4425,9 @@ button,
   border-radius: 10px;
   background: color-mix(in srgb, var(--surface) 88%, var(--blue) 12%);
   color: var(--ink);
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
 }
 .header-actions .push-toggle svg,
 .header-actions .icon-button svg,
@@ -4482,6 +4485,21 @@ button,
 }
 .landing-page .hero-note {
   justify-self: center;
+}
+.landing-page .button {
+  justify-content: center;
+  gap: 8px;
+}
+.landing-page .manifesto-inner > .button {
+  justify-self: center;
+}
+.site-footer .footer-brand-block {
+  align-items: center;
+  text-align: center;
+}
+.site-footer .footer-note,
+.site-footer .footer-founder {
+  text-align: center;
 }
 
 @media (max-width: 800px) {
