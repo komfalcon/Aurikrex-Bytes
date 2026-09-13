@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useId, useState, type ComponentProps } from "react";
+import { FormEvent, ReactNode, useEffect, useId, useRef, useState, type ComponentProps } from "react";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
@@ -581,6 +581,98 @@ function PostCard({
     </article>
   );
 }
+function PublishedStoryCarousel() {
+  const archive = trpc.publicPosts.archive.useQuery({ query: "", page: 1, pageSize: 5 });
+  const posts = archive.data?.posts ?? [];
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (activeIndex >= posts.length && posts.length > 0) setActiveIndex(0);
+  }, [activeIndex, posts.length]);
+
+  useEffect(() => {
+    if (paused || posts.length < 2) return;
+    const rotation = window.setInterval(() => setActiveIndex(index => (index + 1) % posts.length), 4000);
+    return () => window.clearInterval(rotation);
+  }, [paused, posts.length]);
+
+  useEffect(() => () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+  }, []);
+
+  const pauseForInteraction = () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    setPaused(true);
+  };
+  const resumeAfterInteraction = () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = setTimeout(() => setPaused(false), 5500);
+  };
+
+  const fallback = {
+    headline: "The quiet shift changing how teams build with AI",
+    body: "A considered look at the tools, habits, and decisions shaping the next chapter of work.",
+    imageUrl: null,
+    publishedTime: null,
+    id: null,
+  };
+  const slides = posts.length ? posts : [fallback];
+  return (
+    <div
+      className={`sample-card sample-card-carousel ${paused ? "is-paused" : ""}`}
+      onPointerEnter={posts.length > 1 ? pauseForInteraction : undefined}
+      onPointerLeave={posts.length > 1 ? resumeAfterInteraction : undefined}
+      onPointerDown={posts.length > 1 ? pauseForInteraction : undefined}
+      onPointerUp={posts.length > 1 ? resumeAfterInteraction : undefined}
+      aria-label={posts.length > 1 ? "Latest published Bytes" : "Example Byte preview"}
+    >
+      <div className="sample-card-slides">
+        {slides.map((post: any, index: number) => {
+          const isActive = index === activeIndex;
+          const card = (
+            <>
+              <div className="sample-card-image">
+                {post.imageUrl ? <img src={optimizedImage(post.imageUrl, 700)} alt="" /> : <Sparkles size={22} />}
+                <span>{posts.length ? `Bytes / ${String(post.id).padStart(2, "0")}` : "Preview"}</span>
+              </div>
+              <div>
+                <span className="sample-badge">{posts.length ? "Published Byte" : "Example preview"}</span>
+                <span className="post-meta">{posts.length ? `${formatDate(post.publishedTime)} · 4 min read` : "Today · 4 min read"}</span>
+                <h3>{post.headline}</h3>
+                <p>{excerpt(post.body, 160)}</p>
+                {posts.length ? <span className="read-more">Read story <ArrowRight size={15} /></span> : <span className="read-more">Explore the archive <ArrowRight size={15} /></span>}
+              </div>
+            </>
+          );
+          return posts.length ? (
+            <Link key={post.id} href={`/post/${post.id}`} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive} tabIndex={isActive ? 0 : -1}>
+              {card}
+            </Link>
+          ) : (
+            <div key="fallback" className="sample-card-slide is-active">{card}</div>
+          );
+        })}
+      </div>
+      {posts.length > 1 && (
+        <div className="sample-card-indicators" aria-label="Story carousel controls">
+          {posts.map((post: any, index: number) => (
+            <button
+              key={post.id}
+              type="button"
+              className={index === activeIndex ? "is-active" : ""}
+              aria-label={`Show story ${index + 1}`}
+              aria-current={index === activeIndex ? "true" : undefined}
+              onClick={() => { setActiveIndex(index); pauseForInteraction(); resumeAfterInteraction(); }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function getWeekDays(lastActiveDate: string | null | undefined, currentStreak: number, timeZone: string) {
   const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
   const today = new Date(`${todayKey}T12:00:00Z`);
@@ -626,8 +718,6 @@ export function Home() {
   useEffect(() => {
     if (session.data) navigate("/dashboard");
   }, [navigate, session.data]);
-  const today = trpc.publicPosts.today.useQuery();
-  const posts = today.data ?? [];
   return (
     <PublicLayout>
       <main>
@@ -710,24 +800,7 @@ export function Home() {
               See the archive <ArrowRight size={15} />
             </Link>
           </div>
-          <div className="sample-card">
-            <div className="sample-card-image">
-              <Sparkles size={22} />
-              <span>Bytes / 08</span>
-            </div>
-            <div>
-              <span className="sample-badge">Example story</span>
-              <span className="post-meta">Today · 4 min read</span>
-              <h3>The quiet shift changing how teams build with AI</h3>
-              <p>
-                A considered look at the tools, habits, and decisions shaping
-                the next chapter of work.
-              </p>
-              <span className="read-more">
-                Read story <ArrowRight size={15} />
-              </span>
-            </div>
-          </div>
+          <PublishedStoryCarousel />
         </section>
         <section className="section why-section">
           <div className="container">

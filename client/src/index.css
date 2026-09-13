@@ -4349,3 +4349,103 @@ button,
     display: none !important;
   }
 }
+
+
+/* Published story carousel */
+.sample-card-carousel {
+  position: relative;
+  display: block;
+  min-height: 265px;
+}
+.sample-card-slides {
+  position: relative;
+  min-height: inherit;
+  height: 100%;
+}
+.sample-card-slide {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: .8fr 1.2fr;
+  min-height: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(10px);
+  transition: opacity .28s ease, transform .28s ease;
+}
+.sample-card-slide.is-active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+  z-index: 1;
+}
+.sample-card-slide > div:last-child {
+  padding: 28px;
+}
+.sample-card-slide .sample-card-image {
+  min-height: 265px;
+}
+.sample-card-slide .sample-card-image img {
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  object-fit: cover;
+}
+.sample-card-indicators {
+  position: absolute;
+  z-index: 2;
+  right: 26px;
+  bottom: 19px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.sample-card-indicators button {
+  width: 7px;
+  height: 7px;
+  min-width: 7px;
+  min-height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--line);
+  transition: width .2s ease, background .2s ease, transform .16s ease;
+}
+.sample-card-indicators button.is-active {
+  width: 20px;
+  border-radius: 999px;
+  background: var(--blue);
+}
+.sample-card-indicators button:active {
+  transform: scale(.9);
+}
+@media (max-width: 800px) {
+  .sample-card-carousel {
+    min-height: 0;
+  }
+  .sample-card-slides {
+    min-height: 470px;
+  }
+  .sample-card-slide {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-height: 470px;
+  }
+  .sample-card-slide .sample-card-image {
+    min-height: 180px;
+    height: 180px;
+  }
+  .sample-card-slide > div:last-child {
+    padding: 22px 20px 54px;
+  }
+  .sample-card-indicators {
+    right: 20px;
+    bottom: 20px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sample-card-slide,
+  .sample-card-indicators button {
+    transition: none;
+  }
+}
