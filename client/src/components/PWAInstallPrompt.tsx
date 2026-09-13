@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowDownToLine, Share, X } from "lucide-react";
+import { Share, X } from "lucide-react";
 
 const INSTALLED_KEY = "aurikrex-pwa-installed";
 const SHOWN_KEY = "aurikrex-pwa-shown";
@@ -127,15 +127,20 @@ export default function PWAInstallPrompt() {
     }
   };
 
+  const helperMessage = fallbackMessage || (ios ? <>Tap <Share size={14} aria-hidden="true" /> then <b>Add to Home Screen</b> for the 8 AM drop.</> : null);
+
   return (
     <aside className="install-prompt" aria-label="Install Aurikrex Bytes" role="status">
-      <div className="install-prompt-icon"><ArrowDownToLine size={20} /></div>
+      <div className="install-prompt-icon" aria-hidden="true">
+        <img src="/logo.svg" alt="" />
+      </div>
       <div className="install-prompt-copy">
-        <strong>Keep Bytes close</strong>
-        <p>{fallbackMessage || (ios ? <>Tap <Share size={14} aria-hidden="true" /> then <b>Add to Home Screen</b> for the 8 AM drop.</> : "Install the daily briefing for a faster, focused reading ritual.")}</p>
+        <strong>Install Aurikrex Bytes</strong>
+        <span className="install-prompt-domain">bytes.aurikrex.tech</span>
+        {helperMessage && <p>{helperMessage}</p>}
       </div>
       <div className="install-prompt-actions">
-        {!ios && <button type="button" className="button button-small" onClick={() => void install()} disabled={installing}>{installing ? "Opening…" : "Install"}</button>}
+        {!ios && <button type="button" className="install-prompt-install" onClick={() => void install()} disabled={installing}>{installing ? "Opening…" : "Install"}</button>}
         <button type="button" className="install-prompt-dismiss" onClick={dismiss} aria-label="Dismiss install prompt"><X size={18} /></button>
       </div>
     </aside>
