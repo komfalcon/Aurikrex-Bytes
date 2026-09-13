@@ -82,7 +82,7 @@ function ProtectedLink({
       href={href}
       className={className}
       onClick={event => {
-        if (!session.data) {
+        if (!session.isLoading && !session.data) {
           event.preventDefault();
           rememberAuthReturnTo(href);
           navigate(authPathWithReturnTo(href));
@@ -445,7 +445,16 @@ function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (save
     onSettled: () => void utils.reader.engagement.invalidate({ postId: post.id }),
   });
   const bookmark = trpc.reader.toggleBookmark.useMutation({ onSuccess: data => { onBookmark?.(data.isBookmarked); void utils.reader.engagement.invalidate({ postId: post.id }); void utils.reader.dashboard.invalidate(); void utils.reader.saved.invalidate(); } });
-  const requireLogin = () => { if (!session.data) navigate("/login"); return Boolean(session.data); };
+  const requireLogin = () => {
+    if (session.isLoading) return false;
+    if (!session.data) {
+      const returnTo = `/post/${post.id}`;
+      rememberAuthReturnTo(returnTo);
+      navigate(authPathWithReturnTo(returnTo));
+      return false;
+    }
+    return true;
+  };
   const state = { ...post, ...(engagement.data || {}) };
   return <div className="engagement-actions" onClick={e => e.preventDefault()}>
     <button className={`engagement-button fire-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove Aurikrex fire reaction" : "Send Aurikrex fire reaction"} title="Aurikrex fire reaction"><FireReactionIcon active={Boolean(state.hasReacted)} /><span>{state.reactionCount || 0}</span></button>
