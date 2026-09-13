@@ -41,38 +41,34 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     }
 
     if (permission === "denied") {
-      toast.error("Notifications are blocked in your browser settings. Please enable notification permissions for aurikrex.tech in your browser settings.", {
+      toast.error("Notifications are blocked in your browser settings. Please enable notification permissions for aurikrex.tech.", {
         duration: 6000,
-      });
-      return;
-    }
-
-    if (permission === "granted") {
-      toast.success("Daily notifications are active! You'll receive updates at 8:01 AM & 6:00 PM.", {
-        duration: 4000,
       });
       return;
     }
 
     try {
       setLoading(true);
-      const perm = await Notification.requestPermission();
-      setPermission(perm);
-
-      if (perm === "denied") {
-        toast.error("Notification permission was denied. You can enable it anytime in browser settings.");
-        return;
+      let currentPerm = Notification.permission;
+      if (currentPerm !== "granted") {
+        currentPerm = await Notification.requestPermission();
+        setPermission(currentPerm);
       }
 
-      if (perm !== "granted") return;
+      if (currentPerm !== "granted") {
+        toast.error("Notification permission was denied.");
+        return;
+      }
 
       const registration = await navigator.serviceWorker.ready;
       if (!vapidKeyQuery.data) {
-        toast.error("Notification service is preparing. Please try again in a moment.");
+        toast.error("VAPID Key not found. Please ensure VAPID_PUBLIC_KEY is set in Vercel Environment Variables.", {
+          duration: 6000,
+        });
         return;
       }
 
-      // Convert URL-Safe Base64 to Uint8Array for applicationServerKey
+      // Helper to convert base64 to Uint8Array
       const urlBase64ToUint8Array = (base64String: string) => {
         const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
         const base64 = (base64String + padding).replace(/\-/g, "+").replace(/_/g, "/");
@@ -84,16 +80,19 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         return outputArray;
       };
 
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidKeyQuery.data),
-      });
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKeyQuery.data),
+        });
+      }
 
       const p256dh = subscription.getKey("p256dh");
       const auth = subscription.getKey("auth");
 
       if (!p256dh || !auth) {
-        toast.error("Could not obtain push keys from browser.");
+        toast.error("Could not obtain push subscription keys from browser.");
         return;
       }
 
@@ -115,8 +114,8 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
   if (variant === "button") {
     if (permission === "granted") {
       return (
-        <button type="button" onClick={handleSubscribe} className="btn ghost push-btn" title="Daily notifications active">
-          <BellRing size={16} className="text-primary" /> Notifications Active
+        <button type="button" onClick={handleSubscribe} disabled={loading} className="btn ghost push-btn" title="Daily notifications active (Click to resync)">
+          <BellRing size={16} className="text-primary" /> {loading ? "Syncing..." : "Notifications Active"}
         </button>
       );
     }
@@ -127,7 +126,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     );
   }
 
-  // Header icon variant (matches theme-toggle style)
+  // Header icon variant
   return (
     <button
       className={`theme-toggle push-toggle ${permission === "granted" ? "active" : ""}`}

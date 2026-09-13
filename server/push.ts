@@ -1,26 +1,32 @@
-﻿import webpush from "web-push";
+import webpush from "web-push";
 import { getDb } from "./db.js";
 import { pushSubscriptions } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
 
-if (ENV.vapidPublicKey && ENV.vapidPrivateKey) {
-  webpush.setVapidDetails(
-    "mailto:hello@aurikrex.tech",
-    ENV.vapidPublicKey,
-    ENV.vapidPrivateKey
-  );
-}
-
 export async function sendDailyPushNotifications() {
-  if (!ENV.vapidPublicKey || !ENV.vapidPrivateKey) {
+  const publicKey = process.env.VAPID_PUBLIC_KEY || ENV.vapidPublicKey;
+  const privateKey = process.env.VAPID_PRIVATE_KEY || ENV.vapidPrivateKey;
+
+  if (!publicKey || !privateKey) {
     console.warn("[Push] VAPID keys not configured, skipping.");
     return 0;
+  }
+
+  try {
+    webpush.setVapidDetails(
+      "mailto:hello@aurikrex.tech",
+      publicKey,
+      privateKey
+    );
+  } catch (err) {
+    console.warn("[Push] VAPID setup error:", err);
   }
 
   const db = await getDb();
   if (!db) return 0;
 
   const subs = await db.select().from(pushSubscriptions);
+  console.info(`[Push] Found ${subs.length} push subscriptions in database.`);
   if (subs.length === 0) return 0;
 
   const payload = JSON.stringify({
@@ -44,8 +50,7 @@ export async function sendDailyPushNotifications() {
       );
       sent++;
     } catch (error) {
-      // Typically, if error.statusCode === 410, the subscription is gone
-      console.warn(`[Push] Failed to send to ${sub.endpoint}`, error);
+      console.warn(`[Push] Failed to send to ${sub.endpoint}:`, error);
     }
   }
   return sent;

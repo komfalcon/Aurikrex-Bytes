@@ -486,6 +486,7 @@ export const appRouter = router({
         }
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        await db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, input.endpoint));
         await db.insert(pushSubscriptions).values({
           readerId,
           endpoint: input.endpoint,
