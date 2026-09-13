@@ -6,16 +6,18 @@ import {
   BookOpen,
   Check,
   ChevronDown,
+  CircleHelp,
   Clock3,
   Facebook,
+  FileText,
   Flame,
-  Home as HomeIcon,
   Instagram,
   Info,
   Linkedin,
   LogOut,
   Mail,
   MailOpen,
+  Menu,
   Moon,
   Search,
   Share2,
@@ -147,21 +149,45 @@ export function SiteHeader() {
         )}
         <button
           className="mobile-menu"
-          onClick={() => setMenu(!menu)}
-          aria-label="Toggle navigation"
+          onClick={() => setMenu(value => !value)}
+          aria-label={menu ? "Close navigation menu" : "Open navigation menu"}
           aria-expanded={menu}
+          aria-controls="mobile-navigation-drawer"
         >
-          {menu ? <X /> : <span>Menu</span>}
+          {menu ? <X size={20} /> : <Menu size={20} />}
         </button>
       </div>
       {menu && (
-        <nav className="mobile-nav">
-          <Link href={homePath}>{signedIn ? "Dashboard" : "Today"}</Link>
-          {signedIn && <Link href="/saved">Saved</Link>}
-          <Link href="/archive">All Bytes</Link>
-          <Link href="/how-it-works">About</Link>
-          {signedIn ? <button className="mobile-nav-join text-button" onClick={() => logout.mutate()}>Sign out</button> : <><Link href={authRoutes.login}>Sign in</Link><Link className="mobile-nav-join" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link></>}
-        </nav>
+        <>
+          <button className="mobile-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMenu(false)} />
+          <nav id="mobile-navigation-drawer" className="mobile-nav" aria-label="Mobile navigation">
+            <div className="mobile-nav-section">
+              <span className="mobile-nav-label">Read</span>
+              <Link href={homePath} onClick={() => setMenu(false)}>{signedIn ? "Dashboard" : "Today"}</Link>
+              <Link href="/archive" onClick={() => setMenu(false)}><BookOpen size={16} /> All Bytes</Link>
+              {signedIn && <Link href="/saved" onClick={() => setMenu(false)}><Bookmark size={16} /> Saved posts</Link>}
+            </div>
+            <div className="mobile-nav-section">
+              <span className="mobile-nav-label">Explore</span>
+              <Link href="/how-it-works" onClick={() => setMenu(false)}><Info size={16} /> About</Link>
+              <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>
+              <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>
+            </div>
+            <div className="mobile-nav-section mobile-nav-legal">
+              <span className="mobile-nav-label">Legal</span>
+              <Link href="/privacy" onClick={() => setMenu(false)}><ShieldCheck size={16} /> Privacy policy</Link>
+              <Link href="/terms" onClick={() => setMenu(false)}><FileText size={16} /> Terms of service</Link>
+            </div>
+            <div className="mobile-nav-account">
+              {signedIn ? <>
+                <button className="mobile-nav-join text-button" onClick={() => logout.mutate()}><LogOut size={16} /> Sign out</button>
+              </> : <>
+                <Link href={authRoutes.login} onClick={() => setMenu(false)}>Sign in</Link>
+                <Link className="mobile-nav-join" href={authRoutes.signup} onClick={() => setMenu(false)}>Join free <ArrowRight size={14} /></Link>
+              </>}
+            </div>
+          </nav>
+        </>
       )}
     </header>
   );
@@ -249,24 +275,6 @@ export function SiteFooter() {
     </footer>
   );
 }
-function MobileBottomNav() {
-  const [location] = useLocation();
-  const session = trpc.reader.session.useQuery(undefined, { retry: false });
-  const links = [
-    { href: session.data ? "/dashboard" : "/", label: "Today", icon: <HomeIcon size={18} /> },
-    { href: "/archive", label: "All Bytes", icon: <BookOpen size={18} /> },
-    { href: "/how-it-works", label: "About", icon: <Info size={18} /> },
-  ];
-  return (
-    <nav className="mobile-bottom-nav" aria-label="Mobile primary navigation">
-      {links.map(link => (
-        <Link key={link.href} href={link.href} className={location === link.href ? "active" : ""} aria-current={location === link.href ? "page" : undefined}>
-          {link.icon}<span>{link.label}</span>
-        </Link>
-      ))}
-    </nav>
-  );
-}
 export function PublicLayout({
   children,
   seo,
@@ -287,7 +295,6 @@ export function PublicLayout({
       <SiteHeader />
       {children}
       <SiteFooter />
-      <MobileBottomNav />
     </>
   );
 }
@@ -574,6 +581,30 @@ function PostCard({
     </article>
   );
 }
+function getWeekDays(lastActiveDate: string | null | undefined, currentStreak: number, timeZone: string) {
+  const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
+  const today = new Date(`${todayKey}T12:00:00Z`);
+  const startOfWeek = new Date(today);
+  startOfWeek.setUTCDate(today.getUTCDate() - today.getUTCDay());
+  const streakEnd = lastActiveDate || todayKey;
+  const streakEndDate = new Date(`${streakEnd}T12:00:00Z`);
+  const streakStartDate = new Date(streakEndDate);
+  streakStartDate.setUTCDate(streakEndDate.getUTCDate() - Math.max(currentStreak - 1, 0));
+  const dayFormatter = new Intl.DateTimeFormat("en", { weekday: "narrow", timeZone: "UTC" });
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(startOfWeek);
+    date.setUTCDate(startOfWeek.getUTCDate() + index);
+    const key = date.toISOString().slice(0, 10);
+    return {
+      key,
+      label: dayFormatter.format(date),
+      dateLabel: new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date),
+      isToday: key === todayKey,
+      isFuture: key > todayKey,
+      isActive: key >= streakStartDate.toISOString().slice(0, 10) && key <= streakEnd && key <= todayKey,
+    };
+  });
+}
 function EmptyToday() {
   return (
     <div className="empty-state">
@@ -805,19 +836,30 @@ export function ReaderDashboard() {
   const posts = tab === "today" ? data?.todayPosts ?? [] : data?.allPosts ?? [];
   const previewPost = posts[0] ?? data?.allPosts?.[0] ?? { headline: "The useful context behind what matters", body: "A considered look at the stories shaping the day.", imageUrl: null };
   const firstName = data?.reader.name?.trim().split(/\s+/)[0] || "reader";
+  const weekDays = getWeekDays(data?.streak.lastActiveDate, data?.streak.currentStreak ?? 0, timeZone);
   return (
     <PublicLayout seo={{ title: "Your dashboard — Aurikrex Bytes", description: "Your daily Aurikrex Bytes briefing and reading streak.", path: "/dashboard", robots: "noindex,nofollow" }}>
       <main className="container reader-dashboard">
         <section className="dashboard-intro">
-          <div>
+          <div className="dashboard-welcome">
             <span className="eyebrow"><span className="live-dot" /> Your reading desk</span>
             <h1>Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}, {firstName}.</h1>
             <p>Here’s the signal worth your attention today.</p>
           </div>
           <div className={`streak-card ${data?.streak.increased ? "streak-card-celebrate" : ""}`}>
-            <div className="streak-flame"><Flame size={25} fill="currentColor" /></div>
-            <div><strong>{data?.streak.currentStreak ?? 0}</strong><span>day streak</span></div>
-            <small>Best: {data?.streak.longestStreak ?? 0} days</small>
+            <div className="streak-card-heading">
+              <div className="streak-flame"><Flame size={22} fill="currentColor" /></div>
+              <div><strong>{data?.streak.currentStreak ?? 0}</strong><span>day streak</span></div>
+              <small>Best: {data?.streak.longestStreak ?? 0} days</small>
+            </div>
+            <div className="streak-week" aria-label="Current week reading activity">
+              {weekDays.map(day => (
+                <div className={`streak-day ${day.isActive ? "is-active" : ""} ${day.isToday ? "is-today" : ""} ${day.isFuture ? "is-future" : ""}`} key={day.key} title={`${day.dateLabel}${day.isActive ? " · Read" : " · Not read"}`}>
+                  <span>{day.label}</span>
+                  <i aria-hidden="true"><Flame size={13} fill="currentColor" /></i>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
         {showOnboarding && (

@@ -43,6 +43,11 @@ export default function PWAInstallPrompt() {
   const [fallbackMessage, setFallbackMessage] = useState("");
 
   useEffect(() => {
+    document.body.classList.toggle("has-install-prompt", visible);
+    return () => document.body.classList.remove("has-install-prompt");
+  }, [visible]);
+
+  useEffect(() => {
     if (localStorage.getItem(INSTALLED_KEY) === "true" || isStandalone()) {
       localStorage.setItem(INSTALLED_KEY, "true");
       pendingInstallPrompt = null;
