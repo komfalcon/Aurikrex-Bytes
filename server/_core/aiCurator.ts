@@ -28,8 +28,21 @@ export async function curateTenBytes(): Promise<CuratedByte[]> {
     return getFallbackBytes();
   }
 
+  const currentDate = new Date().toUTCString();
+  const seedTopics = [
+    "Generative AI & Autonomous Agents", "Space Exploration & Satellite Constellations",
+    "Semiconductors & Quantum Hardware", "Biotech & Gene Editing",
+    "Clean Energy & Fusion Reactors", "Robotics & Spatial Computing",
+    "Cybersecurity & Zero-Day Defense", "Decentralized Finance & Web3 Protocols",
+    "Electric Mobility & Battery Tech", "Neuromorphic Computing & Brain Interfaces"
+  ].sort(() => Math.random() - 0.5);
+
   const prompt = `You are the lead editor for Aurikrex Bytes, a high-signal digital publication.
-Curate EXACTLY 10 distinct, engaging news bytes covering Technology, Artificial Intelligence, Science, Future Tech, and Global Innovation.
+Today is ${currentDate}.
+Curate EXACTLY 10 distinct, highly current news bytes covering: ${seedTopics.join(", ")}.
+
+CRITICAL FRESHNESS RULE:
+Ensure all 10 stories cover distinct, fresh developments. Do NOT repeat static generic tech stories.
 
 CRITICAL LENGTH RULE:
 For EACH byte, the "body" text MUST be strictly between 600 and 800 characters (excluding headline).

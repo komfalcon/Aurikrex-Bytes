@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { adminUsers, posts, readers, pushSubscriptions } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
@@ -269,6 +269,53 @@ export const appRouter = router({
         if (!db || !(await getPostById(input.id))) throw genericNotFound();
         await db.delete(posts).where(eq(posts.id, input.id));
         return { success: true };
+      }),
+    batchDeletePosts: publicProcedure
+      .input(z.object({ ids: z.array(z.number().int().positive()).min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const admin = await requireAdmin(ctx);
+        assertPermission(admin.role, "post:delete");
+        const db = await getDb();
+        if (!db) throw genericNotFound();
+        await db.delete(posts).where(inArray(posts.id, input.ids));
+        return { success: true, count: input.ids.length };
+      }),
+    batchPublishPosts: publicProcedure
+      .input(z.object({ ids: z.array(z.number().int().positive()).min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const admin = await requireAdmin(ctx);
+        assertPermission(admin.role, "post:publish");
+        const db = await getDb();
+        if (!db) throw genericNotFound();
+        const now = new Date();
+        await db
+          .update(posts)
+          .set({ status: "published", publishedTime: now, updatedAt: now })
+          .where(inArray(posts.id, input.ids));
+        return { success: true, count: input.ids.length };
+      }),
+    batchSchedulePosts: publicProcedure
+      .input(
+        z.object({
+          ids: z.array(z.number().int().positive()).min(1),
+          scheduledTime: z.coerce.date(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const admin = await requireAdmin(ctx);
+        assertPermission(admin.role, "post:schedule");
+        const db = await getDb();
+        if (!db) throw genericNotFound();
+        const now = new Date();
+        await db
+          .update(posts)
+          .set({
+            status: "scheduled",
+            scheduledTime: input.scheduledTime,
+            updatedAt: now,
+          })
+          .where(inArray(posts.id, input.ids));
+        return { success: true, count: input.ids.length };
       }),
     submitPost: publicProcedure
       .input(z.object({ id: z.number().int().positive() }))

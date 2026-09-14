@@ -603,8 +603,25 @@ async function curateTenBytes() {
     console.warn("[AICurator] No GEMINI_API_KEY or GOOGLE_API_KEY found in environment. Using default fallback curation.");
     return getFallbackBytes();
   }
+  const currentDate = (/* @__PURE__ */ new Date()).toUTCString();
+  const seedTopics = [
+    "Generative AI & Autonomous Agents",
+    "Space Exploration & Satellite Constellations",
+    "Semiconductors & Quantum Hardware",
+    "Biotech & Gene Editing",
+    "Clean Energy & Fusion Reactors",
+    "Robotics & Spatial Computing",
+    "Cybersecurity & Zero-Day Defense",
+    "Decentralized Finance & Web3 Protocols",
+    "Electric Mobility & Battery Tech",
+    "Neuromorphic Computing & Brain Interfaces"
+  ].sort(() => Math.random() - 0.5);
   const prompt = `You are the lead editor for Aurikrex Bytes, a high-signal digital publication.
-Curate EXACTLY 10 distinct, engaging news bytes covering Technology, Artificial Intelligence, Science, Future Tech, and Global Innovation.
+Today is ${currentDate}.
+Curate EXACTLY 10 distinct, highly current news bytes covering: ${seedTopics.join(", ")}.
+
+CRITICAL FRESHNESS RULE:
+Ensure all 10 stories cover distinct, fresh developments. Do NOT repeat static generic tech stories.
 
 CRITICAL LENGTH RULE:
 For EACH byte, the "body" text MUST be strictly between 600 and 800 characters (excluding headline).
@@ -1421,7 +1438,7 @@ function registerGoogleAuthRoutes(app) {
 init_schema();
 init_env();
 import { TRPCError as TRPCError4 } from "@trpc/server";
-import { eq as eq3 } from "drizzle-orm";
+import { eq as eq3, inArray as inArray2 } from "drizzle-orm";
 import { z as z2 } from "zod";
 init_db();
 
@@ -1853,6 +1870,41 @@ var appRouter = router({
       if (!db || !await getPostById(input.id)) throw genericNotFound();
       await db.delete(posts).where(eq3(posts.id, input.id));
       return { success: true };
+    }),
+    batchDeletePosts: publicProcedure.input(z2.object({ ids: z2.array(z2.number().int().positive()).min(1) })).mutation(async ({ input, ctx }) => {
+      const admin = await requireAdmin(ctx);
+      assertPermission(admin.role, "post:delete");
+      const db = await getDb();
+      if (!db) throw genericNotFound();
+      await db.delete(posts).where(inArray2(posts.id, input.ids));
+      return { success: true, count: input.ids.length };
+    }),
+    batchPublishPosts: publicProcedure.input(z2.object({ ids: z2.array(z2.number().int().positive()).min(1) })).mutation(async ({ input, ctx }) => {
+      const admin = await requireAdmin(ctx);
+      assertPermission(admin.role, "post:publish");
+      const db = await getDb();
+      if (!db) throw genericNotFound();
+      const now2 = /* @__PURE__ */ new Date();
+      await db.update(posts).set({ status: "published", publishedTime: now2, updatedAt: now2 }).where(inArray2(posts.id, input.ids));
+      return { success: true, count: input.ids.length };
+    }),
+    batchSchedulePosts: publicProcedure.input(
+      z2.object({
+        ids: z2.array(z2.number().int().positive()).min(1),
+        scheduledTime: z2.coerce.date()
+      })
+    ).mutation(async ({ input, ctx }) => {
+      const admin = await requireAdmin(ctx);
+      assertPermission(admin.role, "post:schedule");
+      const db = await getDb();
+      if (!db) throw genericNotFound();
+      const now2 = /* @__PURE__ */ new Date();
+      await db.update(posts).set({
+        status: "scheduled",
+        scheduledTime: input.scheduledTime,
+        updatedAt: now2
+      }).where(inArray2(posts.id, input.ids));
+      return { success: true, count: input.ids.length };
     }),
     submitPost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
