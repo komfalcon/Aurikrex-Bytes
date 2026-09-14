@@ -90,22 +90,25 @@ Return ONLY the raw JSON array without markdown formatting or code blocks.`;
 
     return parsed.slice(0, 10).map((item: any, idx: number) => {
       let bodyText = String(item.body || "").trim();
-      // Ensure strict character bounds between 600 and 800 characters
       if (bodyText.length < 600) {
         bodyText = (bodyText + " " + bodyText).slice(0, 720);
       } else if (bodyText.length > 800) {
         bodyText = bodyText.slice(0, 780).replace(/\s+\S*$/, "") + ".";
       }
 
-      const img = item.imageUrl && typeof item.imageUrl === "string" && item.imageUrl.startsWith("http")
-        ? item.imageUrl
+      const headline = String(item.headline || "Tech Update").slice(0, 120);
+      const category = String(item.category || "Tech");
+
+      const cleanKeyword = headline.replace(/[^\w\s]/gi, " ").split(/\s+/).filter(w => w.length > 3).slice(0, 4).join(" ");
+      const imageUrl = cleanKeyword.length > 3
+        ? `https://image.pollinations.ai/prompt/${encodeURIComponent(category + " " + cleanKeyword + " editorial technology news photo")}?width=1200&height=800&nologo=true&seed=${idx + Date.now()}`
         : FALLBACK_IMAGES[idx % FALLBACK_IMAGES.length];
 
       return {
-        headline: String(item.headline || "Tech Update").slice(0, 120),
+        headline,
         body: bodyText,
-        category: String(item.category || "Tech"),
-        imageUrl: img
+        category,
+        imageUrl
       };
     });
   } catch (err) {
