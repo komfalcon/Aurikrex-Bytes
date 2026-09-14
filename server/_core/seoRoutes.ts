@@ -6,7 +6,7 @@ import sharp from "sharp";
 import { getPostById, listPublishedPosts } from "../db.js";
 
 const siteUrl = () =>
-  (process.env.APP_BASE_URL || "https://aurikrex.tech").replace(/\/$/, "");
+  (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.tech").replace(/\/$/, "");
 const xmlEscape = (value: string) =>
   value
     .replace(/&/g, "&amp;")
@@ -234,7 +234,7 @@ async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
     <text x="110" y="185" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
     <text x="110" y="${bodyY}" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${bodyLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 30}">${escapeXml(line)}</tspan>`).join("")}</text>
     <text x="110" y="510" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
-    <text x="110" y="543" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">aurikrex.tech</text>
+    <text x="110" y="543" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">www.bytes.aurikrex.tech</text>
   </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();

@@ -619,7 +619,7 @@ function TodayCompletionCard({
 
   const handleShare = () => {
     const text = `I just completed today's tech briefing on Aurikrex Bytes! 🔥 ${streak}-day streak active.`;
-    const url = "https://aurikrex.tech/";
+    const url = "https://www.bytes.aurikrex.tech/";
     if (typeof navigator !== "undefined" && navigator.share) {
       navigator.share({ title: "Aurikrex Bytes Briefing Complete", text, url }).catch(() => undefined);
     } else if (typeof navigator !== "undefined" && navigator.clipboard) {
