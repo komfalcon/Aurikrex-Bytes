@@ -1661,8 +1661,9 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
               account.
             </ArticleSection>
             <ArticleSection title="Content and attribution">
-              Aurikrex Bytes writes, edits, curates, and presents editorial
-              cards using information from public reporting and other sources.
+              Our editorial team compiles source material from real reports.
+              Drafts are generated with AI assistance from that compiled source
+              material, and every Byte is reviewed by a human before publishing.
               Original Aurikrex Bytes writing, edits, design, branding, and
               software belong to Aurikrex or their licensors. You may read and
               share links, but do not reproduce the service wholesale or present
