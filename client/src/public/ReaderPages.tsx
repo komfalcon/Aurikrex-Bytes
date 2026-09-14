@@ -1602,6 +1602,16 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
               data such as stories opened, archive searches, and timestamps so
               we can understand which parts of the briefing are useful.
             </ArticleSection>
+            <ArticleSection title="Lawful basis and your rights under the Nigeria Data Protection Act 2023">
+              Our lawful basis for processing your personal data is consent: you
+              actively create an account and agree to these terms. Under the
+              Nigeria Data Protection Act 2023, you may access the personal data
+              we hold about you, request correction of inaccurate data, request
+              deletion of your account and data, and object to our processing of
+              your data. If you believe your rights have been violated, you may
+              lodge a complaint with the Nigeria Data Protection Commission
+              (NDPC).
+            </ArticleSection>
             <ArticleSection title="Cookies and storage">
               We use essential session cookies to keep you signed in, remember
               administrative devices, and protect OAuth flows. Local storage may
@@ -1622,16 +1632,16 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
               notification services where a reader grants permission. Each
               provider receives only the information needed for its function.
             </ArticleSection>
-            <ArticleSection title="Retention and your rights">
-              We retain account and activity data while it is needed to operate
-              and protect the service. You may request account deletion, a
-              copy/export of account information, or correction of inaccurate
-              information by emailing info@aurikrex.tech. We will verify
-              requests before acting on them and explain any information we must
-              retain for security or legal reasons.
+            <ArticleSection title="Retention and data requests">
+              We retain account and usage data for as long as your account is
+              active. We delete account and usage data within a reasonable period
+              after you request account deletion. Send access, correction, or
+              deletion requests to support@aurikrex.tech. We will verify requests
+              before acting on them and explain any information we must retain
+              for security or legal reasons.
             </ArticleSection>
             <ArticleSection title="Contact">
-              For privacy questions or requests, contact info@aurikrex.tech.
+              For privacy questions or requests, contact support@aurikrex.tech.
               This policy applies to the free Aurikrex Bytes reader experience
               and may be updated as the service changes.
             </ArticleSection>
