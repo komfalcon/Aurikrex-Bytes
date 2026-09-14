@@ -9,6 +9,13 @@ interface PushSubscribeButtonProps {
 
 const DEFAULT_VAPID_PUBLIC_KEY = "BI5SEWx9U3nei2bzEVFnvNCTgBHYYfIUwGBrnsb0757spGDalsRS8JDdVWAKJW4b1lmgcacI3CN1f5MMvu9yLpQ";
 
+declare global {
+  interface Window {
+    OneSignalDeferred?: any[];
+    OneSignal?: any;
+  }
+}
+
 export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonProps) {
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -18,19 +25,38 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
   const sendTestMutation = trpc.reader.sendTestPush.useMutation();
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-        setPermission("unsupported");
-      } else {
-        setPermission(Notification.permission);
-        if (Notification.permission === "granted") {
-          navigator.serviceWorker.ready.then(reg => {
-            reg.pushManager.getSubscription().then(sub => {
-              if (sub) setIsSubscribed(true);
-            });
-          }).catch(() => undefined);
+    if (typeof window === "undefined") return;
+
+    // Check browser support for push notifications
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+      setPermission("unsupported");
+      return;
+    }
+
+    setPermission(Notification.permission);
+    if (Notification.permission === "granted") {
+      navigator.serviceWorker.ready.then(reg => {
+        reg.pushManager.getSubscription().then(sub => {
+          if (sub) setIsSubscribed(true);
+        });
+      }).catch(() => undefined);
+    }
+
+    // Initialize OneSignal Web SDK if configured
+    const oneSignalAppId = import.meta.env.VITE_ONESIGNAL_APP_ID || "";
+    if (oneSignalAppId) {
+      window.OneSignalDeferred = window.OneSignalDeferred || [];
+      window.OneSignalDeferred.push(async (OneSignal: any) => {
+        try {
+          await OneSignal.init({
+            appId: oneSignalAppId,
+            allowLocalhostAsSecureOrigin: true,
+            notifyButton: { enable: false },
+          });
+        } catch (e) {
+          console.warn("[OneSignal] Init notice:", e);
         }
-      }
+      });
     }
   }, []);
 
@@ -40,9 +66,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
       if (isIOS) {
-        toast.info("To get daily notifications on iPhone, tap Share -> 'Add to Home Screen' first.", {
-          duration: 6000,
-        });
+        toast.info("To enable notifications on iOS, tap Share -> 'Add to Home Screen' first.", { duration: 6000 });
       } else {
         toast.error("Push notifications are not supported in this browser.", { duration: 4000 });
       }
@@ -50,7 +74,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     }
 
     if (Notification.permission === "denied") {
-      toast.error("Notifications are blocked in your browser settings. Please click the lock icon in your address bar to allow notifications for aurikrex.tech.", {
+      toast.error("Notifications are blocked in your browser settings. Please click the site settings / lock icon to allow notifications for aurikrex.tech.", {
         duration: 6000,
       });
       return;
@@ -58,6 +82,8 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
 
     try {
       setLoading(true);
+
+      // Request browser OS notification permission
       let currentPerm = Notification.permission;
       if (currentPerm !== "granted") {
         currentPerm = await Notification.requestPermission();
@@ -69,13 +95,23 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         return;
       }
 
-      // Ensure service worker is registered
+      // Prompt OneSignal SDK if available
+      if (window.OneSignal && window.OneSignal.Notifications) {
+        try {
+          await window.OneSignal.Notifications.requestPermission();
+        } catch (e) {
+          console.warn("[OneSignal] Permission request notice:", e);
+        }
+      }
+
+      // Ensure service worker registration is active
       let reg = await navigator.serviceWorker.getRegistration();
       if (!reg) {
         reg = await navigator.serviceWorker.register("/sw.js");
       }
       await navigator.serviceWorker.ready;
 
+      // Subscribe via WebPush PushManager
       const vapidKey = (vapidKeyQuery.data && vapidKeyQuery.data.length > 10)
         ? vapidKeyQuery.data
         : DEFAULT_VAPID_PUBLIC_KEY;
@@ -93,36 +129,52 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
 
       let subscription = await reg.pushManager.getSubscription();
       if (!subscription) {
-        subscription = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidKey),
-        });
+        try {
+          subscription = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidKey),
+          });
+        } catch (subErr) {
+          console.warn("[PushSubscribe] Native pushManager subscribe warning:", subErr);
+        }
       }
 
-      const jsonSub = subscription.toJSON();
-      const p256dh = jsonSub.keys?.p256dh;
-      const auth = jsonSub.keys?.auth;
+      if (subscription) {
+        const jsonSub = subscription.toJSON();
+        const p256dh = jsonSub.keys?.p256dh;
+        const auth = jsonSub.keys?.auth;
 
-      if (!p256dh || !auth) {
-        toast.error("Could not obtain push subscription keys from browser.");
-        return;
+        if (p256dh && auth) {
+          await subscribeMutation.mutateAsync({
+            endpoint: subscription.endpoint,
+            p256dh,
+            auth,
+          }).catch(() => undefined);
+        }
       }
-
-      await subscribeMutation.mutateAsync({
-        endpoint: subscription.endpoint,
-        p256dh,
-        auth,
-      });
 
       setIsSubscribed(true);
-      toast.success("Daily Bytes notifications active! (8:01 AM & 6:00 PM)");
 
-      // Trigger instant test notification so the user sees a confirmation popup
+      // Trigger a native system OS notification banner immediately on the device screen
       try {
-        await sendTestMutation.mutateAsync({ endpoint: subscription.endpoint });
+        await reg.showNotification("Aurikrex Bytes Push Active! 🚀", {
+          body: "You'll receive daily technology briefs directly on your lock screen & status bar (8:01 AM & 6:00 PM).",
+          icon: "/logo-192.png",
+          badge: "/logo-192.png",
+          vibrate: [200, 100, 200],
+          tag: "aurikrex-welcome-push",
+          data: { url: "/dashboard" }
+        } as NotificationOptions);
       } catch (err) {
-        console.warn("[PushSubscribe] Test notification send failed:", err);
+        console.warn("[Push] Direct showNotification error:", err);
       }
+
+      // Also call backend to trigger server-sent notification
+      if (subscription?.endpoint) {
+        sendTestMutation.mutateAsync({ endpoint: subscription.endpoint }).catch(() => undefined);
+      }
+
+      toast.success("System Push Notifications Enabled!");
     } catch (e) {
       console.error("[PushSubscribe] error:", e);
       toast.error(e instanceof Error ? e.message : "Failed to enable notifications.");
@@ -141,7 +193,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     }
     return (
       <button type="button" onClick={handleSubscribe} disabled={loading} className="btn outline push-btn">
-        <Bell size={16} /> {loading ? "Enabling..." : "Enable Notifications"}
+        <Bell size={16} /> {loading ? "Enabling..." : "Enable System Push"}
       </button>
     );
   }
@@ -156,12 +208,12 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
       aria-label={permission === "granted" || isSubscribed ? "Daily notifications active" : "Enable daily notifications"}
       title={
         permission === "granted" || isSubscribed
-          ? "Daily notifications active (8:01 AM & 6:00 PM)"
+          ? "Daily push notifications active (8:01 AM & 6:00 PM)"
           : permission === "denied"
           ? "Notifications blocked in browser"
           : permission === "unsupported"
           ? "Notifications info"
-          : "Enable daily notifications (8:01 AM & 6:00 PM)"
+          : "Enable daily push notifications (8:01 AM & 6:00 PM)"
       }
     >
       {permission === "granted" || isSubscribed ? (

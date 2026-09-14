@@ -23,8 +23,33 @@ function configureVapid() {
 }
 
 export async function sendDailyPushNotifications() {
-  configureVapid();
+  const oneSignalAppId = process.env.ONESIGNAL_APP_ID || process.env.VITE_ONESIGNAL_APP_ID || "";
+  const oneSignalApiKey = process.env.ONESIGNAL_REST_API_KEY || "";
 
+  if (oneSignalAppId && oneSignalApiKey) {
+    try {
+      const res = await fetch("https://onesignal.com/api/v1/notifications", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Basic ${oneSignalApiKey}`
+        },
+        body: JSON.stringify({
+          app_id: oneSignalAppId,
+          included_segments: ["Subscribed Users"],
+          headings: { en: "Time for your daily bytes! 🚀" },
+          contents: { en: "Catch up on what matters in tech." },
+          url: "https://www.bytes.aurikrex.tech/dashboard"
+        })
+      });
+      const data = await res.json();
+      console.info("[Push] OneSignal notification response:", data);
+    } catch (err) {
+      console.error("[Push] OneSignal broadcast error:", err);
+    }
+  }
+
+  configureVapid();
   const db = await getDb();
   if (!db) return 0;
 
