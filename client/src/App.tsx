@@ -1,7 +1,7 @@
-import React, { Suspense } from "react";
+import React, { Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Route, Switch } from "wouter";
+import { Route, Switch, useLocation } from "wouter";
 import NotFound from "./pages/NotFound";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -15,6 +15,16 @@ const NewPostPage = React.lazy(() => import("./admin/NewPostPage").then(m => ({ 
 const PreviewPage = React.lazy(() => import("./admin/NewPostPage").then(m => ({ default: m.PreviewPage })));
 const TeamManagement = React.lazy(() => import("./admin/AdminManagement").then(m => ({ default: m.TeamManagement })));
 const AnalyticsDashboard = React.lazy(() => import("./admin/AdminManagement").then(m => ({ default: m.AnalyticsDashboard })));
+
+function ScrollToTop() {
+  const [location] = useLocation();
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [location]);
+
+  return null;
+}
 
 function Router() {
   return <Switch>
@@ -45,5 +55,5 @@ function Router() {
   </Switch>;
 }
 export default function App() {
-  return <ErrorBoundary><ThemeProvider defaultTheme="light" switchable><TooltipProvider><Toaster /><Suspense fallback={<div className="route-loading">Loading...</div>}><Router /></Suspense><PWAInstallPrompt /></TooltipProvider></ThemeProvider></ErrorBoundary>;
+  return <ErrorBoundary><ThemeProvider defaultTheme="light" switchable><TooltipProvider><ScrollToTop /><Toaster /><Suspense fallback={<div className="route-loading">Loading...</div>}><Router /></Suspense><PWAInstallPrompt /></TooltipProvider></ThemeProvider></ErrorBoundary>;
 }
