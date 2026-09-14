@@ -1517,12 +1517,17 @@ export function Contact() {
           </div>
           <div className="contact-card">
             <ShieldCheck size={21} />
-            <h2>Prefer a call?</h2>
+            <h2>Contact us on WhatsApp</h2>
             <p>
-              Our support line is available during business hours in Nigeria.
+              Send us a message on WhatsApp and we will respond during normal business hours.
             </p>
-            <a className="inline-link" href="tel:+2349113683395">
-              +234 911 368 3395 <ArrowRight size={15} />
+            <a
+              className="inline-link"
+              href="https://wa.me/2349113683395"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Message us on WhatsApp <ArrowRight size={15} />
             </a>
           </div>
         </div>
