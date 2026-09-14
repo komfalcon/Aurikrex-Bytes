@@ -42,15 +42,18 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
       }).catch(() => undefined);
     }
 
-    // Initialize OneSignal Web SDK if configured
-    const oneSignalAppId = import.meta.env.VITE_ONESIGNAL_APP_ID || "";
-    if (oneSignalAppId) {
+    // Initialize OneSignal Web SDK ONLY if a valid App ID is configured
+    const oneSignalAppId = (import.meta.env.VITE_ONESIGNAL_APP_ID || "").trim();
+    if (oneSignalAppId && oneSignalAppId.length > 5) {
       window.OneSignalDeferred = window.OneSignalDeferred || [];
       window.OneSignalDeferred.push(async (OneSignal: any) => {
         try {
           await OneSignal.init({
             appId: oneSignalAppId,
             allowLocalhostAsSecureOrigin: true,
+            serviceWorkerParam: { scope: "/" },
+            serviceWorkerPath: "sw.js",
+            serviceWorkerOverridePath: "sw.js",
             notifyButton: { enable: false },
           });
         } catch (e) {
@@ -95,7 +98,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         return;
       }
 
-      // Prompt OneSignal SDK if available
+      // Prompt OneSignal SDK if initialized
       if (window.OneSignal && window.OneSignal.Notifications) {
         try {
           await window.OneSignal.Notifications.requestPermission();

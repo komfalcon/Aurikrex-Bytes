@@ -1,4 +1,10 @@
-const CACHE = "aurikrex-bytes-v4";
+try {
+  importScripts('https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js');
+} catch (e) {
+  console.warn("[SW] OneSignal SDK worker import skipped:", e);
+}
+
+const CACHE = "aurikrex-bytes-v5";
 const SHELL = ["/", "/manifest.webmanifest"];
 
 self.addEventListener("install", event => {
