@@ -15,14 +15,14 @@ describe("post share metadata", () => {
       title: "AI & the future <today> — Aurikrex Bytes",
       description:
         "A considered briefing about the latest technology shift. With context for the people building what comes next.",
-      canonicalUrl: "https://aurikrex.tech/post/42",
+      canonicalUrl: "https://www.bytes.aurikrex.tech/post/42",
       imageUrl: "https://images.example.com/ai-card.jpg",
       headline: "AI & the future <today>",
     });
   });
 
   it("escapes dynamic values and replaces the SPA defaults", () => {
-    const template = `<!doctype html><html><head><title>Default</title><meta name="description" content="Default description"><meta property="og:title" content="Default"><meta name="twitter:title" content="Default"><link rel="canonical" href="https://aurikrex.tech/"></head><body></body></html>`;
+    const template = `<!doctype html><html><head><title>Default</title><meta name="description" content="Default description"><meta property="og:title" content="Default"><meta name="twitter:title" content="Default"><link rel="canonical" href="https://www.bytes.aurikrex.tech/"></head><body></body></html>`;
     const rendered = injectPostSeo(template, createPostSeo(post));
 
     expect(rendered).toContain(

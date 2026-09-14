@@ -52,6 +52,14 @@
       ]
     }
   ],
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "bytes.aurikrex.tech" }],
+      "destination": "https://www.bytes.aurikrex.tech/$1",
+      "statusCode": 301
+    }
+  ],
   "rewrites": [
     {
       "source": "/(archive|help|contact|privacy|terms)",

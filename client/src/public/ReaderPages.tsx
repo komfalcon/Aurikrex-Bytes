@@ -337,11 +337,10 @@ export function PublicLayout({
     </>
   );
 }
-function ShareButton({ post, onRequireLogin }: { post: any; onRequireLogin: () => boolean }) {
+function ShareButton({ post }: { post: any }) {
   const [open, setOpen] = useState(false);
   const shareUrl = `https://www.bytes.aurikrex.tech/post/${post.id}`;
   const share = async () => {
-    if (!onRequireLogin()) return;
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
       const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
       
@@ -463,7 +462,7 @@ function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (save
   return <div className="engagement-actions" onClick={e => e.preventDefault()}>
     <button className={`engagement-button fire-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove Aurikrex fire reaction" : "Send Aurikrex fire reaction"} title="Aurikrex fire reaction"><FireReactionIcon active={Boolean(state.hasReacted)} /><span>{state.reactionCount || 0}</span></button>
     <button className={`engagement-button ${state.isBookmarked ? "active" : ""}`} onClick={() => requireLogin() && bookmark.mutate({ postId: post.id })} aria-label={state.isBookmarked ? "Remove bookmark" : "Save post"} title={state.isBookmarked ? "Remove bookmark" : "Save post"}><Bookmark size={15} fill={state.isBookmarked ? "currentColor" : "none"} /></button>
-    <ShareButton post={state} onRequireLogin={requireLogin} />
+    <ShareButton post={state} />
   </div>;
 }
 
@@ -620,7 +619,7 @@ function TodayCompletionCard({
 
   const handleShare = () => {
     const text = `I just completed today's tech briefing on Aurikrex Bytes! 🔥 ${streak}-day streak active.`;
-    const url = "https://aurikrex.tech/";
+    const url = "https://www.bytes.aurikrex.tech/";
     if (typeof navigator !== "undefined" && navigator.share) {
       navigator.share({ title: "Aurikrex Bytes Briefing Complete", text, url }).catch(() => undefined);
     } else if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -1290,18 +1289,10 @@ export function Archive() {
 export function PostDetail() {
   const [, params] = useRoute("/post/:id");
   const id = Number(params?.id);
-  const [, navigate] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
-  useEffect(() => {
-    if (!session.isLoading && !session.data && Number.isFinite(id)) {
-      const returnTo = `/post/${id}`;
-      rememberAuthReturnTo(returnTo);
-      navigate(authPathWithReturnTo(returnTo));
-    }
-  }, [id, navigate, session.data, session.isLoading]);
   const post = trpc.publicPosts.byId.useQuery(
     { id },
-    { enabled: Number.isFinite(id) && Boolean(session.data) }
+    { enabled: Number.isFinite(id) }
   );
   useEffect(() => {
     if (post.data && Number.isFinite(id)) {
@@ -1329,7 +1320,6 @@ export function PostDetail() {
           "Read the latest considered technology story from Aurikrex Bytes.",
         path: `/post/${Number.isFinite(id) ? id : ""}`,
       };
-  if (session.isLoading || !session.data) return <div className="route-loading">Opening the story…</div>;
   return (
     <PublicLayout seo={seo}>
       <main className="container detail-page">
