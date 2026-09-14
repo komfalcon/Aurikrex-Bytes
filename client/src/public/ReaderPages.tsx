@@ -1566,11 +1566,11 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
             <strong>Last updated:</strong> 6 September 2026
           </p>
           <p>
-            <strong>Controller:</strong> Aurikrex, operated by Korede Omotosho ·{" "}
-            <strong>Address:</strong> United Kingdom
+            <strong>Controller:</strong> Aurikrex Bytes — a product of Aurikrex, operated by Korede Samuel Omotosho ·{" "}
+            <strong>Based in:</strong> Lagos, Nigeria
           </p>
           <p>
-            <strong>Governing law:</strong> England and Wales.
+            <strong>Governing law:</strong> Federal Republic of Nigeria.
           </p>
           <p>
             Third-party policies:{" "}
@@ -1584,6 +1584,10 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
             , and{" "}
             <a href="https://turso.tech/legal/privacy-policy" rel="noreferrer">
               Turso Privacy Policy
+            </a>
+            ,{" "}
+            <a href="https://www.mailgun.com/legal/privacy-policy/" rel="noreferrer">
+              Mailgun Privacy Policy
             </a>
             .
           </p>
