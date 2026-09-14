@@ -84,7 +84,7 @@ Return ONLY the raw JSON array without markdown formatting or code blocks.`;
   }
 }
 
-export async function runNightlyCuration(): Promise<number> {
+export async function runNightlyCuration(status: "draft" | "published" = "draft"): Promise<number> {
   const db = await getDb();
   if (!db) {
     console.error("[AICurator] Cannot run nightly curation: database unavailable");
@@ -104,9 +104,8 @@ export async function runNightlyCuration(): Promise<number> {
         headline: byte.headline,
         body: byte.body,
         imageUrl: byte.imageUrl,
-        status: "published",
+        status,
         createdBy: 1,
-        publishedTime: now,
         updatedAt: now
       });
       count++;

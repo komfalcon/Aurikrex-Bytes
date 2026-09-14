@@ -653,7 +653,7 @@ Return ONLY the raw JSON array without markdown formatting or code blocks.`;
     return getFallbackBytes();
   }
 }
-async function runNightlyCuration() {
+async function runNightlyCuration(status = "draft") {
   const db = await getDb();
   if (!db) {
     console.error("[AICurator] Cannot run nightly curation: database unavailable");
@@ -670,9 +670,8 @@ async function runNightlyCuration() {
         headline: byte.headline,
         body: byte.body,
         imageUrl: byte.imageUrl,
-        status: "published",
+        status,
         createdBy: 1,
-        publishedTime: now2,
         updatedAt: now2
       });
       count++;
@@ -1776,7 +1775,7 @@ var appRouter = router({
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:create");
       const { runNightlyCuration: runNightlyCuration2 } = await Promise.resolve().then(() => (init_aiCurator(), aiCurator_exports));
-      const count = await runNightlyCuration2();
+      const count = await runNightlyCuration2("draft");
       return { success: true, count };
     }),
     ingestPdf: publicProcedure.input(z2.object({ pdfContent: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
