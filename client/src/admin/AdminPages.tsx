@@ -214,42 +214,63 @@ export function AdminDashboard() {
         </Link>
       </div>
 
-      <div className="admin-tabs">
-        {[
-          ["all", "All"],
-          ["scheduled", "Scheduled"],
-          ["pending_review", "Pending review"],
-          ["published", "Published"],
-          ["draft", "Drafts"]
-        ].map(([key, label]) => (
-          <button className={filter === key ? "active" : ""} key={key} onClick={() => setFilter(key)}>
-            {label}
-            <span>{key === "all" ? posts.data?.length : (posts.data || []).filter((p: any) => p.status === key).length}</span>
+      <div className="admin-tabs" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
+        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+          {[
+            ["all", "All"],
+            ["scheduled", "Scheduled"],
+            ["pending_review", "Pending review"],
+            ["published", "Published"],
+            ["draft", "Drafts"]
+          ].map(([key, label]) => (
+            <button className={filter === key ? "active" : ""} key={key} onClick={() => setFilter(key)}>
+              {label}
+              <span>{key === "all" ? posts.data?.length : (posts.data || []).filter((p: any) => p.status === key).length}</span>
+            </button>
+          ))}
+        </div>
+
+        {shown.length > 0 && (
+          <button
+            type="button"
+            className="button button-outline button-small"
+            onClick={toggleSelectAll}
+            style={{ fontWeight: 600 }}
+          >
+            {allSelected ? "Deselect All" : `Select All (${shown.length})`}
           </button>
-        ))}
+        )}
       </div>
 
-      {/* Sticky Batch Action Bar */}
+      {/* Sticky Batch Action Bar with Theme-Aware CSS Variables */}
       {selectedIds.length > 0 && (
         <div style={{
-          background: "var(--color-surface-raised, #18181b)",
-          border: "1px solid var(--color-primary, #3b82f6)",
+          background: "var(--surface)",
+          border: "1.5px solid var(--blue)",
           padding: "0.85rem 1.25rem",
-          borderRadius: "8px",
+          borderRadius: "10px",
           marginBottom: "1rem",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           flexWrap: "wrap",
-          gap: "1rem"
+          gap: "1rem",
+          color: "var(--ink)",
+          boxShadow: "var(--shadow)"
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>{selectedIds.length} post(s) selected</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, fontSize: "0.95rem", color: "var(--ink)" }}>{selectedIds.length} post(s) selected</span>
+            <button
+              type="button"
+              className="button button-outline button-small"
+              onClick={toggleSelectAll}
+            >
+              {allSelected ? "Deselect All" : `Select All (${shown.length})`}
+            </button>
             <button
               type="button"
               className="button button-outline button-small"
               onClick={() => setSelectedIds([])}
-              style={{ marginLeft: "0.5rem" }}
             >
               Clear
             </button>
@@ -277,12 +298,12 @@ export function AdminDashboard() {
                     <CalendarClock size={14} /> Schedule Selected
                   </button>
                 ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
                     <input
                       type="datetime-local"
                       value={batchScheduleTime}
                       onChange={e => setBatchScheduleTime(e.target.value)}
-                      style={{ padding: "0.3rem 0.5rem", borderRadius: "4px", fontSize: "0.85rem" }}
+                      style={{ padding: "0.35rem 0.5rem", borderRadius: "6px", fontSize: "0.85rem", border: "1px solid var(--line)", background: "var(--bg)", color: "var(--ink)" }}
                     />
                     <button
                       type="button"
@@ -344,7 +365,7 @@ export function AdminDashboard() {
                 key={post.id}
                 style={{
                   gridTemplateColumns: "40px 2fr 1fr 1fr 1fr",
-                  background: isSelected ? "rgba(59, 130, 246, 0.08)" : undefined
+                  background: isSelected ? "var(--surface-2)" : undefined
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center" }}>
