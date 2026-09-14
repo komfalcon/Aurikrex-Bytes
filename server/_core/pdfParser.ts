@@ -1,33 +1,4 @@
-import { CuratedByte } from "./aiCurator.js";
-
-const UNSPLASH_IMAGE_POOL = [
-  "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1200&q=80"
-];
-
-export function generateDynamicImageUrl(headline: string, category: string, index: number): string {
-  const cleanKeyword = headline
-    .replace(/[^\w\s]/gi, " ")
-    .split(/\s+/)
-    .filter(w => w.length > 3)
-    .slice(0, 4)
-    .join(" ");
-
-  if (cleanKeyword.length > 3) {
-    const promptStr = encodeURIComponent(`${category} ${cleanKeyword} editorial technology news photo`);
-    return `https://image.pollinations.ai/prompt/${promptStr}?width=1200&height=800&nologo=true&seed=${index + 100}`;
-  }
-
-  return UNSPLASH_IMAGE_POOL[index % UNSPLASH_IMAGE_POOL.length];
-}
+import { CuratedByte, getHdUnsplashCoverUrl } from "./aiCurator.js";
 
 export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedByte[]> {
   let isBase64Pdf = false;
@@ -56,7 +27,7 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
         headline: "Gemini API Key Required for PDF Ingestion",
         body: "Please ensure GEMINI_API_KEY or GOOGLE_API_KEY is configured in your environment variables on Vercel to enable native multimodal PDF parsing.",
         category: "Tech",
-        imageUrl: UNSPLASH_IMAGE_POOL[0]
+        imageUrl: getHdUnsplashCoverUrl("Gemini API Key Required", "Tech", 0)
       }
     ];
   }
@@ -106,7 +77,7 @@ Return ONLY the raw JSON array.`;
         },
         body: JSON.stringify({
           contents: [{ parts: requestParts }],
-          generationConfig: { responseMimeType: "application/json" }
+          generationConfig: { responseMimeType: "application/json", temperature: 0.9 }
         })
       }
     );
@@ -143,7 +114,7 @@ Return ONLY the raw JSON array.`;
         .slice(0, 120) || `Tech Story ${idx + 1}`;
 
       const category = String(item.category || "Tech");
-      const imageUrl = generateDynamicImageUrl(cleanHeadline, category, idx);
+      const imageUrl = getHdUnsplashCoverUrl(cleanHeadline, category, idx);
 
       return {
         headline: cleanHeadline,

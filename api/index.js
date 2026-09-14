@@ -595,56 +595,52 @@ var init_db = __esm({
 var aiCurator_exports = {};
 __export(aiCurator_exports, {
   curateTenBytes: () => curateTenBytes,
+  getHdUnsplashCoverUrl: () => getHdUnsplashCoverUrl,
   runNightlyCuration: () => runNightlyCuration
 });
-function generateDynamicCoverUrl(headline, category, seedOffset) {
-  const cleanKeyword = headline.replace(/[^\w\s]/gi, " ").split(/\s+/).filter((w) => w.length > 3).slice(0, 4).join(" ");
-  if (cleanKeyword.length > 3) {
-    const promptStr = encodeURIComponent(`${category} ${cleanKeyword} editorial technology news photo`);
-    return `https://image.pollinations.ai/prompt/${promptStr}?width=1200&height=800&nologo=true&seed=${Date.now() + seedOffset}`;
+function getHdUnsplashCoverUrl(headline, category = "Tech", seedOffset = 0) {
+  const catKey = HD_UNSPLASH_CATALOG[category] ? category : "Tech";
+  const pool = HD_UNSPLASH_CATALOG[catKey];
+  let hash = seedOffset;
+  for (let i = 0; i < headline.length; i++) {
+    hash = (hash << 5) - hash + headline.charCodeAt(i);
+    hash |= 0;
   }
-  return FALLBACK_IMAGES[seedOffset % FALLBACK_IMAGES.length];
+  const index = Math.abs(hash) % pool.length;
+  return pool[index];
 }
 async function curateTenBytes() {
   const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.BUILT_IN_FORGE_API_KEY || process.env.FORGE_API_KEY || "").trim();
   if (!apiKey) {
-    console.warn("[AICurator] No GEMINI_API_KEY found. Fetching live real-time tech news from public news feeds.");
+    console.warn("[AICurator] GEMINI_API_KEY absent. Fetching fresh real-time tech news from live feeds.");
     return await fetchLiveTechNewsBytes();
   }
   const currentDate = (/* @__PURE__ */ new Date()).toUTCString();
-  const seedTopics = [
-    "Generative AI & Autonomous Agents",
-    "Space Exploration & Satellite Constellations",
-    "Semiconductors & Quantum Hardware",
-    "Biotech & Gene Editing",
-    "Clean Energy & Fusion Reactors",
-    "Robotics & Spatial Computing",
-    "Cybersecurity & Zero-Day Defense",
-    "Decentralized Finance & Web3 Protocols",
-    "Electric Mobility & Battery Tech",
-    "Neuromorphic Computing & Brain Interfaces"
-  ].sort(() => Math.random() - 0.5);
-  const prompt = `You are the lead editor for Aurikrex Bytes, a high-signal digital publication.
-Today is ${currentDate}.
-Curate EXACTLY 10 distinct, highly current news bytes covering: ${seedTopics.join(", ")}.
+  const sessionNonce = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  const shuffledTopics = [...TOPIC_POOL].sort(() => Math.random() - 0.5).slice(0, 10);
+  const prompt = `You are the chief editorial director for Aurikrex Bytes, a premium tech news publication.
+Today's Date: ${currentDate}
+Session Nonce: ${sessionNonce}
 
-CRITICAL FRESHNESS RULE:
-Ensure all 10 stories cover distinct, fresh developments. Do NOT repeat static generic tech stories.
+Curate EXACTLY 10 fresh, high-signal, distinct tech stories covering these 10 topics:
+${shuffledTopics.map((t2, i) => `${i + 1}. ${t2}`).join("\n")}
 
-CRITICAL LENGTH RULE:
-For EACH byte, the "body" text MUST be strictly between 600 and 800 characters (excluding headline).
-DO NOT write short summaries under 600 characters. Provide 2-3 comprehensive, well-structured paragraphs containing full context, background details, technical mechanisms, and future market impact.
+STRICT RULES:
+1. FRESHNESS: Ensure stories are completely fresh and unique. Do NOT output generic repeating templates.
+2. BODY LENGTH CONSTRAINT: For EACH byte, the "body" text MUST be strictly between 600 and 800 characters in length (excluding headline).
+   - Each body brief must be 2 to 3 structured paragraphs providing full technical context, background, and future market impact.
+   - Do NOT write short summaries under 600 characters.
 
-Output valid JSON array with 10 objects:
+Output a valid JSON array of 10 objects:
 [
   {
-    "headline": "Crisp compelling headline (under 80 chars)",
-    "body": "Detailed 3-paragraph news card brief. MUST be strictly 600 to 800 characters in length. High signal, zero fluff.",
+    "headline": "Crisp, factual headline (under 80 characters)",
+    "body": "Comprehensive 2-3 paragraph news brief. MUST be strictly between 600 and 800 characters long.",
     "category": "Tech" | "AI" | "Science" | "Crypto" | "Innovation"
   }
 ]
 
-Return ONLY the raw JSON array without markdown formatting or code blocks.`;
+Return ONLY the raw JSON array.`;
   try {
     const response = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
@@ -656,12 +652,12 @@ Return ONLY the raw JSON array without markdown formatting or code blocks.`;
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json" }
+          generationConfig: { responseMimeType: "application/json", temperature: 0.95 }
         })
       }
     );
     if (!response.ok) {
-      console.error("[AICurator] Gemini API request failed. Falling back to live news feed.");
+      console.error("[AICurator] Gemini API failed. Falling back to live tech news feed.");
       return await fetchLiveTechNewsBytes();
     }
     const data = await response.json();
@@ -680,7 +676,7 @@ Return ONLY the raw JSON array without markdown formatting or code blocks.`;
       }
       const headline = String(item.headline || "Tech Update").slice(0, 120);
       const category = String(item.category || "Tech");
-      const imageUrl = generateDynamicCoverUrl(headline, category, idx);
+      const imageUrl = getHdUnsplashCoverUrl(headline, category, idx);
       return {
         headline,
         body: bodyText,
@@ -696,10 +692,10 @@ Return ONLY the raw JSON array without markdown formatting or code blocks.`;
 async function runNightlyCuration(status = "draft") {
   const db = await getDb();
   if (!db) {
-    console.error("[AICurator] Cannot run nightly curation: database unavailable");
+    console.error("[AICurator] Database unavailable for curation");
     return 0;
   }
-  console.info("[AICurator] Starting 10-Byte curation run...");
+  console.info("[AICurator] Starting 10-Byte curation drop...");
   const bytes = await curateTenBytes();
   if (!bytes.length) return 0;
   const now2 = /* @__PURE__ */ new Date();
@@ -709,43 +705,52 @@ async function runNightlyCuration(status = "draft") {
       await db.insert(posts).values({
         headline: byte.headline,
         body: byte.body,
-        imageUrl: byte.imageUrl || generateDynamicCoverUrl(byte.headline, byte.category, count),
+        imageUrl: byte.imageUrl || getHdUnsplashCoverUrl(byte.headline, byte.category, count),
         status,
         createdBy: 1,
         updatedAt: now2
       });
       count++;
     } catch (err) {
-      console.error(`[AICurator] Error inserting byte "${byte.headline}":`, err);
+      console.error(`[AICurator] Failed to insert byte "${byte.headline}":`, err);
     }
   }
-  console.info(`[AICurator] Successfully added ${count} new Bytes to ${status}!`);
+  console.info(`[AICurator] Successfully added ${count} fresh Bytes as ${status}!`);
   return count;
 }
 async function fetchLiveTechNewsBytes() {
   try {
-    const res = await fetch("https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=30");
-    if (!res.ok) throw new Error("HackerNews API returned error");
+    const randomPage = Math.floor(Math.random() * 8);
+    const keywords = ["AI", "LLM", "rust", "quantum", "chip", "robotics", "satellite", "security", "framework", "database", "model"];
+    const randomQuery = keywords[Math.floor(Math.random() * keywords.length)];
+    const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(randomQuery)}&tags=story&page=${randomPage}&hitsPerPage=30`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("HackerNews API error");
     const data = await res.json();
-    const hits = (data.hits || []).filter((h) => h.title && h.title.length > 15);
-    if (!hits.length) throw new Error("No live story hits found");
+    let hits = (data.hits || []).filter((h) => h.title && h.title.length > 15);
+    if (!hits.length) {
+      const fallbackRes = await fetch(`https://hn.algolia.com/api/v1/search_by_date?tags=story&page=${randomPage}&hitsPerPage=30`);
+      const fallbackData = await fallbackRes.json();
+      hits = (fallbackData.hits || []).filter((h) => h.title && h.title.length > 15);
+    }
+    hits = hits.sort(() => Math.random() - 0.5);
     const curated = [];
     const categories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
     for (let i = 0; i < Math.min(hits.length, 10); i++) {
       const hit = hits[i];
       const headline = String(hit.title).slice(0, 110);
-      const domain = hit.url ? new URL(hit.url).hostname.replace(/^www\./, "") : "Tech News";
+      const domain = hit.url ? new URL(hit.url).hostname.replace(/^www\./, "") : "Tech Feed";
       const category = categories[i % categories.length];
-      let body = `Industry intelligence reports indicate new developments surrounding ${headline.toLowerCase()}. Published by ${domain}, this report highlights ongoing technical evolution and strategic developments across global technology infrastructure.
+      let body = `Industry intelligence reports indicate new technical developments surrounding ${headline.toLowerCase()}. Published via ${domain}, this update highlights strategic engineering milestones and operational advancements across digital infrastructure.
 
-As organizations adapt to emerging software frameworks and security standards, decision-makers are evaluating operational scalability and long-term integration models to maintain competitive momentum.`;
+As technical organizations evaluate enterprise deployment, engineering teams are focusing on system scalability, low-latency integration, and enhanced security controls.`;
       if (body.length < 600) {
-        body += ` Additional analysis suggests that deployment across Enterprise systems will accelerate adoption through late 2026, offering improved efficiency and security controls for global digital operations.`;
+        body += ` Additional deployment benchmarks demonstrate substantial performance gains, with widespread enterprise adoption anticipated through 2026.`;
       }
       if (body.length > 800) {
         body = body.slice(0, 780).replace(/\s+\S*$/, "") + ".";
       }
-      const imageUrl = generateDynamicCoverUrl(headline, category, i);
+      const imageUrl = getHdUnsplashCoverUrl(headline, category, i);
       curated.push({
         headline,
         body,
@@ -760,7 +765,7 @@ As organizations adapt to emerging software frameworks and security standards, d
   }
 }
 function getDynamicFallbackBytes() {
-  const timeSeed = Date.now();
+  const timeOffset = Date.now();
   const topics = [
     { title: "Next-Gen AI Vision Models Expand Real-Time Spatial Mapping Capabilities", cat: "AI" },
     { title: "Quantum Error Correction Reaches Critical Commercial Threshold", cat: "Tech" },
@@ -772,7 +777,7 @@ function getDynamicFallbackBytes() {
     { title: "Neuromorphic Processors Enable 120 FPS Robotics Intelligence at Low Power", cat: "AI" },
     { title: "Formal Code Verification Engines Prevent Memory Vulnerabilities at Compile Time", cat: "Tech" },
     { title: "Satellite Laser Communications Link Deep Space Drones to Earth Grid", cat: "Science" }
-  ];
+  ].sort(() => Math.random() - 0.5);
   return topics.map((t2, idx) => {
     let body = `Leading research institutions and technology providers have announced breakthrough progress in ${t2.title.toLowerCase()}. This operational milestone marks a fundamental shift toward next-generation scalable infrastructure across global markets.
 
@@ -787,25 +792,69 @@ Engineers and industry analysts emphasize that these technical enhancements enab
       headline: t2.title,
       body,
       category: t2.cat,
-      imageUrl: generateDynamicCoverUrl(t2.title, t2.cat, idx + timeSeed)
+      imageUrl: getHdUnsplashCoverUrl(t2.title, t2.cat, idx + timeOffset)
     };
   });
 }
-var FALLBACK_IMAGES;
+var HD_UNSPLASH_CATALOG, TOPIC_POOL;
 var init_aiCurator = __esm({
   "server/_core/aiCurator.ts"() {
     "use strict";
     init_db();
     init_schema();
-    FALLBACK_IMAGES = [
-      "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1200&q=80"
+    HD_UNSPLASH_CATALOG = {
+      AI: [
+        "https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1531746790731-6c087fecd65a?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1655720828018-edd2daac9349?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1655720023473-b78f44d9fb08?auto=format&fit=crop&w=1200&q=80"
+      ],
+      Tech: [
+        "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1200&q=80"
+      ],
+      Science: [
+        "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1507668077129-56e32842fceb?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1532094349884-543bc11b234d?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1507413245164-6160d8298b31?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1517976487492-5750f3195933?auto=format&fit=crop&w=1200&q=80"
+      ],
+      Crypto: [
+        "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1622979135225-d2ba269bc1bd?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1642543492481-44e81e3914a7?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1516245834210-c4c142787335?auto=format&fit=crop&w=1200&q=80"
+      ],
+      Innovation: [
+        "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
+        "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80"
+      ]
+    };
+    TOPIC_POOL = [
+      "Generative AI & Agentic Workflows",
+      "Quantum Hardware & Supercomputing",
+      "Semiconductors & Lithography Advances",
+      "Biotech & CRISPR Gene Therapies",
+      "Fusion Energy & Next-Gen Power Grids",
+      "Robotics & Spatial Vision Systems",
+      "Zero-Day Cybersecurity & Post-Quantum Cryptography",
+      "Decentralized Mesh & Blockchain Infra",
+      "Autonomous Electric Vehicles & Solid-State Batteries",
+      "Neuromorphic Chips & Brain-Computer Interfaces",
+      "Optical Computing & Silicon Photonics",
+      "Synthetic Biology & Bio-Materials",
+      "Hypersonic Aerospace & Satellite Constellations",
+      "Distributed Database Engines & WASM",
+      "Privacy-Preserving Machine Learning & ZK-Proofs"
     ];
   }
 });
@@ -813,17 +862,8 @@ var init_aiCurator = __esm({
 // server/_core/pdfParser.ts
 var pdfParser_exports = {};
 __export(pdfParser_exports, {
-  generateDynamicImageUrl: () => generateDynamicImageUrl,
   parsePdfToBytes: () => parsePdfToBytes
 });
-function generateDynamicImageUrl(headline, category, index) {
-  const cleanKeyword = headline.replace(/[^\w\s]/gi, " ").split(/\s+/).filter((w) => w.length > 3).slice(0, 4).join(" ");
-  if (cleanKeyword.length > 3) {
-    const promptStr = encodeURIComponent(`${category} ${cleanKeyword} editorial technology news photo`);
-    return `https://image.pollinations.ai/prompt/${promptStr}?width=1200&height=800&nologo=true&seed=${index + 100}`;
-  }
-  return UNSPLASH_IMAGE_POOL[index % UNSPLASH_IMAGE_POOL.length];
-}
 async function parsePdfToBytes(pdfBase64OrText) {
   let isBase64Pdf = false;
   let rawBase64 = "";
@@ -842,7 +882,7 @@ async function parsePdfToBytes(pdfBase64OrText) {
         headline: "Gemini API Key Required for PDF Ingestion",
         body: "Please ensure GEMINI_API_KEY or GOOGLE_API_KEY is configured in your environment variables on Vercel to enable native multimodal PDF parsing.",
         category: "Tech",
-        imageUrl: UNSPLASH_IMAGE_POOL[0]
+        imageUrl: getHdUnsplashCoverUrl("Gemini API Key Required", "Tech", 0)
       }
     ];
   }
@@ -890,7 +930,7 @@ ${plainText.slice(0, 3e4)}`
         },
         body: JSON.stringify({
           contents: [{ parts: requestParts }],
-          generationConfig: { responseMimeType: "application/json" }
+          generationConfig: { responseMimeType: "application/json", temperature: 0.9 }
         })
       }
     );
@@ -918,7 +958,7 @@ ${plainText.slice(0, 3e4)}`
       }
       const cleanHeadline = String(item.headline || `Story ${idx + 1}`).replace(/^%PDF[^\n]*/i, "").slice(0, 120) || `Tech Story ${idx + 1}`;
       const category = String(item.category || "Tech");
-      const imageUrl = generateDynamicImageUrl(cleanHeadline, category, idx);
+      const imageUrl = getHdUnsplashCoverUrl(cleanHeadline, category, idx);
       return {
         headline: cleanHeadline,
         body: bodyText,
@@ -931,22 +971,10 @@ ${plainText.slice(0, 3e4)}`
     throw err;
   }
 }
-var UNSPLASH_IMAGE_POOL;
 var init_pdfParser = __esm({
   "server/_core/pdfParser.ts"() {
     "use strict";
-    UNSPLASH_IMAGE_POOL = [
-      "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1200&q=80",
-      "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1200&q=80"
-    ];
+    init_aiCurator();
   }
 });
 

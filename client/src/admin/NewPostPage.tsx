@@ -399,7 +399,16 @@ export function PreviewPage() {
         <span className={`status-badge ${item.status}`}>{statusText(item.status, item.scheduledTime)}</span>
       </div>
       <div className="wysiwyg-card">
-        {item.imageUrl && <img src={item.imageUrl} alt="" className="wysiwyg-image" />}
+        {item.imageUrl && (
+          <img
+            src={item.imageUrl}
+            alt=""
+            className="wysiwyg-image"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src = "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80";
+            }}
+          />
+        )}
         <div className="wysiwyg-copy">
           <p className="eyebrow">Aurikrex Bytes</p>
           <h2>{item.headline}</h2>

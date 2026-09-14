@@ -379,7 +379,17 @@ export function AdminDashboard() {
 
                 <div className="admin-story">
                   <div className="admin-thumb">
-                    {post.imageUrl ? <img src={post.imageUrl} alt="" /> : <Spark />}
+                    {post.imageUrl ? (
+                      <img
+                        src={post.imageUrl}
+                        alt=""
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80";
+                        }}
+                      />
+                    ) : (
+                      <Spark />
+                    )}
                   </div>
                   <div>
                     <Link href={`/admin/preview/${post.id}`}>
