@@ -2,15 +2,14 @@ import webpush from "web-push";
 import { getDb } from "./db.js";
 import { pushSubscriptions } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
+import { eq } from "drizzle-orm";
 
-export async function sendDailyPushNotifications() {
-  const publicKey = process.env.VAPID_PUBLIC_KEY || ENV.vapidPublicKey;
-  const privateKey = process.env.VAPID_PRIVATE_KEY || ENV.vapidPrivateKey;
+const DEFAULT_VAPID_PUBLIC = "BI5SEWx9U3nei2bzEVFnvNCTgBHYYfIUwGBrnsb0757spGDalsRS8JDdVWAKJW4b1lmgcacI3CN1f5MMvu9yLpQ";
+const DEFAULT_VAPID_PRIVATE = "4uCF-AGmorh_XVBRRCPiWMPoFr68C4gso4_TrW2DAmU";
 
-  if (!publicKey || !privateKey) {
-    console.warn("[Push] VAPID keys not configured, skipping.");
-    return 0;
-  }
+function configureVapid() {
+  const publicKey = process.env.VAPID_PUBLIC_KEY || ENV.vapidPublicKey || DEFAULT_VAPID_PUBLIC;
+  const privateKey = process.env.VAPID_PRIVATE_KEY || ENV.vapidPrivateKey || DEFAULT_VAPID_PRIVATE;
 
   try {
     webpush.setVapidDetails(
@@ -21,6 +20,10 @@ export async function sendDailyPushNotifications() {
   } catch (err) {
     console.warn("[Push] VAPID setup error:", err);
   }
+}
+
+export async function sendDailyPushNotifications() {
+  configureVapid();
 
   const db = await getDb();
   if (!db) return 0;
@@ -30,8 +33,8 @@ export async function sendDailyPushNotifications() {
   if (subs.length === 0) return 0;
 
   const payload = JSON.stringify({
-    title: "Time for your daily bytes!",
-    body: "Catch up on what matters in tech. 🚀",
+    title: "Time for your daily bytes! 🚀",
+    body: "Catch up on what matters in tech.",
     url: "/dashboard",
   });
 
@@ -54,4 +57,44 @@ export async function sendDailyPushNotifications() {
     }
   }
   return sent;
+}
+
+export async function sendTestPushNotification(endpoint: string) {
+  configureVapid();
+
+  const db = await getDb();
+  if (!db) return { success: false, error: "Database unavailable" };
+
+  const [sub] = await db
+    .select()
+    .from(pushSubscriptions)
+    .where(eq(pushSubscriptions.endpoint, endpoint))
+    .limit(1);
+
+  if (!sub) {
+    return { success: false, error: "Subscription endpoint not found" };
+  }
+
+  const payload = JSON.stringify({
+    title: "Aurikrex Bytes Push Active! 🚀",
+    body: "You're all set! Daily tech updates will arrive at 8:01 AM & 6:00 PM.",
+    url: "/dashboard",
+  });
+
+  try {
+    await webpush.sendNotification(
+      {
+        endpoint: sub.endpoint,
+        keys: {
+          p256dh: sub.p256dh,
+          auth: sub.auth,
+        },
+      },
+      payload
+    );
+    return { success: true };
+  } catch (err) {
+    console.error("[Push] Failed to send test push notification:", err);
+    return { success: false, error: String(err) };
+  }
 }

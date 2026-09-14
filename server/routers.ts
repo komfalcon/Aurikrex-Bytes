@@ -574,6 +574,12 @@ export const appRouter = router({
         });
         return { success: true };
       }),
+    sendTestPush: publicProcedure
+      .input(z.object({ endpoint: z.string().url() }))
+      .mutation(async ({ input }) => {
+        const { sendTestPushNotification } = await import("./push.js");
+        return await sendTestPushNotification(input.endpoint);
+      }),
     setFeedPreference: publicProcedure
       .input(
         z.object({

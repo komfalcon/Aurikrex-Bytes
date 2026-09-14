@@ -133,8 +133,8 @@ var init_env = __esm({
       isProduction: process.env.NODE_ENV === "production",
       forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
       forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
-      vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? "",
-      vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? ""
+      vapidPublicKey: process.env.VAPID_PUBLIC_KEY || "BI5SEWx9U3nei2bzEVFnvNCTgBHYYfIUwGBrnsb0757spGDalsRS8JDdVWAKJW4b1lmgcacI3CN1f5MMvu9yLpQ",
+      vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || "4uCF-AGmorh_XVBRRCPiWMPoFr68C4gso4_TrW2DAmU"
     };
   }
 });
@@ -978,6 +978,101 @@ var init_pdfParser = __esm({
   }
 });
 
+// server/push.ts
+var push_exports = {};
+__export(push_exports, {
+  sendDailyPushNotifications: () => sendDailyPushNotifications,
+  sendTestPushNotification: () => sendTestPushNotification
+});
+import webpush from "web-push";
+import { eq as eq3 } from "drizzle-orm";
+function configureVapid() {
+  const publicKey = process.env.VAPID_PUBLIC_KEY || ENV.vapidPublicKey || DEFAULT_VAPID_PUBLIC;
+  const privateKey = process.env.VAPID_PRIVATE_KEY || ENV.vapidPrivateKey || DEFAULT_VAPID_PRIVATE;
+  try {
+    webpush.setVapidDetails(
+      "mailto:hello@aurikrex.tech",
+      publicKey,
+      privateKey
+    );
+  } catch (err) {
+    console.warn("[Push] VAPID setup error:", err);
+  }
+}
+async function sendDailyPushNotifications() {
+  configureVapid();
+  const db = await getDb();
+  if (!db) return 0;
+  const subs = await db.select().from(pushSubscriptions);
+  console.info(`[Push] Found ${subs.length} push subscriptions in database.`);
+  if (subs.length === 0) return 0;
+  const payload = JSON.stringify({
+    title: "Time for your daily bytes! \u{1F680}",
+    body: "Catch up on what matters in tech.",
+    url: "/dashboard"
+  });
+  let sent = 0;
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(
+        {
+          endpoint: sub.endpoint,
+          keys: {
+            p256dh: sub.p256dh,
+            auth: sub.auth
+          }
+        },
+        payload
+      );
+      sent++;
+    } catch (error) {
+      console.warn(`[Push] Failed to send to ${sub.endpoint}:`, error);
+    }
+  }
+  return sent;
+}
+async function sendTestPushNotification(endpoint) {
+  configureVapid();
+  const db = await getDb();
+  if (!db) return { success: false, error: "Database unavailable" };
+  const [sub] = await db.select().from(pushSubscriptions).where(eq3(pushSubscriptions.endpoint, endpoint)).limit(1);
+  if (!sub) {
+    return { success: false, error: "Subscription endpoint not found" };
+  }
+  const payload = JSON.stringify({
+    title: "Aurikrex Bytes Push Active! \u{1F680}",
+    body: "You're all set! Daily tech updates will arrive at 8:01 AM & 6:00 PM.",
+    url: "/dashboard"
+  });
+  try {
+    await webpush.sendNotification(
+      {
+        endpoint: sub.endpoint,
+        keys: {
+          p256dh: sub.p256dh,
+          auth: sub.auth
+        }
+      },
+      payload
+    );
+    return { success: true };
+  } catch (err) {
+    console.error("[Push] Failed to send test push notification:", err);
+    return { success: false, error: String(err) };
+  }
+}
+var DEFAULT_VAPID_PUBLIC, DEFAULT_VAPID_PRIVATE;
+var init_push = __esm({
+  "server/push.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_env();
+    DEFAULT_VAPID_PUBLIC = "BI5SEWx9U3nei2bzEVFnvNCTgBHYYfIUwGBrnsb0757spGDalsRS8JDdVWAKJW4b1lmgcacI3CN1f5MMvu9yLpQ";
+    DEFAULT_VAPID_PRIVATE = "4uCF-AGmorh_XVBRRCPiWMPoFr68C4gso4_TrW2DAmU";
+  }
+});
+
 // server/_core/vercel.ts
 import "dotenv/config";
 import express from "express";
@@ -1471,7 +1566,7 @@ function registerGoogleAuthRoutes(app) {
 init_schema();
 init_env();
 import { TRPCError as TRPCError4 } from "@trpc/server";
-import { eq as eq3, inArray as inArray2 } from "drizzle-orm";
+import { eq as eq4, inArray as inArray2 } from "drizzle-orm";
 import { z as z2 } from "zod";
 init_db();
 
@@ -1808,7 +1903,7 @@ var appRouter = router({
       const deviceToken = input.remember ? randomToken() : null;
       const db = await getDb();
       if (db && deviceToken)
-        await db.update(adminUsers).set({ rememberDeviceToken: deviceToken }).where(eq3(adminUsers.id, admin.id));
+        await db.update(adminUsers).set({ rememberDeviceToken: deviceToken }).where(eq4(adminUsers.id, admin.id));
       setSession(ctx, ADMIN_COOKIE, token, input.remember);
       if (deviceToken)
         setSession(ctx, ADMIN_DEVICE_COOKIE, deviceToken, true);
@@ -1893,7 +1988,7 @@ var appRouter = router({
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
       const { id, ...changes } = input;
-      await db.update(posts).set({ ...changes, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, id));
+      await db.update(posts).set({ ...changes, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(posts.id, id));
       return { success: true };
     }),
     deletePost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -1901,7 +1996,7 @@ var appRouter = router({
       assertPermission(admin.role, "post:delete");
       const db = await getDb();
       if (!db || !await getPostById(input.id)) throw genericNotFound();
-      await db.delete(posts).where(eq3(posts.id, input.id));
+      await db.delete(posts).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     batchDeletePosts: publicProcedure.input(z2.object({ ids: z2.array(z2.number().int().positive()).min(1) })).mutation(async ({ input, ctx }) => {
@@ -1950,7 +2045,7 @@ var appRouter = router({
         status: "pending_review",
         rejectionNote: null,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     publishPost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -1965,7 +2060,7 @@ var appRouter = router({
         publishedTime: /* @__PURE__ */ new Date(),
         scheduledTime: null,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     schedulePost: publicProcedure.input(
@@ -1989,7 +2084,7 @@ var appRouter = router({
         status: "scheduled",
         scheduledTime: input.scheduledTime,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     unschedulePost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -2004,7 +2099,7 @@ var appRouter = router({
           code: "BAD_REQUEST",
           message: "Only future scheduled posts can be cancelled"
         });
-      await db.update(posts).set({ status: "draft", scheduledTime: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, input.id));
+      await db.update(posts).set({ status: "draft", scheduledTime: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     approvePost: publicProcedure.input(
@@ -2031,7 +2126,7 @@ var appRouter = router({
         publishedTime: input.scheduledTime ? null : /* @__PURE__ */ new Date(),
         rejectionNote: null,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true, status: next };
     }),
     rejectPost: publicProcedure.input(
@@ -2051,7 +2146,7 @@ var appRouter = router({
         rejectionNote: input.rejectionNote ?? null,
         scheduledTime: null,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     users: router({
@@ -2099,7 +2194,7 @@ var appRouter = router({
         assertPermission(admin.role, "users:manage");
         const db = await getDb();
         if (!db || !await getAdminById(input.id)) throw genericNotFound();
-        await db.update(adminUsers).set({ role: input.role }).where(eq3(adminUsers.id, input.id));
+        await db.update(adminUsers).set({ role: input.role }).where(eq4(adminUsers.id, input.id));
         return { success: true };
       }),
       revoke: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -2112,7 +2207,7 @@ var appRouter = router({
           });
         const db = await getDb();
         if (!db || !await getAdminById(input.id)) throw genericNotFound();
-        await db.update(adminUsers).set({ isActive: false, rememberDeviceToken: null }).where(eq3(adminUsers.id, input.id));
+        await db.update(adminUsers).set({ isActive: false, rememberDeviceToken: null }).where(eq4(adminUsers.id, input.id));
         return { success: true };
       })
     }),
@@ -2142,7 +2237,7 @@ var appRouter = router({
       }
       const db = await getDb();
       if (!db) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR" });
-      await db.delete(pushSubscriptions).where(eq3(pushSubscriptions.endpoint, input.endpoint));
+      await db.delete(pushSubscriptions).where(eq4(pushSubscriptions.endpoint, input.endpoint));
       await db.insert(pushSubscriptions).values({
         readerId,
         endpoint: input.endpoint,
@@ -2150,6 +2245,10 @@ var appRouter = router({
         auth: input.auth
       });
       return { success: true };
+    }),
+    sendTestPush: publicProcedure.input(z2.object({ endpoint: z2.string().url() })).mutation(async ({ input }) => {
+      const { sendTestPushNotification: sendTestPushNotification2 } = await Promise.resolve().then(() => (init_push(), push_exports));
+      return await sendTestPushNotification2(input.endpoint);
     }),
     setFeedPreference: publicProcedure.input(
       z2.object({
@@ -2268,7 +2367,7 @@ var appRouter = router({
         emailVerified: true,
         verificationToken: null,
         verificationTokenUsed: input.token
-      }).where(eq3(readers.id, reader.id));
+      }).where(eq4(readers.id, reader.id));
       return { status: "verified" };
     }),
     resendVerificationEmail: publicProcedure.input(z2.object({ email: z2.string().email() })).mutation(async ({ input }) => {
@@ -2277,7 +2376,7 @@ var appRouter = router({
       const verificationToken = randomToken();
       const db = await getDb();
       if (db) {
-        await db.update(readers).set({ verificationToken, verificationTokenUsed: null }).where(eq3(readers.id, reader.id));
+        await db.update(readers).set({ verificationToken, verificationTokenUsed: null }).where(eq4(readers.id, reader.id));
         const url = `${appBaseUrl()}/verify-email?token=${verificationToken}`;
         await sendAuthEmail(
           reader.email,
@@ -2296,7 +2395,7 @@ var appRouter = router({
         await db.update(readers).set({
           resetToken: token,
           resetTokenExpires: new Date(Date.now() + 1e3 * 60 * 30)
-        }).where(eq3(readers.id, reader.id));
+        }).where(eq4(readers.id, reader.id));
         const url = `${appBaseUrl()}/reset-password?token=${token}`;
         await sendAuthEmail(
           reader.email,
@@ -2330,7 +2429,7 @@ var appRouter = router({
         passwordHash: await hashPassword(input.password),
         resetToken: null,
         resetTokenExpires: null
-      }).where(eq3(readers.id, reader.id));
+      }).where(eq4(readers.id, reader.id));
       return { success: true };
     }),
     googleStart: publicProcedure.query(({ ctx }) => {
