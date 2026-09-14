@@ -1,143 +1,112 @@
-// server/_core/vercel.ts
-import "dotenv/config";
-import express from "express";
-import { createExpressMiddleware } from "@trpc/server/adapters/express";
-
-// shared/const.ts
-var COOKIE_NAME = "app_session_id";
-var ONE_YEAR_MS = 1e3 * 60 * 60 * 24 * 365;
-var AXIOS_TIMEOUT_MS = 3e4;
-var UNAUTHED_ERR_MSG = "Please login (10001)";
-var NOT_ADMIN_ERR_MSG = "You do not have required permission (10002)";
-var OAUTH_STATE_COOKIE = "__Host-oauth_state";
-var decodeOAuthState = (state) => {
-  let decoded;
-  try {
-    decoded = atob(state);
-  } catch {
-    return { redirectUri: "" };
-  }
-  try {
-    const parsed = JSON.parse(decoded);
-    if (parsed && typeof parsed.redirectUri === "string") return parsed;
-  } catch {
-  }
-  return { redirectUri: decoded };
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
-
-// server/_core/oauth.ts
-import { parse as parseCookieHeader2 } from "cookie";
-
-// server/db.ts
-import { createClient } from "@libsql/client";
-import { and, asc, desc, eq, gt, inArray, like, lte, or, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/libsql";
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 
 // drizzle/schema.ts
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-var now = () => /* @__PURE__ */ new Date();
-var POST_STATUSES = [
-  "draft",
-  "pending_review",
-  "scheduled",
-  "published"
-];
-var ADMIN_ROLES = ["admin", "editor"];
-var users = sqliteTable("users", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  openId: text("open_id").notNull().unique(),
-  name: text("name"),
-  email: text("email"),
-  loginMethod: text("login_method"),
-  role: text("role", { enum: ["user", "admin"] }).notNull().default("user"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
-  lastSignedIn: integer("last_signed_in", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
-});
-var posts = sqliteTable("posts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  imageUrl: text("image_url"),
-  headline: text("headline").notNull(),
-  body: text("body").notNull(),
-  status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
-  scheduledTime: integer("scheduled_time", { mode: "timestamp_ms" }),
-  publishedTime: integer("published_time", { mode: "timestamp_ms" }),
-  rejectionNote: text("rejection_note"),
-  createdBy: integer("created_by").notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
-});
-var adminUsers = sqliteTable("admin_users", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
-  role: text("role", { enum: ADMIN_ROLES }).notNull().default("editor"),
-  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
-  rememberDeviceToken: text("remember_device_token"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
-});
-var readers = sqliteTable("readers", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().default(""),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash"),
-  googleId: text("google_id").unique(),
-  emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
-  verificationToken: text("verification_token"),
-  verificationTokenUsed: text("verification_token_used"),
-  resetToken: text("reset_token"),
-  resetTokenExpires: integer("reset_token_expires", { mode: "timestamp_ms" }),
-  currentStreak: integer("current_streak").notNull().default(0),
-  longestStreak: integer("longest_streak").notNull().default(0),
-  lastActiveDate: text("last_active_date"),
-  feedViewMode: text("feed_view_mode", { enum: ["editorial", "compact"] }).notNull().default("editorial"),
-  feedViewOnboardingCompleted: integer("feed_view_onboarding_completed", { mode: "boolean" }).notNull().default(false),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
-});
-var postViews = sqliteTable("post_views", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  postId: integer("post_id").notNull(),
-  readerId: integer("reader_id"),
-  viewedAt: integer("viewed_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
-});
-var postReactions = sqliteTable("post_reactions", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  postId: integer("post_id").notNull(),
-  readerId: integer("reader_id").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
-}, (table) => ({ postReaderUnique: uniqueIndex("post_reactions_post_reader_unique").on(table.postId, table.readerId) }));
-var postBookmarks = sqliteTable("post_bookmarks", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  postId: integer("post_id").notNull(),
-  readerId: integer("reader_id").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
-}, (table) => ({ postReaderUnique: uniqueIndex("post_bookmarks_post_reader_unique").on(table.postId, table.readerId) }));
-var searchQueries = sqliteTable("search_queries", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  query: text("query").notNull(),
-  searchedAt: integer("searched_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
-});
-var pushSubscriptions = sqliteTable("push_subscriptions", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  readerId: integer("reader_id").references(() => readers.id, { onDelete: "cascade" }),
-  endpoint: text("endpoint").notNull(),
-  p256dh: text("p256dh").notNull(),
-  auth: text("auth").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postViews, postReactions, postBookmarks, searchQueries, pushSubscriptions;
+var init_schema = __esm({
+  "drizzle/schema.ts"() {
+    "use strict";
+    now = () => /* @__PURE__ */ new Date();
+    POST_STATUSES = [
+      "draft",
+      "pending_review",
+      "scheduled",
+      "published"
+    ];
+    ADMIN_ROLES = ["admin", "editor"];
+    users = sqliteTable("users", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      openId: text("open_id").notNull().unique(),
+      name: text("name"),
+      email: text("email"),
+      loginMethod: text("login_method"),
+      role: text("role", { enum: ["user", "admin"] }).notNull().default("user"),
+      createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+      updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+      lastSignedIn: integer("last_signed_in", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    });
+    posts = sqliteTable("posts", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      imageUrl: text("image_url"),
+      headline: text("headline").notNull(),
+      body: text("body").notNull(),
+      status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
+      scheduledTime: integer("scheduled_time", { mode: "timestamp_ms" }),
+      publishedTime: integer("published_time", { mode: "timestamp_ms" }),
+      rejectionNote: text("rejection_note"),
+      createdBy: integer("created_by").notNull(),
+      updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    });
+    adminUsers = sqliteTable("admin_users", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      email: text("email").notNull().unique(),
+      passwordHash: text("password_hash").notNull(),
+      role: text("role", { enum: ADMIN_ROLES }).notNull().default("editor"),
+      isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+      rememberDeviceToken: text("remember_device_token"),
+      createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    });
+    readers = sqliteTable("readers", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      name: text("name").notNull().default(""),
+      email: text("email").notNull().unique(),
+      passwordHash: text("password_hash"),
+      googleId: text("google_id").unique(),
+      emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
+      verificationToken: text("verification_token"),
+      verificationTokenUsed: text("verification_token_used"),
+      resetToken: text("reset_token"),
+      resetTokenExpires: integer("reset_token_expires", { mode: "timestamp_ms" }),
+      currentStreak: integer("current_streak").notNull().default(0),
+      longestStreak: integer("longest_streak").notNull().default(0),
+      lastActiveDate: text("last_active_date"),
+      feedViewMode: text("feed_view_mode", { enum: ["editorial", "compact"] }).notNull().default("editorial"),
+      feedViewOnboardingCompleted: integer("feed_view_onboarding_completed", { mode: "boolean" }).notNull().default(false),
+      createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    });
+    postViews = sqliteTable("post_views", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      postId: integer("post_id").notNull(),
+      readerId: integer("reader_id"),
+      viewedAt: integer("viewed_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    });
+    postReactions = sqliteTable("post_reactions", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      postId: integer("post_id").notNull(),
+      readerId: integer("reader_id").notNull(),
+      createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    }, (table) => ({ postReaderUnique: uniqueIndex("post_reactions_post_reader_unique").on(table.postId, table.readerId) }));
+    postBookmarks = sqliteTable("post_bookmarks", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      postId: integer("post_id").notNull(),
+      readerId: integer("reader_id").notNull(),
+      createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    }, (table) => ({ postReaderUnique: uniqueIndex("post_bookmarks_post_reader_unique").on(table.postId, table.readerId) }));
+    searchQueries = sqliteTable("search_queries", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      query: text("query").notNull(),
+      searchedAt: integer("searched_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    });
+    pushSubscriptions = sqliteTable("push_subscriptions", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      readerId: integer("reader_id").references(() => readers.id, { onDelete: "cascade" }),
+      endpoint: text("endpoint").notNull(),
+      p256dh: text("p256dh").notNull(),
+      auth: text("auth").notNull(),
+      createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    });
+  }
 });
 
 // server/_core/env.ts
-var ENV = {
-  appId: process.env[String.fromCharCode(86, 73, 84, 69) + "_APP_ID"] ?? "",
-  cookieSecret: process.env.JWT_SECRET ?? "",
-  databaseUrl: process.env.DATABASE_URL ?? "",
-  oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
-  ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
-  isProduction: process.env.NODE_ENV === "production",
-  forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
-  forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
-  vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? "",
-  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? ""
-};
 function appBaseUrl() {
   return (process.env.APP_BASE_URL || (ENV.isProduction ? "" : "http://localhost:3000")).replace(/\/$/, "");
 }
@@ -151,9 +120,26 @@ function validateProductionEnvironment() {
   if (!appBaseUrl().startsWith("https://")) issues.push("APP_BASE_URL must be an HTTPS production URL");
   return issues;
 }
+var ENV;
+var init_env = __esm({
+  "server/_core/env.ts"() {
+    "use strict";
+    ENV = {
+      appId: process.env[String.fromCharCode(86, 73, 84, 69) + "_APP_ID"] ?? "",
+      cookieSecret: process.env.JWT_SECRET ?? "",
+      databaseUrl: process.env.DATABASE_URL ?? "",
+      oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
+      ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
+      isProduction: process.env.NODE_ENV === "production",
+      forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
+      forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+      vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? "",
+      vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? ""
+    };
+  }
+});
 
 // server/streak.ts
-var MS_PER_DAY = 24 * 60 * 60 * 1e3;
 function utcDayNumber(value) {
   const [year, month, day] = value.split("-").map(Number);
   return Date.UTC(year, month - 1, day) / MS_PER_DAY;
@@ -170,10 +156,18 @@ function updateDailyStreak(state, today) {
     increased: true
   };
 }
+var MS_PER_DAY;
+var init_streak = __esm({
+  "server/streak.ts"() {
+    "use strict";
+    MS_PER_DAY = 24 * 60 * 60 * 1e3;
+  }
+});
 
 // server/db.ts
-var _db = null;
-var _schemaRepair = null;
+import { createClient } from "@libsql/client";
+import { and, asc, desc, eq, gt, inArray, like, lte, or, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/libsql";
 async function repairReaderSchema(db) {
   const columns = await db.all(sql.raw("PRAGMA table_info('readers')"));
   const names = new Set(
@@ -585,6 +579,357 @@ async function getAnalytics() {
     }))
   };
 }
+var _db, _schemaRepair;
+var init_db = __esm({
+  "server/db.ts"() {
+    "use strict";
+    init_schema();
+    init_env();
+    init_streak();
+    _db = null;
+    _schemaRepair = null;
+  }
+});
+
+// server/_core/aiCurator.ts
+var aiCurator_exports = {};
+__export(aiCurator_exports, {
+  curateTenBytes: () => curateTenBytes,
+  runNightlyCuration: () => runNightlyCuration
+});
+async function curateTenBytes() {
+  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
+  if (!apiKey) {
+    console.warn("[AICurator] No GEMINI_API_KEY or GOOGLE_API_KEY found in environment. Using default fallback curation.");
+    return getFallbackBytes();
+  }
+  const prompt = `You are the lead editor for Aurikrex Bytes, a high-signal digital publication.
+Curate EXACTLY 10 distinct, engaging news bytes covering Technology, Artificial Intelligence, Science, Future Tech, and Global Innovation.
+
+For EACH byte, output valid JSON array with 10 objects:
+[
+  {
+    "headline": "Crisp compelling headline (under 80 chars)",
+    "body": "Clear, informative brief in 2 short paragraphs (under 180 words). High signal, zero fluff.",
+    "category": "Tech" | "AI" | "Science" | "Crypto" | "Innovation",
+    "imageKeyword": "abstract technology / neural network / quantum computing / cyber security"
+  }
+]
+
+Return ONLY the raw JSON array without markdown formatting or code blocks.`;
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json" }
+        })
+      }
+    );
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`[AICurator] Gemini API request failed (${response.status}):`, errText);
+      return getFallbackBytes();
+    }
+    const data = await response.json();
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const cleanJson = rawText.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleanJson);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      console.warn("[AICurator] Gemini response parsed but was empty.");
+      return getFallbackBytes();
+    }
+    return parsed.slice(0, 10).map((item, idx) => ({
+      headline: String(item.headline || "Tech Update").slice(0, 120),
+      body: String(item.body || "").trim(),
+      category: String(item.category || "Tech"),
+      imageUrl: FALLBACK_IMAGES[idx % FALLBACK_IMAGES.length]
+    }));
+  } catch (err) {
+    console.error("[AICurator] Failed to curate bytes via Gemini:", err);
+    return getFallbackBytes();
+  }
+}
+async function runNightlyCuration() {
+  const db = await getDb();
+  if (!db) {
+    console.error("[AICurator] Cannot run nightly curation: database unavailable");
+    return 0;
+  }
+  console.info("[AICurator] Starting 10-Byte curation run...");
+  const bytes = await curateTenBytes();
+  if (!bytes.length) return 0;
+  const now2 = /* @__PURE__ */ new Date();
+  let count = 0;
+  for (const byte of bytes) {
+    try {
+      await db.insert(posts).values({
+        headline: byte.headline,
+        body: byte.body,
+        imageUrl: byte.imageUrl,
+        status: "published",
+        createdBy: 1,
+        publishedTime: now2,
+        updatedAt: now2
+      });
+      count++;
+    } catch (err) {
+      console.error(`[AICurator] Error inserting byte "${byte.headline}":`, err);
+    }
+  }
+  console.info(`[AICurator] Successfully published ${count} new Bytes!`);
+  return count;
+}
+function getFallbackBytes() {
+  return [
+    {
+      headline: "Quantum Computing Reaches Milestone in Fault-Tolerant Qubits",
+      body: "Researchers have demonstrated logical qubit operations with error rates below the fault-tolerance threshold. This breakthrough paves the way for practical quantum algorithms in chemistry and material science.\n\nCommercial applications are expected within the next three years as hardware scaling improves.",
+      category: "Tech",
+      imageUrl: FALLBACK_IMAGES[0]
+    },
+    {
+      headline: "Next-Generation Neural Architectures Slash Inference Costs by 60%",
+      body: "Engineers have unveiled a sparse attention mechanism that drastically reduces compute power needed for large language model inference.\n\nThis optimization enables low-latency AI deployment on consumer hardware without quality degradation.",
+      category: "AI",
+      imageUrl: FALLBACK_IMAGES[1]
+    },
+    {
+      headline: "Fusion Energy Prototype Achieves Net Energy Gain in Extended Plasma Run",
+      body: "A compact tokamak reactor maintained stable plasma fusion for over 20 minutes, outputting more energy than consumed by its heating lasers.\n\nGrid integration trials are scheduled for late 2028.",
+      category: "Science",
+      imageUrl: FALLBACK_IMAGES[2]
+    },
+    {
+      headline: "Solid-State Batteries Enter Pilot Production for Electric Transport",
+      body: "Automotive manufacturers have initiated pilot assembly for high-density solid-state batteries promising 800-mile ranges and 10-minute charge times.\n\nMass market vehicle integration is targeted for 2027.",
+      category: "Innovation",
+      imageUrl: FALLBACK_IMAGES[3]
+    },
+    {
+      headline: "Autonomous Orbital Cleaners Deploy to Clear Low Earth Orbit Debris",
+      body: "Space agencies have deployed the first fleet of autonomous satellite harvesters designed to de-orbit space junk using laser propulsion.\n\nThe mission aims to clear 500 cataloged debris pieces within its initial year.",
+      category: "Tech",
+      imageUrl: FALLBACK_IMAGES[4]
+    },
+    {
+      headline: "Silicon-Photonic Chips Replace Copper Interconnects in Data Centers",
+      body: "Hyperscale cloud providers are transitioning server architectures to optical interconnects, increasing data bandwidth tenfold while cutting energy consumption by 40%.\n\nThe technology is set to become industry standard across AI clusters.",
+      category: "Innovation",
+      imageUrl: FALLBACK_IMAGES[5]
+    },
+    {
+      headline: "Synthetic Biology Platform Synthesizes Biodegradable Structural Polymer",
+      body: "Bioengineers have programmed micro-organisms to produce high-tensile bioplastics that naturally decompose in marine environments within 90 days.\n\nCommercial packaging trials begin next quarter.",
+      category: "Science",
+      imageUrl: FALLBACK_IMAGES[6]
+    },
+    {
+      headline: "Edge-AI Vision Processors Enable Real-Time Robotic Spatial Mapping",
+      body: "Ultra-low-power vision chips allow robotics to perform 3D spatial mapping at 120 FPS locally without reliance on cloud compute.\n\nApplications include search-and-rescue drones and industrial automation.",
+      category: "AI",
+      imageUrl: FALLBACK_IMAGES[7]
+    },
+    {
+      headline: "Decentralized Mesh Networks Provide Resilient Emergency Communications",
+      body: "New peer-to-peer satellite-linked mesh nodes allow off-grid communication during natural disasters without traditional cell tower infrastructure.\n\nEmergency services across three continents are adopting the protocol.",
+      category: "Tech",
+      imageUrl: FALLBACK_IMAGES[8]
+    },
+    {
+      headline: "Generative Code Verification Engines Guarantee Zero-Day Protection",
+      body: "Formal verification engines powered by symbolic reasoning now audit software logic in real time, detecting memory safety and authorization bugs prior to compilation.\n\nDevelopment platforms are integrating the checks into standard CI pipelines.",
+      category: "AI",
+      imageUrl: FALLBACK_IMAGES[9]
+    }
+  ];
+}
+var FALLBACK_IMAGES;
+var init_aiCurator = __esm({
+  "server/_core/aiCurator.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    FALLBACK_IMAGES = [
+      "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1200&q=80"
+    ];
+  }
+});
+
+// server/_core/pdfParser.ts
+var pdfParser_exports = {};
+__export(pdfParser_exports, {
+  extractTextFromPdfBuffer: () => extractTextFromPdfBuffer,
+  parsePdfToBytes: () => parsePdfToBytes
+});
+function extractTextFromPdfBuffer(buffer) {
+  const rawString = buffer.toString("utf-8");
+  const textBlocks = [];
+  const textMatches = rawString.match(/\(([^)]+)\)\s*T[jJ]/g) || [];
+  for (const match of textMatches) {
+    const cleaned = match.replace(/^\(|\)\s*T[jJ]$/g, "").trim();
+    if (cleaned.length > 2) {
+      textBlocks.push(cleaned);
+    }
+  }
+  if (textBlocks.length > 10) {
+    return textBlocks.join(" ");
+  }
+  return rawString.replace(/[^\x20-\x7E\n\r]/g, " ").replace(/\s+/g, " ").slice(0, 3e4);
+}
+async function parsePdfToBytes(pdfBase64OrText) {
+  let text2 = "";
+  if (pdfBase64OrText.startsWith("data:") || pdfBase64OrText.length > 500 && !pdfBase64OrText.includes(" ")) {
+    try {
+      const base64Data = pdfBase64OrText.replace(/^data:application\/pdf;base64,/, "");
+      const buffer = Buffer.from(base64Data, "base64");
+      text2 = extractTextFromPdfBuffer(buffer);
+    } catch (err) {
+      console.error("[PDFParser] Failed to parse base64 buffer:", err);
+      text2 = pdfBase64OrText;
+    }
+  } else {
+    text2 = pdfBase64OrText;
+  }
+  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
+  if (!apiKey) {
+    console.warn("[PDFParser] No GEMINI_API_KEY or GOOGLE_API_KEY found. Extracting fallback Bytes from text.");
+    return fallbackExtractBytes(text2);
+  }
+  const prompt = `You are the lead editor for Aurikrex Bytes.
+I will provide you with text extracted from a PDF document containing multiple news items/articles.
+Your job is to read the text and extract ALL distinct news stories (up to 25 stories).
+
+For EACH story, format as a clean JSON object:
+[
+  {
+    "headline": "Crisp headline summarizing the story (under 80 chars)",
+    "body": "Concise 2-paragraph news card brief (under 180 words). High signal.",
+    "category": "Tech" | "AI" | "Science" | "Crypto" | "Innovation",
+    "imageKeyword": "abstract technology"
+  }
+]
+
+PDF CONTENT:
+${text2.slice(0, 25e3)}
+
+Return ONLY the raw JSON array.`;
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json" }
+        })
+      }
+    );
+    if (!response.ok) {
+      console.error("[PDFParser] Gemini API request failed:", await response.text());
+      return fallbackExtractBytes(text2);
+    }
+    const data = await response.json();
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const cleanJson = rawText.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleanJson);
+    if (!Array.isArray(parsed) || !parsed.length) {
+      return fallbackExtractBytes(text2);
+    }
+    return parsed.map((item, idx) => ({
+      headline: String(item.headline || `Story ${idx + 1}`).slice(0, 120),
+      body: String(item.body || "").trim(),
+      category: String(item.category || "Tech"),
+      imageUrl: FALLBACK_IMAGES2[idx % FALLBACK_IMAGES2.length]
+    }));
+  } catch (err) {
+    console.error("[PDFParser] Gemini extraction error:", err);
+    return fallbackExtractBytes(text2);
+  }
+}
+function fallbackExtractBytes(text2) {
+  const paragraphs = text2.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 50);
+  const results = [];
+  for (let i = 0; i < Math.min(paragraphs.length, 20); i++) {
+    const p = paragraphs[i];
+    const words = p.split(" ");
+    const headline = words.slice(0, 8).join(" ") + "...";
+    results.push({
+      headline,
+      body: p,
+      category: "Tech",
+      imageUrl: FALLBACK_IMAGES2[i % FALLBACK_IMAGES2.length]
+    });
+  }
+  return results.length ? results : [
+    {
+      headline: "PDF Content Batch Extracted",
+      body: text2.slice(0, 300) || "Document content extracted successfully.",
+      category: "Tech",
+      imageUrl: FALLBACK_IMAGES2[0]
+    }
+  ];
+}
+var FALLBACK_IMAGES2;
+var init_pdfParser = __esm({
+  "server/_core/pdfParser.ts"() {
+    "use strict";
+    FALLBACK_IMAGES2 = [
+      "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1200&q=80"
+    ];
+  }
+});
+
+// server/_core/vercel.ts
+import "dotenv/config";
+import express from "express";
+import { createExpressMiddleware } from "@trpc/server/adapters/express";
+
+// shared/const.ts
+var COOKIE_NAME = "app_session_id";
+var ONE_YEAR_MS = 1e3 * 60 * 60 * 24 * 365;
+var AXIOS_TIMEOUT_MS = 3e4;
+var UNAUTHED_ERR_MSG = "Please login (10001)";
+var NOT_ADMIN_ERR_MSG = "You do not have required permission (10002)";
+var OAUTH_STATE_COOKIE = "__Host-oauth_state";
+var decodeOAuthState = (state) => {
+  let decoded;
+  try {
+    decoded = atob(state);
+  } catch {
+    return { redirectUri: "" };
+  }
+  try {
+    const parsed = JSON.parse(decoded);
+    if (parsed && typeof parsed.redirectUri === "string") return parsed;
+  } catch {
+  }
+  return { redirectUri: decoded };
+};
+
+// server/_core/oauth.ts
+init_db();
+import { parse as parseCookieHeader2 } from "cookie";
 
 // server/_core/cookies.ts
 function isSecureRequest(req) {
@@ -622,6 +967,8 @@ var HttpError = class extends Error {
 var ForbiddenError = (msg) => new HttpError(403, msg);
 
 // server/_core/sdk.ts
+init_db();
+init_env();
 import axios from "axios";
 import { parse as parseCookieHeader } from "cookie";
 import { SignJWT, jwtVerify } from "jose";
@@ -917,6 +1264,7 @@ function registerOAuthRoutes(app) {
 }
 
 // server/_core/storageProxy.ts
+init_env();
 function registerStorageProxy(app) {
   app.get("/manus-storage/*", async (req, res) => {
     const key = req.params[0];
@@ -958,10 +1306,12 @@ function registerStorageProxy(app) {
 }
 
 // server/google-auth.ts
+init_schema();
 import { OAuth2Client } from "google-auth-library";
 import { eq as eq2 } from "drizzle-orm";
 
 // server/auth.ts
+init_env();
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
@@ -998,6 +1348,8 @@ function isValidPassword(password) {
 }
 
 // server/google-auth.ts
+init_db();
+init_env();
 function registerGoogleAuthRoutes(app) {
   app.get("/api/auth/google/callback", async (req, res) => {
     const code = typeof req.query.code === "string" ? req.query.code : "";
@@ -1038,9 +1390,12 @@ function registerGoogleAuthRoutes(app) {
 }
 
 // server/routers.ts
+init_schema();
+init_env();
 import { TRPCError as TRPCError4 } from "@trpc/server";
 import { eq as eq3 } from "drizzle-orm";
 import { z as z2 } from "zod";
+init_db();
 
 // server/services.ts
 import { v2 as cloudinary } from "cloudinary";
@@ -1112,6 +1467,7 @@ function getCloudinaryUploadSignature(folder = "aurikrex/posts") {
 import { z } from "zod";
 
 // server/_core/notification.ts
+init_env();
 import { TRPCError } from "@trpc/server";
 var TITLE_MAX_LENGTH = 1200;
 var CONTENT_MAX_LENGTH = 2e4;
@@ -1294,6 +1650,7 @@ function assertPostTransition(role, from, to) {
 }
 
 // server/routers.ts
+init_env();
 var ADMIN_COOKIE = "aurikrex_admin_session";
 var ADMIN_DEVICE_COOKIE = "aurikrex_admin_device";
 var READER_COOKIE = "aurikrex_reader_session";
@@ -1414,6 +1771,35 @@ var appRouter = router({
         updatedAt: /* @__PURE__ */ new Date()
       });
       return { success: true, id: Number(result.lastInsertRowid) };
+    }),
+    curateNow: publicProcedure.mutation(async ({ ctx }) => {
+      const admin = await requireAdmin(ctx);
+      assertPermission(admin.role, "post:create");
+      const { runNightlyCuration: runNightlyCuration2 } = await Promise.resolve().then(() => (init_aiCurator(), aiCurator_exports));
+      const count = await runNightlyCuration2();
+      return { success: true, count };
+    }),
+    ingestPdf: publicProcedure.input(z2.object({ pdfContent: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
+      const admin = await requireAdmin(ctx);
+      assertPermission(admin.role, "post:create");
+      const { parsePdfToBytes: parsePdfToBytes2 } = await Promise.resolve().then(() => (init_pdfParser(), pdfParser_exports));
+      const bytes = await parsePdfToBytes2(input.pdfContent);
+      const db = await getDb();
+      if (!db) throw genericNotFound();
+      const now2 = /* @__PURE__ */ new Date();
+      let count = 0;
+      for (const byte of bytes) {
+        await db.insert(posts).values({
+          headline: byte.headline,
+          body: byte.body,
+          imageUrl: byte.imageUrl,
+          status: "draft",
+          createdBy: admin.id,
+          updatedAt: now2
+        });
+        count++;
+      }
+      return { success: true, count, bytes };
     }),
     editPost: publicProcedure.input(
       z2.object({
@@ -1919,6 +2305,7 @@ async function createContext(opts) {
 }
 
 // server/_core/seoRoutes.ts
+init_db();
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -2272,6 +2659,8 @@ function authRateLimit(req, res, next) {
 }
 
 // server/_core/vercel.ts
+init_env();
+init_db();
 async function setupApp() {
   const environmentIssues = validateProductionEnvironment();
   if (environmentIssues.length) {

@@ -207,6 +207,37 @@ export const appRouter = router({
         });
         return { success: true, id: Number(result.lastInsertRowid) };
       }),
+    curateNow: publicProcedure.mutation(async ({ ctx }) => {
+      const admin = await requireAdmin(ctx);
+      assertPermission(admin.role, "post:create");
+      const { runNightlyCuration } = await import("./_core/aiCurator.js");
+      const count = await runNightlyCuration();
+      return { success: true, count };
+    }),
+    ingestPdf: publicProcedure
+      .input(z.object({ pdfContent: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const admin = await requireAdmin(ctx);
+        assertPermission(admin.role, "post:create");
+        const { parsePdfToBytes } = await import("./_core/pdfParser.js");
+        const bytes = await parsePdfToBytes(input.pdfContent);
+        const db = await getDb();
+        if (!db) throw genericNotFound();
+        const now = new Date();
+        let count = 0;
+        for (const byte of bytes) {
+          await db.insert(posts).values({
+            headline: byte.headline,
+            body: byte.body,
+            imageUrl: byte.imageUrl,
+            status: "draft",
+            createdBy: admin.id,
+            updatedAt: now,
+          });
+          count++;
+        }
+        return { success: true, count, bytes };
+      }),
     editPost: publicProcedure
       .input(
         z.object({
