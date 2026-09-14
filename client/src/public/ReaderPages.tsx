@@ -1450,11 +1450,11 @@ export function HelpCenter() {
     ],
     [
       "How do I report an incorrect or outdated story?",
-      "Email info@aurikrex.tech with the story link and the correction you believe is needed. Include a source where possible so the editorial team can review it quickly.",
+      "Email support@aurikrex.tech with the story link and the correction you believe is needed. Include a source where possible so the editorial team can review it quickly.",
     ],
     [
       "How do I contact support?",
-      "Email info@aurikrex.tech for account, editorial, or accessibility help. We aim to respond during normal business hours.",
+      "Email support@aurikrex.tech for account, editorial, or accessibility help. We aim to respond during normal business hours.",
     ],
   ];
   return (
@@ -1511,8 +1511,8 @@ export function Contact() {
             <p>
               For account support, editorial feedback, or partnership enquiries.
             </p>
-            <a className="inline-link" href="mailto:info@aurikrex.tech">
-              info@aurikrex.tech <ArrowRight size={15} />
+            <a className="inline-link" href="mailto:support@aurikrex.tech">
+              support@aurikrex.tech <ArrowRight size={15} />
             </a>
           </div>
           <div className="contact-card">
@@ -1672,7 +1672,7 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
               stories accurate and current but cannot guarantee that every card
               is complete or error-free. To the extent permitted by law,
               Aurikrex is not liable for decisions made solely from a Byte.
-              Questions about these terms can be sent to info@aurikrex.tech.
+              Questions about these terms can be sent to support@aurikrex.tech.
             </ArticleSection>
           </>
         )}
