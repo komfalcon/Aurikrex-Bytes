@@ -104,7 +104,7 @@ export function Logo({ compact = false, href = "/", showMark = true }: { compact
       className={`brand ${compact ? "brand-compact" : ""}`}
       aria-label="Aurikrex Bytes home"
     >
-      {showMark && <img src="/logo.svg" alt="Aurikrex Bytes logo" />}
+      {showMark && <img src="/logo-512.png" alt="Aurikrex Bytes logo" />}
       <span>
         Aurikrex <b>Bytes</b>
       </span>
