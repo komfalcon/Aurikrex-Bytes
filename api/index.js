@@ -606,7 +606,7 @@ function generateDynamicCoverUrl(headline, category, seedOffset) {
   return FALLBACK_IMAGES[seedOffset % FALLBACK_IMAGES.length];
 }
 async function curateTenBytes() {
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
+  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.BUILT_IN_FORGE_API_KEY || process.env.FORGE_API_KEY || "").trim();
   if (!apiKey) {
     console.warn("[AICurator] No GEMINI_API_KEY found. Fetching live real-time tech news from public news feeds.");
     return await fetchLiveTechNewsBytes();
@@ -647,10 +647,13 @@ Output valid JSON array with 10 objects:
 Return ONLY the raw JSON array without markdown formatting or code blocks.`;
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-goog-api-key": apiKey
+        },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { responseMimeType: "application/json" }
@@ -816,7 +819,7 @@ __export(pdfParser_exports, {
 function generateDynamicImageUrl(headline, category, index) {
   const cleanKeyword = headline.replace(/[^\w\s]/gi, " ").split(/\s+/).filter((w) => w.length > 3).slice(0, 4).join(" ");
   if (cleanKeyword.length > 3) {
-    const promptStr = encodeURIComponent(`${category} ${cleanKeyword} editorial high resolution news photo`);
+    const promptStr = encodeURIComponent(`${category} ${cleanKeyword} editorial technology news photo`);
     return `https://image.pollinations.ai/prompt/${promptStr}?width=1200&height=800&nologo=true&seed=${index + 100}`;
   }
   return UNSPLASH_IMAGE_POOL[index % UNSPLASH_IMAGE_POOL.length];
@@ -831,13 +834,13 @@ async function parsePdfToBytes(pdfBase64OrText) {
   } else {
     plainText = pdfBase64OrText;
   }
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
+  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.BUILT_IN_FORGE_API_KEY || process.env.FORGE_API_KEY || "").trim();
   if (!apiKey) {
     console.warn("[PDFParser] No GEMINI_API_KEY found. Unable to parse PDF document natively.");
     return [
       {
         headline: "Gemini API Key Required for PDF Ingestion",
-        body: "Please ensure GEMINI_API_KEY or GOOGLE_API_KEY is configured in your environment variables to enable native multimodal PDF parsing.",
+        body: "Please ensure GEMINI_API_KEY or GOOGLE_API_KEY is configured in your environment variables on Vercel to enable native multimodal PDF parsing.",
         category: "Tech",
         imageUrl: UNSPLASH_IMAGE_POOL[0]
       }
@@ -878,10 +881,13 @@ ${plainText.slice(0, 3e4)}`
   });
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-goog-api-key": apiKey
+        },
         body: JSON.stringify({
           contents: [{ parts: requestParts }],
           generationConfig: { responseMimeType: "application/json" }

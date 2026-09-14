@@ -36,7 +36,13 @@ function generateDynamicCoverUrl(headline: string, category: string, seedOffset:
 }
 
 export async function curateTenBytes(): Promise<CuratedByte[]> {
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
+  const apiKey = (
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.BUILT_IN_FORGE_API_KEY ||
+    process.env.FORGE_API_KEY ||
+    ""
+  ).trim();
 
   // If no Gemini API key is present on Vercel, fetch live news dynamically from live Tech News API
   if (!apiKey) {
@@ -77,10 +83,13 @@ Return ONLY the raw JSON array without markdown formatting or code blocks.`;
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-goog-api-key": apiKey
+        },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { responseMimeType: "application/json" }
@@ -183,7 +192,6 @@ async function fetchLiveTechNewsBytes(): Promise<CuratedByte[]> {
 
       let body = `Industry intelligence reports indicate new developments surrounding ${headline.toLowerCase()}. Published by ${domain}, this report highlights ongoing technical evolution and strategic developments across global technology infrastructure.\n\nAs organizations adapt to emerging software frameworks and security standards, decision-makers are evaluating operational scalability and long-term integration models to maintain competitive momentum.`;
 
-      // Expand to strict 600-800 character window
       if (body.length < 600) {
         body += ` Additional analysis suggests that deployment across Enterprise systems will accelerate adoption through late 2026, offering improved efficiency and security controls for global digital operations.`;
       }
