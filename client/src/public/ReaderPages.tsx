@@ -1320,7 +1320,6 @@ export function PostDetail() {
           "Read the latest considered technology story from Aurikrex Bytes.",
         path: `/post/${Number.isFinite(id) ? id : ""}`,
       };
-  if (session.isLoading || !session.data) return <div className="route-loading">Opening the story…</div>;
   return (
     <PublicLayout seo={seo}>
       <main className="container detail-page">

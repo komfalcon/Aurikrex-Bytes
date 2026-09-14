@@ -1923,7 +1923,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import sharp from "sharp";
-var siteUrl = () => (process.env.APP_BASE_URL || "https://aurikrex.tech").replace(/\/$/, "");
+var siteUrl = () => (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.tech").replace(/\/$/, "");
 var xmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 var htmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 var cleanText = (value) => value.replace(/\s+/g, " ").trim();
@@ -2088,7 +2088,7 @@ async function buildShareSvg(post, coverBuffer) {
     <text x="110" y="185" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i === 0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
     <text x="110" y="${bodyY}" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${bodyLines.map((line, i) => `<tspan x="110" dy="${i === 0 ? 0 : 30}">${escapeXml(line)}</tspan>`).join("")}</text>
     <text x="110" y="510" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
-    <text x="110" y="543" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">aurikrex.tech</text>
+    <text x="110" y="543" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">www.bytes.aurikrex.tech</text>
   </svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
