@@ -132,7 +132,7 @@ export default function PWAInstallPrompt() {
   return (
     <aside className="install-prompt" aria-label="Install Aurikrex Bytes" role="status">
       <div className="install-prompt-icon" aria-hidden="true">
-        <img src="/logo.svg" alt="" />
+        <img src="/logo-512.png" alt="" />
       </div>
       <div className="install-prompt-copy">
         <strong>Install Aurikrex Bytes</strong>
