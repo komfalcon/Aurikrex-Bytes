@@ -6,7 +6,7 @@ import NotFound from "../pages/NotFound";
 import { AdminFrame } from "./AdminPages";
 
 const HEADLINE_LIMIT = 120;
-const BODY_LIMIT = 800;
+const BODY_LIMIT = 1200;
 type FormErrors = { imageUrl?: string; headline?: string; body?: string; submit?: string };
 
 export function NewPostPage() {
@@ -399,12 +399,11 @@ export function PreviewPage() {
         <span className={`status-badge ${item.status}`}>{statusText(item.status, item.scheduledTime)}</span>
       </div>
       <div className="wysiwyg-card">
-        <img src={item.imageUrl || ""} alt="" className="wysiwyg-image" />
+        {item.imageUrl && <img src={item.imageUrl} alt="" className="wysiwyg-image" />}
         <div className="wysiwyg-copy">
           <p className="eyebrow">Aurikrex Bytes</p>
           <h2>{item.headline}</h2>
           <p>{item.body}</p>
-          <span className="watermark">AB</span>
         </div>
       </div>
       <div className="preview-controls">
