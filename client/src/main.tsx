@@ -8,7 +8,7 @@ import { startLogin } from "./const";
 import { trpc } from "./lib/trpc";
 import "./index.css";
 
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => undefined));
+if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
 const queryClient = new QueryClient();
 const redirectToLoginIfUnauthorized = (error: unknown) => { if (!(error instanceof TRPCClientError) || typeof window === "undefined") return; if (error.message === UNAUTHED_ERR_MSG) startLogin(); };
 queryClient.getQueryCache().subscribe(event => { if (event.type === "updated" && event.action.type === "error") redirectToLoginIfUnauthorized(event.query.state.error); });

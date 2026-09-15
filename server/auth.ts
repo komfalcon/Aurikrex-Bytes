@@ -1,11 +1,16 @@
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import { ENV } from "./_core/env";
+import { ENV } from "./_core/env.js";
 
 export type SessionPayload = { kind: "admin" | "reader"; id: number; email: string; role?: "admin" | "editor"; verified?: boolean };
 
-const secret = () => ENV.cookieSecret || "development-only-secret";
+const secret = () => {
+  if (process.env.NODE_ENV === "production" && !ENV.cookieSecret) {
+    throw new Error("Missing strong cookieSecret in production. Startup failed closed for security.");
+  }
+  return ENV.cookieSecret || "development-only-secret";
+};
 
 export function hashPassword(password: string) { return bcrypt.hash(password, 12); }
 export function verifyPassword(password: string, hash: string) { return bcrypt.compare(password, hash); }
@@ -15,4 +20,4 @@ export function readToken(token: string): SessionPayload | null {
 }
 export function randomToken() { return crypto.randomBytes(32).toString("hex"); }
 export function normalizeEmail(email: string) { return email.trim().toLowerCase(); }
-export function isValidPassword(password: string) { return password.length >= 8; }
+export function isValidPassword(password: string) { return password.length >= 8 && /\d/.test(password) && /[^A-Za-z0-9]/.test(password); }
