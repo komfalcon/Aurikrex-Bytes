@@ -213,11 +213,12 @@ async function repairEngagementSchema(db) {
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_bookmarks_post_reader_unique ON post_bookmarks (post_id, reader_id)"));
 }
 async function getDb() {
-  if (!_db && process.env.TURSO_DATABASE_URL) {
+  if (!_db) {
+    const dbUrl = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || "file:/tmp/aurikrex.db";
     try {
       _db = drizzle(
         createClient({
-          url: process.env.TURSO_DATABASE_URL,
+          url: dbUrl,
           authToken: process.env.TURSO_AUTH_TOKEN
         })
       );
