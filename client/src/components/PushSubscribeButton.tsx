@@ -27,7 +27,6 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Check browser support for push notifications
     if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
       setPermission("unsupported");
       return;
@@ -42,7 +41,6 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
       }).catch(() => undefined);
     }
 
-    // Initialize OneSignal Web SDK ONLY if a valid App ID is configured
     const oneSignalAppId = (import.meta.env.VITE_ONESIGNAL_APP_ID || "").trim();
     if (oneSignalAppId && oneSignalAppId.length > 5) {
       window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -77,7 +75,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     }
 
     if (Notification.permission === "denied") {
-      toast.error("Notifications are blocked in your browser settings. Please click the site settings / lock icon to allow notifications for aurikrex.tech.", {
+      toast.error("Notifications are blocked in your browser settings. Click the site settings / lock icon in address bar to allow notifications.", {
         duration: 6000,
       });
       return;
@@ -86,7 +84,6 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     try {
       setLoading(true);
 
-      // Request browser OS notification permission
       let currentPerm = Notification.permission;
       if (currentPerm !== "granted") {
         currentPerm = await Notification.requestPermission();
@@ -98,7 +95,6 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         return;
       }
 
-      // Prompt OneSignal SDK if initialized
       if (window.OneSignal && window.OneSignal.Notifications) {
         try {
           await window.OneSignal.Notifications.requestPermission();
@@ -107,14 +103,12 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         }
       }
 
-      // Ensure service worker registration is active
       let reg = await navigator.serviceWorker.getRegistration();
       if (!reg) {
         reg = await navigator.serviceWorker.register("/sw.js");
       }
       await navigator.serviceWorker.ready;
 
-      // Subscribe via WebPush PushManager
       const vapidKey = (vapidKeyQuery.data && vapidKeyQuery.data.length > 10)
         ? vapidKeyQuery.data
         : DEFAULT_VAPID_PUBLIC_KEY;
@@ -158,7 +152,6 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
 
       setIsSubscribed(true);
 
-      // Trigger a native system OS notification banner immediately on the device screen
       try {
         await reg.showNotification("Aurikrex Bytes Push Active! 🚀", {
           body: "You'll receive daily technology briefs directly on your lock screen & status bar (8:01 AM & 6:00 PM).",
@@ -172,7 +165,6 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         console.warn("[Push] Direct showNotification error:", err);
       }
 
-      // Also call backend to trigger server-sent notification
       if (subscription?.endpoint) {
         sendTestMutation.mutateAsync({ endpoint: subscription.endpoint }).catch(() => undefined);
       }
@@ -201,7 +193,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     );
   }
 
-  // Header icon variant
+  // Header icon button variant (Clean 40x40 icon button on both mobile & desktop)
   return (
     <button
       className={`theme-toggle push-toggle ${permission === "granted" || isSubscribed ? "active" : ""}`}
@@ -213,20 +205,21 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         permission === "granted" || isSubscribed
           ? "Daily push notifications active (8:01 AM & 6:00 PM)"
           : permission === "denied"
-          ? "Notifications blocked in browser"
+          ? "Notifications blocked in browser settings"
           : permission === "unsupported"
           ? "Notifications info"
           : "Enable daily push notifications (8:01 AM & 6:00 PM)"
       }
     >
       {permission === "granted" || isSubscribed ? (
-        <BellRing size={17} strokeWidth={1.8} style={{ color: "var(--primary, #3b82f6)" }} />
+        <BellRing size={18} strokeWidth={2} style={{ color: "var(--primary, #3b82f6)" }} />
       ) : permission === "denied" ? (
-        <BellOff size={17} strokeWidth={1.8} style={{ opacity: 0.6 }} />
+        <BellOff size={18} strokeWidth={1.8} style={{ opacity: 0.6 }} />
       ) : (
-        <Bell size={17} strokeWidth={1.8} />
+        <Bell size={18} strokeWidth={1.8} />
       )}
-      <span>{permission === "granted" || isSubscribed ? "Alerts On" : "Alerts"}</span>
+      <span className="sr-only">{permission === "granted" || isSubscribed ? "Alerts On" : "Alerts"}</span>
+      {(permission === "granted" || isSubscribed) && <span className="push-active-dot" />}
     </button>
   );
 }

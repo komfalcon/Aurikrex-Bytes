@@ -1059,8 +1059,10 @@ export function ReaderDashboard() {
           </div>
           <div className={`streak-card ${data?.streak.increased ? "streak-card-celebrate" : ""}`}>
             <div className="streak-card-heading">
-              <div className="streak-flame"><Flame size={22} fill="currentColor" /></div>
-              <div><strong>{data?.streak.currentStreak ?? 0}</strong><span>day streak</span></div>
+              <div className="streak-card-heading-main">
+                <div className="streak-flame"><Flame size={20} fill="currentColor" /></div>
+                <div><strong>{data?.streak.currentStreak ?? 0}</strong><span>day streak</span></div>
+              </div>
               <small>Best: {data?.streak.longestStreak ?? 0} days</small>
             </div>
             <div className="streak-week" aria-label="Current week reading activity">
