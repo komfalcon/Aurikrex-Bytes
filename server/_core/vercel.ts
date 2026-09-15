@@ -21,10 +21,14 @@ async function setupApp() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
+
   app.get("/api/cron/publish", async (req, res) => {
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) return res.status(401).json({ error: "Unauthorized" });
+    const isVercelCron = req.headers["x-vercel-cron"] === "1";
+    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
     try {
       return res.json({ published: await publishDuePosts() });
     } catch (error) {
@@ -32,6 +36,41 @@ async function setupApp() {
       return res.status(500).json({ error: "Publish job failed" });
     }
   });
+
+  app.get("/api/cron/notify", async (req, res) => {
+    const authorization = req.headers.authorization;
+    const cronSecret = process.env.CRON_SECRET;
+    const isVercelCron = req.headers["x-vercel-cron"] === "1";
+    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const { sendDailyPushNotifications } = await import("../push.js");
+      const sent = await sendDailyPushNotifications();
+      return res.json({ sent });
+    } catch (error) {
+      console.error("[Cron] notify failed", error);
+      return res.status(500).json({ error: "Notify job failed" });
+    }
+  });
+
+  app.get("/api/cron/curate", async (req, res) => {
+    const authorization = req.headers.authorization;
+    const cronSecret = process.env.CRON_SECRET;
+    const isVercelCron = req.headers["x-vercel-cron"] === "1";
+    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const { runNightlyCuration } = await import("./aiCurator.js");
+      const curated = await runNightlyCuration();
+      return res.json({ curated });
+    } catch (error) {
+      console.error("[Cron] curate failed", error);
+      return res.status(500).json({ error: "Curation job failed" });
+    }
+  });
+
   app.use(authRateLimit);
   registerStorageProxy(app);
   registerOAuthRoutes(app);

@@ -2910,12 +2910,47 @@ async function setupApp() {
   app.get("/api/cron/publish", async (req, res) => {
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) return res.status(401).json({ error: "Unauthorized" });
+    const isVercelCron = req.headers["x-vercel-cron"] === "1";
+    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
     try {
       return res.json({ published: await publishDuePosts() });
     } catch (error) {
       console.error("[Cron] publish failed", error);
       return res.status(500).json({ error: "Publish job failed" });
+    }
+  });
+  app.get("/api/cron/notify", async (req, res) => {
+    const authorization = req.headers.authorization;
+    const cronSecret = process.env.CRON_SECRET;
+    const isVercelCron = req.headers["x-vercel-cron"] === "1";
+    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const { sendDailyPushNotifications: sendDailyPushNotifications2 } = await Promise.resolve().then(() => (init_push(), push_exports));
+      const sent = await sendDailyPushNotifications2();
+      return res.json({ sent });
+    } catch (error) {
+      console.error("[Cron] notify failed", error);
+      return res.status(500).json({ error: "Notify job failed" });
+    }
+  });
+  app.get("/api/cron/curate", async (req, res) => {
+    const authorization = req.headers.authorization;
+    const cronSecret = process.env.CRON_SECRET;
+    const isVercelCron = req.headers["x-vercel-cron"] === "1";
+    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const { runNightlyCuration: runNightlyCuration2 } = await Promise.resolve().then(() => (init_aiCurator(), aiCurator_exports));
+      const curated = await runNightlyCuration2();
+      return res.json({ curated });
+    } catch (error) {
+      console.error("[Cron] curate failed", error);
+      return res.status(500).json({ error: "Curation job failed" });
     }
   });
   app.use(authRateLimit);
