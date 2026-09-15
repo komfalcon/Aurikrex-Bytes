@@ -23,10 +23,10 @@ async function setupApp() {
   registerSeoRoutes(app);
 
   app.get("/api/cron/publish", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    const isVercelCron = req.headers["x-vercel-cron"] === "1";
-    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -38,10 +38,10 @@ async function setupApp() {
   });
 
   app.get("/api/cron/notify", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    const isVercelCron = req.headers["x-vercel-cron"] === "1";
-    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -55,10 +55,10 @@ async function setupApp() {
   });
 
   app.get("/api/cron/curate", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    const isVercelCron = req.headers["x-vercel-cron"] === "1";
-    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {

@@ -9,13 +9,6 @@ interface PushSubscribeButtonProps {
 
 const DEFAULT_VAPID_PUBLIC_KEY = "BI5SEWx9U3nei2bzEVFnvNCTgBHYYfIUwGBrnsb0757spGDalsRS8JDdVWAKJW4b1lmgcacI3CN1f5MMvu9yLpQ";
 
-declare global {
-  interface Window {
-    OneSignalDeferred?: any[];
-    OneSignal?: any;
-  }
-}
-
 export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonProps) {
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -41,24 +34,6 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
       }).catch(() => undefined);
     }
 
-    const oneSignalAppId = (import.meta.env.VITE_ONESIGNAL_APP_ID || "").trim();
-    if (oneSignalAppId && oneSignalAppId.length > 5) {
-      window.OneSignalDeferred = window.OneSignalDeferred || [];
-      window.OneSignalDeferred.push(async (OneSignal: any) => {
-        try {
-          await OneSignal.init({
-            appId: oneSignalAppId,
-            allowLocalhostAsSecureOrigin: true,
-            serviceWorkerParam: { scope: "/" },
-            serviceWorkerPath: "sw.js",
-            serviceWorkerOverridePath: "sw.js",
-            notifyButton: { enable: false },
-          });
-        } catch (e) {
-          console.warn("[OneSignal] Init notice:", e);
-        }
-      });
-    }
   }, []);
 
   const handleSubscribe = async () => {
@@ -84,7 +59,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     try {
       setLoading(true);
 
-      let currentPerm = Notification.permission;
+      let currentPerm: NotificationPermission = Notification.permission;
       if (currentPerm !== "granted") {
         currentPerm = await Notification.requestPermission();
         setPermission(currentPerm);
@@ -95,13 +70,6 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         return;
       }
 
-      if (window.OneSignal && window.OneSignal.Notifications) {
-        try {
-          await window.OneSignal.Notifications.requestPermission();
-        } catch (e) {
-          console.warn("[OneSignal] Permission request notice:", e);
-        }
-      }
 
       let reg = await navigator.serviceWorker.getRegistration();
       if (!reg) {
@@ -146,7 +114,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
             endpoint: subscription.endpoint,
             p256dh,
             auth,
-          }).catch(() => undefined);
+          });
         }
       }
 
@@ -154,7 +122,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
 
       try {
         await reg.showNotification("Aurikrex Bytes Push Active! 🚀", {
-          body: "You'll receive daily technology briefs directly on your lock screen & status bar (8:01 AM & 10:00 PM).",
+          body: "You'll receive daily technology briefs directly on your lock screen & status bar (8:00 AM & 10:00 PM).",
           icon: "/logo-192.png",
           badge: "/logo-192.png",
           vibrate: [200, 100, 200],
@@ -166,7 +134,8 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
       }
 
       if (subscription?.endpoint) {
-        sendTestMutation.mutateAsync({ endpoint: subscription.endpoint }).catch(() => undefined);
+        const testResult = await sendTestMutation.mutateAsync({ endpoint: subscription.endpoint });
+        if (!testResult.success) throw new Error(testResult.error || "The test notification could not be sent.");
       }
 
       toast.success("System Push Notifications Enabled!");
@@ -203,12 +172,12 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
       aria-label={permission === "granted" || isSubscribed ? "Daily notifications active" : "Enable daily notifications"}
       title={
         permission === "granted" || isSubscribed
-          ? "Daily push notifications active (8:01 AM & 10:00 PM)"
+          ? "Daily push notifications active (8:00 AM & 10:00 PM)"
           : permission === "denied"
           ? "Notifications blocked in browser settings"
           : permission === "unsupported"
           ? "Notifications info"
-          : "Enable daily push notifications (8:01 AM & 10:00 PM)"
+          : "Enable daily push notifications (8:00 AM & 10:00 PM)"
       }
     >
       {permission === "granted" || isSubscribed ? (

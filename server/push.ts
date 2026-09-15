@@ -10,52 +10,27 @@ const DEFAULT_VAPID_PRIVATE = "4uCF-AGmorh_XVBRRCPiWMPoFr68C4gso4_TrW2DAmU";
 function configureVapid() {
   const publicKey = process.env.VAPID_PUBLIC_KEY || ENV.vapidPublicKey || DEFAULT_VAPID_PUBLIC;
   const privateKey = process.env.VAPID_PRIVATE_KEY || ENV.vapidPrivateKey || DEFAULT_VAPID_PRIVATE;
+  if (!publicKey || !privateKey) throw new Error("VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required");
 
-  try {
-    webpush.setVapidDetails(
-      "mailto:hello@aurikrex.tech",
-      publicKey,
-      privateKey
-    );
-  } catch (err) {
-    console.warn("[Push] VAPID setup error:", err);
-  }
+  webpush.setVapidDetails("mailto:hello@aurikrex.tech", publicKey, privateKey);
 }
 
-export async function sendDailyPushNotifications() {
-  const oneSignalAppId = process.env.ONESIGNAL_APP_ID || process.env.VITE_ONESIGNAL_APP_ID || "";
-  const oneSignalApiKey = process.env.ONESIGNAL_REST_API_KEY || "";
+type PushDeliveryResult = {
+  found: number;
+  sent: number;
+  failed: number;
+  removed: number;
+};
 
-  if (oneSignalAppId && oneSignalApiKey) {
-    try {
-      const res = await fetch("https://onesignal.com/api/v1/notifications", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Basic ${oneSignalApiKey}`
-        },
-        body: JSON.stringify({
-          app_id: oneSignalAppId,
-          included_segments: ["Subscribed Users"],
-          headings: { en: "Time for your daily bytes! 🚀" },
-          contents: { en: "Catch up on what matters in tech." },
-          url: "https://www.bytes.aurikrex.tech/dashboard"
-        })
-      });
-      const data = await res.json();
-      console.info("[Push] OneSignal notification response:", data);
-    } catch (err) {
-      console.error("[Push] OneSignal broadcast error:", err);
-    }
-  }
-
+export async function sendDailyPushNotifications(): Promise<PushDeliveryResult> {
   configureVapid();
   const db = await getDb();
-  if (!db) return 0;
+  if (!db) throw new Error("Database unavailable");
 
   const subs = await db.select().from(pushSubscriptions);
-  console.info(`[Push] Found ${subs.length} push subscriptions in database.`);
-  if (subs.length === 0) return 0;
+  const result: PushDeliveryResult = { found: subs.length, sent: 0, failed: 0, removed: 0 };
+  console.info(`[Push] Starting delivery to ${subs.length} stored subscriptions.`);
+  if (subs.length === 0) return result;
 
   const payload = JSON.stringify({
     title: "Time for your daily bytes! 🚀",
@@ -63,25 +38,28 @@ export async function sendDailyPushNotifications() {
     url: "/dashboard",
   });
 
-  let sent = 0;
   for (const sub of subs) {
     try {
-      await webpush.sendNotification(
-        {
-          endpoint: sub.endpoint,
-          keys: {
-            p256dh: sub.p256dh,
-            auth: sub.auth,
-          },
-        },
-        payload
-      );
-      sent++;
-    } catch (error) {
-      console.warn(`[Push] Failed to send to ${sub.endpoint}:`, error);
+      await webpush.sendNotification({
+        endpoint: sub.endpoint,
+        keys: { p256dh: sub.p256dh, auth: sub.auth },
+      }, payload);
+      result.sent += 1;
+    } catch (error: any) {
+      result.failed += 1;
+      const statusCode = Number(error?.statusCode || 0);
+      if (statusCode === 404 || statusCode === 410) {
+        await db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, sub.id));
+        result.removed += 1;
+        console.warn(`[Push] Removed expired subscription ${sub.id} (${statusCode}).`);
+      } else {
+        console.error(`[Push] Delivery failed for subscription ${sub.id} (${statusCode || "unknown"}).`, error);
+      }
     }
   }
-  return sent;
+
+  console.info("[Push] Delivery result:", result);
+  return result;
 }
 
 export async function sendTestPushNotification(endpoint: string) {
@@ -102,7 +80,7 @@ export async function sendTestPushNotification(endpoint: string) {
 
   const payload = JSON.stringify({
     title: "Aurikrex Bytes Push Active! 🚀",
-    body: "You're all set! Daily tech updates will arrive at 8:01 AM & 6:00 PM.",
+    body: "You're all set! Daily tech updates will arrive at 8:00 AM & 10:00 PM.",
     url: "/dashboard",
   });
 

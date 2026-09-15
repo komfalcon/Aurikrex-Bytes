@@ -1,15 +1,42 @@
-﻿name: Evening Push Notifications
+﻿name: Aurikrex Bytes Push Notifications
 
 on:
   schedule:
-    # 6:00 PM UTC every day
-    - cron: '0 18 * * *'
+    # 8:00 AM WAT (7:00 UTC)
+    - cron: "0 7 * * *"
+    # 10:00 PM WAT (21:00 UTC)
+    - cron: "0 21 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   send-notifications:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - name: Trigger Push Notifications API
+      - name: Trigger push notification API
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -fail -s -X GET "https://aurikrex.tech/api/cron/notify"
+          set -euo pipefail
+          test -n "$CRON_SECRET" || { echo "CRON_SECRET is not configured in GitHub Actions" >&2; exit 1; }
+          response="$(curl --fail-with-body --show-error --silent \
+            --retry 3 --retry-delay 5 --retry-all-errors \
+            --connect-timeout 15 --max-time 60 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "Accept: application/json" \
+            "https://www.bytes.aurikrex.tech/api/cron/notify")"
+          echo "$response"
+          found="$(echo "$response" | jq -r '.found // 0')"
+          sent="$(echo "$response" | jq -r '.sent // 0')"
+          failed="$(echo "$response" | jq -r '.failed // 0')"
+          if [ "$found" -eq 0 ]; then
+            echo "No push subscriptions are stored in the production database" >&2
+            exit 1
+          fi
+          if [ "$sent" -eq 0 ]; then
+            echo "No push notifications were delivered (failed=$failed)" >&2
+            exit 1
+          fi

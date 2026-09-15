@@ -213,12 +213,11 @@ async function repairEngagementSchema(db) {
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_bookmarks_post_reader_unique ON post_bookmarks (post_id, reader_id)"));
 }
 async function getDb() {
-  if (!_db) {
-    const dbUrl = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || "file:/tmp/aurikrex.db";
+  if (!_db && process.env.TURSO_DATABASE_URL) {
     try {
       _db = drizzle(
         createClient({
-          url: dbUrl,
+          url: process.env.TURSO_DATABASE_URL,
           authToken: process.env.TURSO_AUTH_TOKEN
         })
       );
@@ -990,71 +989,43 @@ import { eq as eq3 } from "drizzle-orm";
 function configureVapid() {
   const publicKey = process.env.VAPID_PUBLIC_KEY || ENV.vapidPublicKey || DEFAULT_VAPID_PUBLIC;
   const privateKey = process.env.VAPID_PRIVATE_KEY || ENV.vapidPrivateKey || DEFAULT_VAPID_PRIVATE;
-  try {
-    webpush.setVapidDetails(
-      "mailto:hello@aurikrex.tech",
-      publicKey,
-      privateKey
-    );
-  } catch (err) {
-    console.warn("[Push] VAPID setup error:", err);
-  }
+  if (!publicKey || !privateKey) throw new Error("VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required");
+  webpush.setVapidDetails("mailto:hello@aurikrex.tech", publicKey, privateKey);
 }
 async function sendDailyPushNotifications() {
-  const oneSignalAppId = process.env.ONESIGNAL_APP_ID || process.env.VITE_ONESIGNAL_APP_ID || "";
-  const oneSignalApiKey = process.env.ONESIGNAL_REST_API_KEY || "";
-  if (oneSignalAppId && oneSignalApiKey) {
-    try {
-      const res = await fetch("https://onesignal.com/api/v1/notifications", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Basic ${oneSignalApiKey}`
-        },
-        body: JSON.stringify({
-          app_id: oneSignalAppId,
-          included_segments: ["Subscribed Users"],
-          headings: { en: "Time for your daily bytes! \u{1F680}" },
-          contents: { en: "Catch up on what matters in tech." },
-          url: "https://www.bytes.aurikrex.tech/dashboard"
-        })
-      });
-      const data = await res.json();
-      console.info("[Push] OneSignal notification response:", data);
-    } catch (err) {
-      console.error("[Push] OneSignal broadcast error:", err);
-    }
-  }
   configureVapid();
   const db = await getDb();
-  if (!db) return 0;
+  if (!db) throw new Error("Database unavailable");
   const subs = await db.select().from(pushSubscriptions);
-  console.info(`[Push] Found ${subs.length} push subscriptions in database.`);
-  if (subs.length === 0) return 0;
+  const result = { found: subs.length, sent: 0, failed: 0, removed: 0 };
+  console.info(`[Push] Starting delivery to ${subs.length} stored subscriptions.`);
+  if (subs.length === 0) return result;
   const payload = JSON.stringify({
     title: "Time for your daily bytes! \u{1F680}",
     body: "Catch up on what matters in tech.",
     url: "/dashboard"
   });
-  let sent = 0;
   for (const sub of subs) {
     try {
-      await webpush.sendNotification(
-        {
-          endpoint: sub.endpoint,
-          keys: {
-            p256dh: sub.p256dh,
-            auth: sub.auth
-          }
-        },
-        payload
-      );
-      sent++;
+      await webpush.sendNotification({
+        endpoint: sub.endpoint,
+        keys: { p256dh: sub.p256dh, auth: sub.auth }
+      }, payload);
+      result.sent += 1;
     } catch (error) {
-      console.warn(`[Push] Failed to send to ${sub.endpoint}:`, error);
+      result.failed += 1;
+      const statusCode = Number(error?.statusCode || 0);
+      if (statusCode === 404 || statusCode === 410) {
+        await db.delete(pushSubscriptions).where(eq3(pushSubscriptions.id, sub.id));
+        result.removed += 1;
+        console.warn(`[Push] Removed expired subscription ${sub.id} (${statusCode}).`);
+      } else {
+        console.error(`[Push] Delivery failed for subscription ${sub.id} (${statusCode || "unknown"}).`, error);
+      }
     }
   }
-  return sent;
+  console.info("[Push] Delivery result:", result);
+  return result;
 }
 async function sendTestPushNotification(endpoint) {
   configureVapid();
@@ -1066,7 +1037,7 @@ async function sendTestPushNotification(endpoint) {
   }
   const payload = JSON.stringify({
     title: "Aurikrex Bytes Push Active! \u{1F680}",
-    body: "You're all set! Daily tech updates will arrive at 8:01 AM & 6:00 PM.",
+    body: "You're all set! Daily tech updates will arrive at 8:00 AM & 10:00 PM.",
     url: "/dashboard"
   });
   try {
@@ -2909,10 +2880,10 @@ async function setupApp() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
   app.get("/api/cron/publish", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    const isVercelCron = req.headers["x-vercel-cron"] === "1";
-    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -2923,10 +2894,10 @@ async function setupApp() {
     }
   });
   app.get("/api/cron/notify", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    const isVercelCron = req.headers["x-vercel-cron"] === "1";
-    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -2939,10 +2910,10 @@ async function setupApp() {
     }
   });
   app.get("/api/cron/curate", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    const isVercelCron = req.headers["x-vercel-cron"] === "1";
-    if (cronSecret && authorization !== `Bearer ${cronSecret}` && !isVercelCron) {
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
