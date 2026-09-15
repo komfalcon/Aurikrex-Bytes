@@ -118,19 +118,7 @@
   "crons": [
     {
       "path": "/api/cron/notify",
-      "schedule": "1 7,8 * * *"
-    },
-    {
-      "path": "/api/cron/notify",
-      "schedule": "0 21,22 * * *"
-    },
-    {
-      "path": "/api/cron/publish",
-      "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/cron/curate",
-      "schedule": "0 2 * * *"
+      "schedule": "1 7,21 * * *"
     }
   ]
 }

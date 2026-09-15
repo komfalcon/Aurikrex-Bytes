@@ -1,0 +1,25 @@
+name: Aurikrex Bytes Daily Cron & Notifications
+
+on:
+  schedule:
+    # 8:01 AM WAT / BST (7:01 AM UTC)
+    - cron: '1 7 * * *'
+    # 10:00 PM WAT / BST (9:00 PM UTC / 21:00 UTC)
+    - cron: '0 21 * * *'
+    # Hourly auto-publish check
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger-cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Daily Push Notification Cron
+        run: |
+          curl -s -X GET "https://www.bytes.aurikrex.tech/api/cron/notify" \
+            -H "x-vercel-cron: 1"
+
+      - name: Trigger Auto-Publish Cron
+        run: |
+          curl -s -X GET "https://www.bytes.aurikrex.tech/api/cron/publish" \
+            -H "x-vercel-cron: 1"
