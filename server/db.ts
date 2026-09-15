@@ -67,12 +67,11 @@ async function repairEngagementSchema(db: ReturnType<typeof drizzle>) {
 }
 
 export async function getDb() {
-  if (!_db) {
-    const dbUrl = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || "file:/tmp/aurikrex.db";
+  if (!_db && process.env.TURSO_DATABASE_URL) {
     try {
       _db = drizzle(
         createClient({
-          url: dbUrl,
+          url: process.env.TURSO_DATABASE_URL,
           authToken: process.env.TURSO_AUTH_TOKEN,
         })
       );
