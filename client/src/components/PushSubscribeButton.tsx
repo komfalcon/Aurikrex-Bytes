@@ -122,7 +122,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
 
       try {
         await reg.showNotification("Aurikrex Bytes Push Active! 🚀", {
-          body: "You'll receive daily technology briefs directly on your lock screen & status bar (8:01 AM & 10:00 PM).",
+          body: "You'll receive daily technology briefs directly on your lock screen & status bar (8:00 AM & 10:00 PM).",
           icon: "/logo-192.png",
           badge: "/logo-192.png",
           vibrate: [200, 100, 200],
@@ -172,12 +172,12 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
       aria-label={permission === "granted" || isSubscribed ? "Daily notifications active" : "Enable daily notifications"}
       title={
         permission === "granted" || isSubscribed
-          ? "Daily push notifications active (8:01 AM & 10:00 PM)"
+          ? "Daily push notifications active (8:00 AM & 10:00 PM)"
           : permission === "denied"
           ? "Notifications blocked in browser settings"
           : permission === "unsupported"
           ? "Notifications info"
-          : "Enable daily push notifications (8:01 AM & 10:00 PM)"
+          : "Enable daily push notifications (8:00 AM & 10:00 PM)"
       }
     >
       {permission === "granted" || isSubscribed ? (

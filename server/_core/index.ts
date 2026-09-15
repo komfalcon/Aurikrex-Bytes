@@ -50,6 +50,7 @@ async function setupApp() {
   app.use(express.urlencoded({ limit: "2mb", extended: true }));
   registerSeoRoutes(app);
   app.get("/api/cron/publish", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
     if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
@@ -63,6 +64,7 @@ async function setupApp() {
     }
   });
   app.get("/api/cron/notify", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
     if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
@@ -77,6 +79,7 @@ async function setupApp() {
     }
   });
   app.get("/api/cron/curate", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
     if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {

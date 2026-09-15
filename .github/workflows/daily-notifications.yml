@@ -2,8 +2,8 @@
 
 on:
   schedule:
-    # 8:01 AM WAT (7:01 UTC)
-    - cron: "1 7 * * *"
+    # 8:00 AM WAT (7:00 UTC)
+    - cron: "0 7 * * *"
     # 10:00 PM WAT (21:00 UTC)
     - cron: "0 21 * * *"
   workflow_dispatch:
@@ -29,4 +29,14 @@ jobs:
             -H "Accept: application/json" \
             "https://www.bytes.aurikrex.tech/api/cron/notify")"
           echo "$response"
-          echo "$response" | grep -q '"sent"' || { echo "Notification endpoint returned an unexpected response" >&2; exit 1; }
+          found="$(echo "$response" | jq -r '.found // 0')"
+          sent="$(echo "$response" | jq -r '.sent // 0')"
+          failed="$(echo "$response" | jq -r '.failed // 0')"
+          if [ "$found" -eq 0 ]; then
+            echo "No push subscriptions are stored in the production database" >&2
+            exit 1
+          fi
+          if [ "$sent" -eq 0 ]; then
+            echo "No push notifications were delivered (failed=$failed)" >&2
+            exit 1
+          fi

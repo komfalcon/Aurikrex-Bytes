@@ -80,7 +80,7 @@ export async function sendTestPushNotification(endpoint: string) {
 
   const payload = JSON.stringify({
     title: "Aurikrex Bytes Push Active! 🚀",
-    body: "You're all set! Daily tech updates will arrive at 8:01 AM & 6:00 PM.",
+    body: "You're all set! Daily tech updates will arrive at 8:00 AM & 10:00 PM.",
     url: "/dashboard",
   });
 
