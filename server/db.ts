@@ -55,7 +55,7 @@ async function repairEngagementSchema(db: ReturnType<typeof drizzle>) {
     auth text NOT NULL,
     created_at integer NOT NULL
   )`));
-  
+
   await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS post_reactions (
     id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
     post_id integer NOT NULL,
@@ -450,9 +450,9 @@ export async function searchPublishedPosts(
   const normalizedQuery = query.trim().toLowerCase();
   const search = normalizedQuery
     ? or(
-        like(posts.headline, `%${normalizedQuery}%`),
-        like(posts.body, `%${normalizedQuery}%`)
-      )
+      like(posts.headline, `%${normalizedQuery}%`),
+      like(posts.body, `%${normalizedQuery}%`)
+    )
     : undefined;
   const where = search
     ? and(eq(posts.status, "published"), search)
