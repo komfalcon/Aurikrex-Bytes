@@ -7,7 +7,7 @@ on:
     # 10:00 PM WAT (21:00 UTC)
     - cron: "0 21 * * *"
     #7:18am WAT (6:18 UTC)
-    - cron: "18 7 * * *"  
+    - cron: "28 7 * * *"  
   workflow_dispatch:
 
 permissions:
