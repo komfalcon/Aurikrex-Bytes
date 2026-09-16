@@ -54,6 +54,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [loading, setLoading] = useState(false);
   const oneSignalAppIdQuery = trpc.reader.oneSignalAppId.useQuery();
+  const registerSubscriptionMutation = trpc.reader.registerOneSignalSubscription.useMutation();
   const sendTestMutation = trpc.reader.sendTestPush.useMutation();
 
   useEffect(() => {
@@ -106,6 +107,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
 
       const subscriptionId = await waitForSubscriptionId(OneSignal);
       if (!subscriptionId) throw new Error("OneSignal did not return a subscription ID yet. Please try again.");
+      await registerSubscriptionMutation.mutateAsync({ subscriptionId });
       const testResult = await sendTestMutation.mutateAsync({ subscriptionId });
       if (!testResult.success) throw new Error(testResult.error || "The test notification could not be sent.");
 

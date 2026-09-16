@@ -34,16 +34,24 @@ type PushDeliveryResult = {
 };
 
 export async function sendDailyPushNotifications(): Promise<PushDeliveryResult> {
+  const { getDb } = await import("./db.js");
+  const { oneSignalSubscriptions } = await import("../drizzle/schema.js");
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const subscriptions = await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions);
   const result: PushDeliveryResult = { found: 0, sent: 0, failed: 0, removed: 0 };
+  result.found = subscriptions.length;
+  if (subscriptions.length === 0) {
+    throw new Error("No OneSignal subscriptions are registered");
+  }
   try {
     const response = await sendOneSignalNotification({
-      included_segments: ["Subscribed Users"],
+      include_subscription_ids: subscriptions.map(subscription => subscription.subscriptionId),
       headings: { en: "Time for your daily bytes!" },
       contents: { en: "Catch up on what matters in tech." },
       url: "/dashboard",
     });
     result.sent = Number(response.recipients ?? 0);
-    result.found = result.sent;
     if (result.sent === 0) {
       throw new Error("OneSignal accepted the request but found no subscribed users");
     }

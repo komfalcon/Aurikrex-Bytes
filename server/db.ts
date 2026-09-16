@@ -41,6 +41,12 @@ async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
 }
 
 async function repairEngagementSchema(db: ReturnType<typeof drizzle>) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS onesignal_subscriptions (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    reader_id integer,
+    subscription_id text NOT NULL UNIQUE,
+    created_at integer NOT NULL
+  )`));
   await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS push_subscriptions (
     id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
     reader_id integer,

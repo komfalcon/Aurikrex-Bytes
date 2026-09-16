@@ -132,3 +132,10 @@ export const pushSubscriptions = sqliteTable("push_subscriptions", {
   auth: text("auth").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
+
+export const oneSignalSubscriptions = sqliteTable("onesignal_subscriptions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  readerId: integer("reader_id").references(() => readers.id, { onDelete: "cascade" }),
+  subscriptionId: text("subscription_id").notNull().unique(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+});

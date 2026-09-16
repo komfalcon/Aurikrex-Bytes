@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { adminUsers, posts, readers, pushSubscriptions } from "../drizzle/schema.js";
+import { adminUsers, oneSignalSubscriptions, posts, readers, pushSubscriptions } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
 import {
   createToken,
@@ -549,6 +549,21 @@ export const appRouter = router({
   }),
   reader: router({
     oneSignalAppId: publicProcedure.query(() => ENV.oneSignalAppId),
+    registerOneSignalSubscription: publicProcedure
+      .input(z.object({ subscriptionId: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        let readerId: number | null = null;
+        try {
+          readerId = (await requireReader(ctx)).id;
+        } catch {
+          // Guest subscription without active session
+        }
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        await db.delete(oneSignalSubscriptions).where(eq(oneSignalSubscriptions.subscriptionId, input.subscriptionId));
+        await db.insert(oneSignalSubscriptions).values({ readerId, subscriptionId: input.subscriptionId });
+        return { success: true };
+      }),
     sendTestPush: publicProcedure
       .input(z.object({ subscriptionId: z.string().min(1) }))
       .mutation(async ({ input }) => {

@@ -9,8 +9,23 @@ var __export = (target, all) => {
 };
 
 // drizzle/schema.ts
+var schema_exports = {};
+__export(schema_exports, {
+  ADMIN_ROLES: () => ADMIN_ROLES,
+  POST_STATUSES: () => POST_STATUSES,
+  adminUsers: () => adminUsers,
+  oneSignalSubscriptions: () => oneSignalSubscriptions,
+  postBookmarks: () => postBookmarks,
+  postReactions: () => postReactions,
+  postViews: () => postViews,
+  posts: () => posts,
+  pushSubscriptions: () => pushSubscriptions,
+  readers: () => readers,
+  searchQueries: () => searchQueries,
+  users: () => users
+});
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postViews, postReactions, postBookmarks, searchQueries, pushSubscriptions;
+var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postViews, postReactions, postBookmarks, searchQueries, pushSubscriptions, oneSignalSubscriptions;
 var init_schema = __esm({
   "drizzle/schema.ts"() {
     "use strict";
@@ -103,6 +118,12 @@ var init_schema = __esm({
       auth: text("auth").notNull(),
       createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
     });
+    oneSignalSubscriptions = sqliteTable("onesignal_subscriptions", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      readerId: integer("reader_id").references(() => readers.id, { onDelete: "cascade" }),
+      subscriptionId: text("subscription_id").notNull().unique(),
+      createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    });
   }
 });
 
@@ -164,6 +185,40 @@ var init_streak = __esm({
 });
 
 // server/db.ts
+var db_exports = {};
+__export(db_exports, {
+  createIngestedPost: () => createIngestedPost,
+  getAdminByEmail: () => getAdminByEmail,
+  getAdminById: () => getAdminById,
+  getAdminByRememberToken: () => getAdminByRememberToken,
+  getAnalytics: () => getAnalytics,
+  getDb: () => getDb,
+  getPostById: () => getPostById,
+  getPublishedPostById: () => getPublishedPostById,
+  getReaderByEmail: () => getReaderByEmail,
+  getReaderById: () => getReaderById,
+  getReaderByResetToken: () => getReaderByResetToken,
+  getReaderByUsedVerificationToken: () => getReaderByUsedVerificationToken,
+  getReaderByVerificationToken: () => getReaderByVerificationToken,
+  getReaderDashboard: () => getReaderDashboard,
+  getReaderPostEngagement: () => getReaderPostEngagement,
+  getUserByOpenId: () => getUserByOpenId,
+  listAdmins: () => listAdmins,
+  listPosts: () => listPosts,
+  listPublishedPosts: () => listPublishedPosts,
+  listPublishedPostsForCarousel: () => listPublishedPostsForCarousel,
+  listSavedPosts: () => listSavedPosts,
+  listTodaysPublishedPosts: () => listTodaysPublishedPosts,
+  localCalendarDay: () => localCalendarDay,
+  publishDuePosts: () => publishDuePosts,
+  recordPostView: () => recordPostView,
+  recordSearchQuery: () => recordSearchQuery,
+  searchPublishedPosts: () => searchPublishedPosts,
+  togglePostBookmark: () => togglePostBookmark,
+  togglePostReaction: () => togglePostReaction,
+  updateReaderFeedPreference: () => updateReaderFeedPreference,
+  upsertUser: () => upsertUser
+});
 import { createClient } from "@libsql/client";
 import { and, asc, desc, eq, gt, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
@@ -188,6 +243,12 @@ async function repairReaderSchema(db) {
   }
 }
 async function repairEngagementSchema(db) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS onesignal_subscriptions (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    reader_id integer,
+    subscription_id text NOT NULL UNIQUE,
+    created_at integer NOT NULL
+  )`));
   await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS push_subscriptions (
     id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
     reader_id integer,
@@ -577,6 +638,23 @@ async function getAnalytics() {
       views: hourCounts.get(hour) || 0
     }))
   };
+}
+async function createIngestedPost(input) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const status = input.status || "pending_review";
+  const now2 = /* @__PURE__ */ new Date();
+  const [created] = await db.insert(posts).values({
+    headline: input.headline,
+    body: input.body,
+    imageUrl: input.imageUrl || null,
+    status,
+    scheduledTime: input.scheduledTime || null,
+    publishedTime: status === "published" ? now2 : null,
+    createdBy: input.createdBy || 1,
+    updatedAt: now2
+  }).returning();
+  return created;
 }
 var _db, _schemaRepair;
 var init_db = __esm({
@@ -1008,20 +1086,32 @@ async function sendOneSignalNotification(payload) {
   return responseBody ? JSON.parse(responseBody) : {};
 }
 async function sendDailyPushNotifications() {
+  const { getDb: getDb2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+  const { oneSignalSubscriptions: oneSignalSubscriptions2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+  const db = await getDb2();
+  if (!db) throw new Error("Database unavailable");
+  const subscriptions = await db.select({ subscriptionId: oneSignalSubscriptions2.subscriptionId }).from(oneSignalSubscriptions2);
   const result = { found: 0, sent: 0, failed: 0, removed: 0 };
+  result.found = subscriptions.length;
+  if (subscriptions.length === 0) {
+    throw new Error("No OneSignal subscriptions are registered");
+  }
   try {
     const response = await sendOneSignalNotification({
-      included_segments: ["Subscribed Users"],
+      include_subscription_ids: subscriptions.map((subscription) => subscription.subscriptionId),
       headings: { en: "Time for your daily bytes!" },
       contents: { en: "Catch up on what matters in tech." },
       url: "/dashboard"
     });
     result.sent = Number(response.recipients ?? 0);
-    result.found = result.sent;
+    if (result.sent === 0) {
+      throw new Error("OneSignal accepted the request but found no subscribed users");
+    }
     console.info("[Push] OneSignal daily delivery result:", result);
   } catch (error) {
     result.failed = 1;
     console.error("[Push] OneSignal daily delivery failed:", error);
+    throw error;
   }
   return result;
 }
@@ -2198,6 +2288,18 @@ var appRouter = router({
   }),
   reader: router({
     oneSignalAppId: publicProcedure.query(() => ENV.oneSignalAppId),
+    registerOneSignalSubscription: publicProcedure.input(z2.object({ subscriptionId: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
+      let readerId = null;
+      try {
+        readerId = (await requireReader(ctx)).id;
+      } catch {
+      }
+      const db = await getDb();
+      if (!db) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR" });
+      await db.delete(oneSignalSubscriptions).where(eq3(oneSignalSubscriptions.subscriptionId, input.subscriptionId));
+      await db.insert(oneSignalSubscriptions).values({ readerId, subscriptionId: input.subscriptionId });
+      return { success: true };
+    }),
     sendTestPush: publicProcedure.input(z2.object({ subscriptionId: z2.string().min(1) })).mutation(async ({ input }) => {
       const { sendTestPushNotification: sendTestPushNotification2 } = await Promise.resolve().then(() => (init_push(), push_exports));
       return await sendTestPushNotification2(input.subscriptionId);
@@ -2863,7 +2965,8 @@ async function setupApp() {
       return res.json({ sent });
     } catch (error) {
       console.error("[Cron] notify failed", error);
-      return res.status(500).json({ error: "Notify job failed" });
+      const detail = error instanceof Error ? error.message : "Unknown notification provider error";
+      return res.status(500).json({ error: "Notify job failed", detail });
     }
   });
   app.get("/api/cron/curate", async (req, res) => {
