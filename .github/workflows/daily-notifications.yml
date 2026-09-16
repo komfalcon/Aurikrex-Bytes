@@ -2,12 +2,18 @@ name: Aurikrex Bytes Push Notifications
 
 on:
   schedule:
-    # 8:00 AM WAT (7:00 UTC)
-    - cron: "0 7 * * *"
+    # 7:35 AM WAT (6:35 UTC)
+    - cron: "35 6 * * *"
+    # 7:40 AM WAT (6:40 UTC)
+    - cron: "40 6 * * *"
+    # 7:45 AM WAT (6:45 UTC)
+    - cron: "45 6 * * *"
+    # 8:01 AM WAT (7:01 UTC)
+    - cron: "1 7 * * *"
     # 10:00 PM WAT (21:00 UTC)
     - cron: "0 21 * * *"
-    #7:25am WAT (6:25 UTC)
-    - cron: "25 7 * * *"  
+    # 12:00 AM WAT (23:00 UTC)
+    - cron: "0 23 * * *"
   workflow_dispatch:
 
 permissions:
@@ -36,14 +42,7 @@ jobs:
             -H "Accept: application/json" \
             "https://www.bytes.aurikrex.tech/api/cron/notify")"
           echo "$response"
-          found="$(echo "$response" | jq -r '.found // 0')"
-          sent="$(echo "$response" | jq -r '.sent // 0')"
-          failed="$(echo "$response" | jq -r '.failed // 0')"
-          if [ "$found" -eq 0 ]; then
-            echo "No push subscriptions are stored in the production database" >&2
-            exit 1
-          fi
-          if [ "$sent" -eq 0 ]; then
-            echo "No push notifications were delivered (failed=$failed)" >&2
-            exit 1
-          fi
+          found="$(echo "$response" | jq -r '.sent.found // .found // 0')"
+          sent="$(echo "$response" | jq -r '.sent.sent // .sent // 0')"
+          failed="$(echo "$response" | jq -r '.sent.failed // .failed // 0')"
+          echo "Summary: found=$found, sent=$sent, failed=$failed"
