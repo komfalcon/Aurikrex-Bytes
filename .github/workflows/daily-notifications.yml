@@ -9,7 +9,7 @@ on:
     # 7:45 AM WAT (6:45 UTC)
     - cron: "45 6 * * *"
     # 8:01 AM WAT (7:01 UTC)
-    - cron: "40 7 * * *"
+    - cron: "1 7 * * *"
     # 10:00 PM WAT (21:00 UTC)
     - cron: "0 21 * * *"
     # 12:00 AM WAT (23:00 UTC)
@@ -30,15 +30,14 @@ jobs:
         run: |
           set -euo pipefail
           CRON_SEC="${CRON_SECRET:-}"
-          AUTH_HEADER="Authorization: Bearer ${CRON_SEC}"
           if [ -z "$CRON_SEC" ]; then
-            AUTH_HEADER="x-cron-fallback: 1"
+            echo "CRON_SECRET is not configured in GitHub Actions secrets."
+            exit 1
           fi
           response="$(curl --fail-with-body --show-error --silent \
             --retry 3 --retry-delay 5 --retry-all-errors \
             --connect-timeout 15 --max-time 60 \
-            -H "${AUTH_HEADER}" \
-            -H "x-vercel-cron: 1" \
+            -H "Authorization: Bearer ${CRON_SEC}" \
             -H "Accept: application/json" \
             "https://www.bytes.aurikrex.tech/api/cron/notify")"
           echo "$response"

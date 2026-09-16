@@ -7,39 +7,75 @@ interface PushSubscribeButtonProps {
   variant?: "header" | "button";
 }
 
-const DEFAULT_VAPID_PUBLIC_KEY = "BI5SEWx9U3nei2bzEVFnvNCTgBHYYfIUwGBrnsb0757spGDalsRS8JDdVWAKJW4b1lmgcacI3CN1f5MMvu9yLpQ";
+type OneSignalInstance = {
+  init(options: { appId: string; serviceWorkerPath?: string }): Promise<void>;
+  Notifications: { requestPermission(): Promise<void> };
+  User: { PushSubscription: { id?: string | null; optedIn?: boolean } };
+};
+
+declare global {
+  interface Window {
+    OneSignalDeferred?: Array<(instance: OneSignalInstance) => void | Promise<void>>;
+  }
+}
+
+let oneSignalPromise: Promise<OneSignalInstance> | null = null;
+
+function getOneSignal(appId: string) {
+  if (oneSignalPromise) return oneSignalPromise;
+  if (!appId) return Promise.reject(new Error("OneSignal is not configured for this site."));
+
+  oneSignalPromise = new Promise((resolve, reject) => {
+    const queue = window.OneSignalDeferred || [];
+    window.OneSignalDeferred = queue;
+    queue.push(async OneSignal => {
+      try {
+        await OneSignal.init({ appId, serviceWorkerPath: "/OneSignalSDKWorker.js" });
+        resolve(OneSignal);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+  return oneSignalPromise;
+}
+
+async function waitForSubscriptionId(OneSignal: OneSignalInstance) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const subscriptionId = OneSignal.User.PushSubscription.id;
+    if (subscriptionId) return subscriptionId;
+    await new Promise(resolve => window.setTimeout(resolve, 500));
+  }
+  return null;
+}
 
 export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonProps) {
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const vapidKeyQuery = trpc.reader.vapidPublicKey.useQuery();
-  const subscribeMutation = trpc.reader.subscribePush.useMutation();
+  const oneSignalAppIdQuery = trpc.reader.oneSignalAppId.useQuery();
   const sendTestMutation = trpc.reader.sendTestPush.useMutation();
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    if (!("serviceWorker" in navigator) || !("Notification" in window)) {
       setPermission("unsupported");
       return;
     }
 
     setPermission(Notification.permission);
-    if (Notification.permission === "granted") {
-      navigator.serviceWorker.ready.then(reg => {
-        reg.pushManager.getSubscription().then(sub => {
-          if (sub) setIsSubscribed(true);
-        });
-      }).catch(() => undefined);
-    }
+    if (!oneSignalAppIdQuery.data) return;
+    getOneSignal(oneSignalAppIdQuery.data).then(OneSignal => {
+      setIsSubscribed(Boolean(OneSignal.User.PushSubscription.optedIn));
+    }).catch(() => undefined);
 
-  }, []);
+  }, [oneSignalAppIdQuery.data]);
 
   const handleSubscribe = async () => {
     if (typeof window === "undefined") return;
 
-    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    if (!("serviceWorker" in navigator) || !("Notification" in window)) {
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
       if (isIOS) {
         toast.info("To enable notifications on iOS, tap Share -> 'Add to Home Screen' first.", { duration: 6000 });
@@ -59,88 +95,21 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
     try {
       setLoading(true);
 
-      let currentPerm: NotificationPermission = Notification.permission;
-      if (currentPerm !== "granted") {
-        currentPerm = await Notification.requestPermission();
-        setPermission(currentPerm);
-      }
-
-      if (currentPerm !== "granted") {
+      const OneSignal = await getOneSignal(oneSignalAppIdQuery.data || "");
+      await OneSignal.Notifications.requestPermission();
+      setPermission(Notification.permission);
+      if (Notification.permission !== "granted") {
         toast.error("Notification permission was denied.");
         return;
       }
-
-
-      let reg = await navigator.serviceWorker.getRegistration();
-      if (!reg) {
-        reg = await navigator.serviceWorker.register("/sw.js");
-      }
-      await navigator.serviceWorker.ready;
-
-      const vapidKey = (vapidKeyQuery.data && vapidKeyQuery.data.length > 10)
-        ? vapidKeyQuery.data
-        : DEFAULT_VAPID_PUBLIC_KEY;
-
-      const urlBase64ToUint8Array = (base64String: string) => {
-        const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-        const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-        const rawData = window.atob(base64);
-        const outputArray = new Uint8Array(rawData.length);
-        for (let i = 0; i < rawData.length; ++i) {
-          outputArray[i] = rawData.charCodeAt(i);
-        }
-        return outputArray;
-      };
-
-      let subscription = await reg.pushManager.getSubscription();
-      if (subscription) {
-        try {
-          await subscription.unsubscribe();
-        } catch (unsubErr) {
-          console.warn("[PushSubscribe] Unsubscribe old key notice:", unsubErr);
-        }
-      }
-
-      subscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidKey),
-      });
-
-      if (subscription) {
-        const jsonSub = subscription.toJSON();
-        const p256dh = jsonSub.keys?.p256dh;
-        const auth = jsonSub.keys?.auth;
-
-        if (p256dh && auth) {
-          await subscribeMutation.mutateAsync({
-            endpoint: subscription.endpoint,
-            p256dh,
-            auth,
-          });
-        }
-      }
-
       setIsSubscribed(true);
 
-      try {
-        await reg.showNotification("Aurikrex Bytes Push Active! 🚀", {
-          body: "You'll receive daily technology briefs directly on your lock screen & status bar (8:00 AM & 10:00 PM).",
-          icon: "/logo-192.png",
-          badge: "/logo-192.png",
-          vibrate: [200, 100, 200],
-          tag: "aurikrex-welcome-push",
-          data: { url: "/dashboard" }
-        } as NotificationOptions);
-      } catch (err) {
-        console.warn("[Push] Direct showNotification error:", err);
-      }
+      const subscriptionId = await waitForSubscriptionId(OneSignal);
+      if (!subscriptionId) throw new Error("OneSignal did not return a subscription ID yet. Please try again.");
+      const testResult = await sendTestMutation.mutateAsync({ subscriptionId });
+      if (!testResult.success) throw new Error(testResult.error || "The test notification could not be sent.");
 
-      if (subscription?.endpoint) {
-        const testResult = await sendTestMutation.mutateAsync({ endpoint: subscription.endpoint });
-        if (!testResult.success) throw new Error(testResult.error || "The test notification could not be sent.");
-      }
-
-      toast.success("System Push Notifications Enabled!");
+      toast.success("OneSignal notifications enabled!");
     } catch (e) {
       console.error("[PushSubscribe] error:", e);
       toast.error(e instanceof Error ? e.message : "Failed to enable notifications.");

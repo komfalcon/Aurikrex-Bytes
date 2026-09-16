@@ -548,37 +548,12 @@ export const appRouter = router({
     }),
   }),
   reader: router({
-    vapidPublicKey: publicProcedure.query(() => ENV.vapidPublicKey),
-    subscribePush: publicProcedure
-      .input(z.object({
-        endpoint: z.string().url(),
-        p256dh: z.string(),
-        auth: z.string(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        let readerId: number | null = null;
-        try {
-          const session = await requireReader(ctx);
-          readerId = session.id;
-        } catch {
-          // Guest subscription without active session
-        }
-        const db = await getDb();
-        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-        await db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, input.endpoint));
-        await db.insert(pushSubscriptions).values({
-          readerId,
-          endpoint: input.endpoint,
-          p256dh: input.p256dh,
-          auth: input.auth,
-        });
-        return { success: true };
-      }),
+    oneSignalAppId: publicProcedure.query(() => ENV.oneSignalAppId),
     sendTestPush: publicProcedure
-      .input(z.object({ endpoint: z.string().url() }))
+      .input(z.object({ subscriptionId: z.string().min(1) }))
       .mutation(async ({ input }) => {
         const { sendTestPushNotification } = await import("./push.js");
-        return await sendTestPushNotification(input.endpoint);
+        return await sendTestPushNotification(input.subscriptionId);
       }),
     setFeedPreference: publicProcedure
       .input(

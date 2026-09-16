@@ -1,18 +1,29 @@
-import webpush from "web-push";
-import { getDb } from "./db.js";
-import { pushSubscriptions } from "../drizzle/schema.js";
-import { ENV } from "./_core/env.js";
-import { eq } from "drizzle-orm";
+const ONESIGNAL_API_URL = "https://api.onesignal.com/notifications";
 
-const DEFAULT_VAPID_PUBLIC = "BI5SEWx9U3nei2bzEVFnvNCTgBHYYfIUwGBrnsb0757spGDalsRS8JDdVWAKJW4b1lmgcacI3CN1f5MMvu9yLpQ";
-const DEFAULT_VAPID_PRIVATE = "4uCF-AGmorh_XVBRRCPiWMPoFr68C4gso4_TrW2DAmU";
+function getOneSignalConfig() {
+  const appId = process.env.ONESIGNAL_APP_ID;
+  const apiKey = process.env.ONESIGNAL_REST_API_KEY || process.env.ONESIGNAL_API_KEY;
+  if (!appId || !apiKey) {
+    throw new Error("ONESIGNAL_APP_ID and ONESIGNAL_REST_API_KEY are required");
+  }
+  return { appId, apiKey };
+}
 
-function configureVapid() {
-  const publicKey = process.env.VAPID_PUBLIC_KEY || ENV.vapidPublicKey || DEFAULT_VAPID_PUBLIC;
-  const privateKey = process.env.VAPID_PRIVATE_KEY || ENV.vapidPrivateKey || DEFAULT_VAPID_PRIVATE;
-  if (!publicKey || !privateKey) throw new Error("VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required");
-
-  webpush.setVapidDetails("mailto:hello@aurikrex.tech", publicKey, privateKey);
+async function sendOneSignalNotification(payload: Record<string, unknown>) {
+  const { appId, apiKey } = getOneSignalConfig();
+  const response = await fetch(ONESIGNAL_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Key ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ app_id: appId, target_channel: "push", ...payload }),
+  });
+  const responseBody = await response.text();
+  if (!response.ok) {
+    throw new Error(`OneSignal request failed (${response.status}): ${responseBody}`);
+  }
+  return responseBody ? JSON.parse(responseBody) as Record<string, unknown> : {};
 }
 
 type PushDeliveryResult = {
@@ -23,81 +34,35 @@ type PushDeliveryResult = {
 };
 
 export async function sendDailyPushNotifications(): Promise<PushDeliveryResult> {
-  configureVapid();
-  const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
-
-  const subs = await db.select().from(pushSubscriptions);
-  const result: PushDeliveryResult = { found: subs.length, sent: 0, failed: 0, removed: 0 };
-  console.info(`[Push] Starting delivery to ${subs.length} stored subscriptions.`);
-  if (subs.length === 0) return result;
-
-  const payload = JSON.stringify({
-    title: "Time for your daily bytes! 🚀",
-    body: "Catch up on what matters in tech.",
-    url: "/dashboard",
-  });
-
-  for (const sub of subs) {
-    try {
-      await webpush.sendNotification({
-        endpoint: sub.endpoint,
-        keys: { p256dh: sub.p256dh, auth: sub.auth },
-      }, payload);
-      result.sent += 1;
-    } catch (error: any) {
-      result.failed += 1;
-      const statusCode = Number(error?.statusCode || 0);
-      if (statusCode === 404 || statusCode === 410 || statusCode === 401 || statusCode === 400) {
-        await db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, sub.id));
-        result.removed += 1;
-        console.warn(`[Push] Removed invalid/expired subscription ${sub.id} (${statusCode}).`);
-      } else {
-        console.error(`[Push] Delivery failed for subscription ${sub.id} (${statusCode || "unknown"}).`, error);
-      }
-    }
+  const result: PushDeliveryResult = { found: 0, sent: 0, failed: 0, removed: 0 };
+  try {
+    const response = await sendOneSignalNotification({
+      included_segments: ["Subscribed Users"],
+      headings: { en: "Time for your daily bytes!" },
+      contents: { en: "Catch up on what matters in tech." },
+      url: "/dashboard",
+    });
+    result.sent = Number(response.recipients ?? 0);
+    result.found = result.sent;
+    console.info("[Push] OneSignal daily delivery result:", result);
+  } catch (error) {
+    result.failed = 1;
+    console.error("[Push] OneSignal daily delivery failed:", error);
   }
-
-  console.info("[Push] Delivery result:", result);
   return result;
 }
 
-export async function sendTestPushNotification(endpoint: string) {
-  configureVapid();
-
-  const db = await getDb();
-  if (!db) return { success: false, error: "Database unavailable" };
-
-  const [sub] = await db
-    .select()
-    .from(pushSubscriptions)
-    .where(eq(pushSubscriptions.endpoint, endpoint))
-    .limit(1);
-
-  if (!sub) {
-    return { success: false, error: "Subscription endpoint not found" };
-  }
-
-  const payload = JSON.stringify({
-    title: "Aurikrex Bytes Push Active! 🚀",
-    body: "You're all set! Daily tech updates will arrive at 8:00 AM & 10:00 PM.",
-    url: "/dashboard",
-  });
-
+export async function sendTestPushNotification(subscriptionId: string) {
   try {
-    await webpush.sendNotification(
-      {
-        endpoint: sub.endpoint,
-        keys: {
-          p256dh: sub.p256dh,
-          auth: sub.auth,
-        },
-      },
-      payload
-    );
+    await sendOneSignalNotification({
+      include_subscription_ids: [subscriptionId],
+      headings: { en: "Aurikrex Bytes Push Active!" },
+      contents: { en: "You're all set! Daily tech updates will arrive at 8:00 AM and 10:00 PM." },
+      url: "/dashboard",
+    });
     return { success: true };
   } catch (err) {
-    console.error("[Push] Failed to send test push notification:", err);
+    console.error("[Push] Failed to send OneSignal test notification:", err);
     return { success: false, error: String(err) };
   }
 }
