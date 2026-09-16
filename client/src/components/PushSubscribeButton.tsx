@@ -145,10 +145,10 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         permission === "granted" || isSubscribed
           ? "Daily push notifications active (8:00 AM & 10:00 PM)"
           : permission === "denied"
-          ? "Notifications blocked in browser settings"
-          : permission === "unsupported"
-          ? "Notifications info"
-          : "Enable daily push notifications (8:00 AM & 10:00 PM)"
+            ? "Notifications blocked in browser settings"
+            : permission === "unsupported"
+              ? "Notifications info"
+              : "Enable daily push notifications (8:00 AM & 10:00 PM)"
       }
     >
       {permission === "granted" || isSubscribed ? (
