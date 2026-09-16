@@ -22,11 +22,19 @@ async function setupApp() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
 
-  app.get("/api/cron/publish", async (req, res) => {
-    res.setHeader("Cache-Control", "no-store");
+  const isCronAuthorized = (req: express.Request) => {
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+    const isVercelHeader = req.headers["x-vercel-cron"] === "1" || req.headers["x-vercel-cron"] === "true";
+    if (isVercelHeader) return true;
+    if (cronSecret && authorization === `Bearer ${cronSecret}`) return true;
+    if (!cronSecret && !authorization) return true;
+    return false;
+  };
+
+  app.get("/api/cron/publish", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -39,9 +47,7 @@ async function setupApp() {
 
   app.get("/api/cron/notify", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    const authorization = req.headers.authorization;
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+    if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -56,9 +62,7 @@ async function setupApp() {
 
   app.get("/api/cron/curate", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    const authorization = req.headers.authorization;
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+    if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
