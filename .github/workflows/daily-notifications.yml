@@ -4,8 +4,6 @@ on:
   schedule:
     # 8:01 AM WAT (7:01 AM UTC)
     - cron: "1 7 * * *"
-    # 4:07 PM WAT (3:07 PM UTC)
-    - cron: "33 16 * * *"
     # 10:00 PM WAT (9:00 PM UTC)
     - cron: "0 21 * * *"
   workflow_dispatch:
