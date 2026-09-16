@@ -9,7 +9,7 @@ on:
     # 7:45 AM WAT (6:45 UTC)
     - cron: "45 6 * * *"
     # 8:01 AM WAT (7:01 UTC)
-    - cron: "1 7 * * *"
+    - cron: "40 7 * * *"
     # 10:00 PM WAT (21:00 UTC)
     - cron: "0 21 * * *"
     # 12:00 AM WAT (23:00 UTC)
