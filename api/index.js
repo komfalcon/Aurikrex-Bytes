@@ -1103,10 +1103,8 @@ async function sendDailyPushNotifications() {
       contents: { en: "Catch up on what matters in tech." },
       url: "/dashboard"
     });
-    result.sent = Number(response.recipients ?? 0);
-    if (result.sent === 0) {
-      throw new Error("OneSignal accepted the request but found no subscribed users");
-    }
+    if (!response.id) throw new Error("OneSignal did not return a notification ID");
+    result.sent = Number(response.recipients ?? subscriptions.length);
     console.info("[Push] OneSignal daily delivery result:", result);
   } catch (error) {
     result.failed = 1;
