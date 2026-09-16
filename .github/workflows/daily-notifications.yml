@@ -35,3 +35,7 @@ jobs:
           sent="$(echo "$response" | jq -r '.sent.sent // .sent // 0')"
           failed="$(echo "$response" | jq -r '.sent.failed // .failed // 0')"
           echo "Summary: found=$found, sent=$sent, failed=$failed"
+          if [ "$failed" -gt 0 ] || [ "$sent" -lt 1 ]; then
+            echo "Notification delivery failed or reached no subscribers."
+            exit 1
+          fi

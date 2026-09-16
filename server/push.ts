@@ -44,10 +44,14 @@ export async function sendDailyPushNotifications(): Promise<PushDeliveryResult> 
     });
     result.sent = Number(response.recipients ?? 0);
     result.found = result.sent;
+    if (result.sent === 0) {
+      throw new Error("OneSignal accepted the request but found no subscribed users");
+    }
     console.info("[Push] OneSignal daily delivery result:", result);
   } catch (error) {
     result.failed = 1;
     console.error("[Push] OneSignal daily delivery failed:", error);
+    throw error;
   }
   return result;
 }
