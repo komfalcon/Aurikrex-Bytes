@@ -24,16 +24,23 @@ jobs:
             echo "CRON_SECRET is not configured in GitHub Actions secrets."
             exit 1
           fi
-          response="$(curl --fail-with-body --show-error --silent \
+          response="$(curl --show-error --silent --write-out '\n%{http_code}' \
             --retry 3 --retry-delay 5 --retry-all-errors \
             --connect-timeout 15 --max-time 60 \
             -H "Authorization: Bearer ${CRON_SEC}" \
             -H "Accept: application/json" \
             "https://www.bytes.aurikrex.tech/api/cron/notify")"
-          echo "$response"
-          found="$(echo "$response" | jq -r '.sent.found // .found // 0')"
-          sent="$(echo "$response" | jq -r '.sent.sent // .sent // 0')"
-          failed="$(echo "$response" | jq -r '.sent.failed // .failed // 0')"
+          status="$(echo "$response" | tail -n 1)"
+          body="$(echo "$response" | sed '$d')"
+          echo "HTTP status: $status"
+          echo "Response: $body"
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "Notification API request failed."
+            exit 1
+          fi
+          found="$(echo "$body" | jq -r '.sent.found // .found // 0')"
+          sent="$(echo "$body" | jq -r '.sent.sent // .sent // 0')"
+          failed="$(echo "$body" | jq -r '.sent.failed // .failed // 0')"
           echo "Summary: found=$found, sent=$sent, failed=$failed"
           if [ "$failed" -gt 0 ] || [ "$sent" -lt 1 ]; then
             echo "Notification delivery failed or reached no subscribers."

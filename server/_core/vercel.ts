@@ -52,7 +52,8 @@ async function setupApp() {
       return res.json({ sent });
     } catch (error) {
       console.error("[Cron] notify failed", error);
-      return res.status(500).json({ error: "Notify job failed" });
+      const detail = error instanceof Error ? error.message : "Unknown notification provider error";
+      return res.status(500).json({ error: "Notify job failed", detail });
     }
   });
 
