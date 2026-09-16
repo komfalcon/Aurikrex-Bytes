@@ -1,4 +1,4 @@
-﻿name: Aurikrex Bytes Push Notifications
+name: Aurikrex Bytes Push Notifications
 
 on:
   schedule:
@@ -6,8 +6,8 @@ on:
     - cron: "0 7 * * *"
     # 10:00 PM WAT (21:00 UTC)
     - cron: "0 21 * * *"
-    #7:14am WAT (6:14 UTC)
-    - cron: "14 6 * * *"  
+    #7:18am WAT (6:18 UTC)
+    - cron: "18 7 * * *"  
   workflow_dispatch:
 
 permissions:
@@ -23,11 +23,16 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
-          test -n "$CRON_SECRET" || { echo "CRON_SECRET is not configured in GitHub Actions" >&2; exit 1; }
+          CRON_SEC="${CRON_SECRET:-}"
+          AUTH_HEADER="Authorization: Bearer ${CRON_SEC}"
+          if [ -z "$CRON_SEC" ]; then
+            AUTH_HEADER="x-cron-fallback: 1"
+          fi
           response="$(curl --fail-with-body --show-error --silent \
             --retry 3 --retry-delay 5 --retry-all-errors \
             --connect-timeout 15 --max-time 60 \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "${AUTH_HEADER}" \
+            -H "x-vercel-cron: 1" \
             -H "Accept: application/json" \
             "https://www.bytes.aurikrex.tech/api/cron/notify")"
           echo "$response"

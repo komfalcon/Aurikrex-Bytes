@@ -1015,10 +1015,10 @@ async function sendDailyPushNotifications() {
     } catch (error) {
       result.failed += 1;
       const statusCode = Number(error?.statusCode || 0);
-      if (statusCode === 404 || statusCode === 410) {
+      if (statusCode === 404 || statusCode === 410 || statusCode === 401 || statusCode === 400) {
         await db.delete(pushSubscriptions).where(eq3(pushSubscriptions.id, sub.id));
         result.removed += 1;
-        console.warn(`[Push] Removed expired subscription ${sub.id} (${statusCode}).`);
+        console.warn(`[Push] Removed invalid/expired subscription ${sub.id} (${statusCode}).`);
       } else {
         console.error(`[Push] Delivery failed for subscription ${sub.id} (${statusCode || "unknown"}).`, error);
       }
