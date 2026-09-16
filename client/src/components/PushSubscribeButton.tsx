@@ -93,16 +93,18 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
       };
 
       let subscription = await reg.pushManager.getSubscription();
-      if (!subscription) {
+      if (subscription) {
         try {
-          subscription = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(vapidKey),
-          });
-        } catch (subErr) {
-          console.warn("[PushSubscribe] Native pushManager subscribe warning:", subErr);
+          await subscription.unsubscribe();
+        } catch (unsubErr) {
+          console.warn("[PushSubscribe] Unsubscribe old key notice:", unsubErr);
         }
       }
+
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+      });
 
       if (subscription) {
         const jsonSub = subscription.toJSON();
