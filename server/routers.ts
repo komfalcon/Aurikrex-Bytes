@@ -4,6 +4,7 @@ import { z } from "zod";
 import { adminUsers, oneSignalSubscriptions, posts, readers, pushSubscriptions } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
 import {
+  createOAuthState,
   createToken,
   hashPassword,
   isValidPassword,
@@ -813,8 +814,8 @@ export const appRouter = router({
         return { success: true };
       }),
     googleStart: publicProcedure.query(({ ctx }) => {
-      const state = randomToken();
       const nonce = randomToken();
+      const state = createOAuthState(nonce);
       ctx.res.cookie(GOOGLE_STATE_COOKIE, state, {
         ...getSessionCookieOptions(ctx.req),
         maxAge: 1000 * 60 * 10,
