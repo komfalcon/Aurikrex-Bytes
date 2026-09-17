@@ -85,6 +85,7 @@ var init_schema = __esm({
       lastActiveDate: text("last_active_date"),
       feedViewMode: text("feed_view_mode", { enum: ["editorial", "compact"] }).notNull().default("editorial"),
       feedViewOnboardingCompleted: integer("feed_view_onboarding_completed", { mode: "boolean" }).notNull().default(false),
+      avatarUrl: text("avatar_url"),
       createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
     });
     postViews = sqliteTable("post_views", {
@@ -216,6 +217,7 @@ __export(db_exports, {
   searchPublishedPosts: () => searchPublishedPosts,
   togglePostBookmark: () => togglePostBookmark,
   togglePostReaction: () => togglePostReaction,
+  updateReaderAvatar: () => updateReaderAvatar,
   updateReaderFeedPreference: () => updateReaderFeedPreference,
   upsertUser: () => upsertUser
 });
@@ -364,6 +366,12 @@ async function getReaderById(id) {
   if (!db) return void 0;
   const result = await db.select().from(readers).where(eq(readers.id, id)).limit(1);
   return result[0];
+}
+async function updateReaderAvatar(readerId, avatarUrl) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  await db.update(readers).set({ avatarUrl }).where(eq(readers.id, readerId));
+  return { success: true };
 }
 async function updateReaderFeedPreference(readerId, feedViewMode, onboardingCompleted = true) {
   const db = await getDb();
@@ -1605,13 +1613,28 @@ function registerGoogleAuthRoutes(app) {
       const db = await getDb();
       if (!db) return res.redirect("/login?error=database");
       const googleName = payload.name || [payload.given_name, payload.family_name].filter(Boolean).join(" ");
+      const googlePicture = payload.picture || null;
       let reader = await getReaderByEmail(payload.email);
       if (!reader) {
-        await db.insert(readers).values({ name: googleName, email: payload.email.toLowerCase(), googleId: payload.sub, emailVerified: true, verificationToken: null, passwordHash: null });
+        await db.insert(readers).values({
+          name: googleName,
+          email: payload.email.toLowerCase(),
+          googleId: payload.sub,
+          avatarUrl: googlePicture,
+          emailVerified: true,
+          verificationToken: null,
+          passwordHash: null
+        });
         reader = await getReaderByEmail(payload.email);
       } else if (reader.googleId && reader.googleId !== payload.sub) return res.redirect("/login?error=oauth");
-      else if (!reader.googleId || !reader.name.trim() && googleName) {
-        await db.update(readers).set({ googleId: payload.sub, name: reader.name.trim() || googleName, emailVerified: true, verificationToken: null }).where(eq2(readers.id, reader.id));
+      else {
+        await db.update(readers).set({
+          googleId: payload.sub,
+          name: reader.name.trim() || googleName,
+          avatarUrl: reader.avatarUrl || googlePicture,
+          emailVerified: true,
+          verificationToken: null
+        }).where(eq2(readers.id, reader.id));
       }
       if (!reader) return res.redirect("/login?error=oauth");
       const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true }, true);
@@ -2328,7 +2351,8 @@ var appRouter = router({
       z2.object({
         name: z2.string().trim().min(1).max(120),
         email: z2.string().email(),
-        password: z2.string().min(8)
+        password: z2.string().min(8),
+        avatarUrl: z2.string().optional().nullable()
       })
     ).mutation(async ({ input }) => {
       if (!isValidPassword(input.password))
@@ -2352,6 +2376,7 @@ var appRouter = router({
       await db.insert(readers).values({
         name: input.name.trim(),
         email,
+        avatarUrl: input.avatarUrl || null,
         passwordHash: await hashPassword(input.password),
         verificationToken,
         verificationTokenUsed: null,
@@ -2395,7 +2420,20 @@ var appRouter = router({
       setSession(ctx, READER_COOKIE, token, input.remember);
       return { success: true, emailVerified: Boolean(reader.emailVerified) };
     }),
-    session: publicProcedure.query(async ({ ctx }) => requireReader(ctx)),
+    session: publicProcedure.query(async ({ ctx }) => {
+      const payload = await requireReader(ctx);
+      const reader = await getReaderById(payload.id);
+      return {
+        ...payload,
+        name: reader?.name || "",
+        avatarUrl: reader?.avatarUrl || null,
+        emailVerified: Boolean(reader?.emailVerified)
+      };
+    }),
+    updateAvatar: publicProcedure.input(z2.object({ avatarUrl: z2.string() })).mutation(async ({ input, ctx }) => {
+      const reader = await requireReader(ctx);
+      return updateReaderAvatar(reader.id, input.avatarUrl);
+    }),
     verifyEmail: publicProcedure.input(z2.object({ token: z2.string().min(10) })).mutation(async ({ input }) => {
       const reader = await getReaderByVerificationToken(input.token);
       if (!reader) {

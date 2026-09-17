@@ -195,6 +195,15 @@ export async function getReaderById(id: number) {
     .limit(1);
   return result[0];
 }
+export async function updateReaderAvatar(readerId: number, avatarUrl: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  await db
+    .update(readers)
+    .set({ avatarUrl })
+    .where(eq(readers.id, readerId));
+  return { success: true };
+}
 export async function updateReaderFeedPreference(
   readerId: number,
   feedViewMode: "editorial" | "compact",

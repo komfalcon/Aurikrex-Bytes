@@ -24,10 +24,30 @@ export function registerGoogleAuthRoutes(app: Express) {
       const payload = ticket.getPayload(); if (!payload?.email || payload.nonce !== decodeURIComponent(storedNonce)) return res.redirect("/login?error=oauth");
       const db = await getDb(); if (!db) return res.redirect("/login?error=database");
       const googleName = payload.name || [payload.given_name, payload.family_name].filter(Boolean).join(" ");
+      const googlePicture = payload.picture || null;
       let reader = await getReaderByEmail(payload.email);
-      if (!reader) { await db.insert(readers).values({ name: googleName, email: payload.email.toLowerCase(), googleId: payload.sub, emailVerified: true, verificationToken: null, passwordHash: null }); reader = await getReaderByEmail(payload.email); }
+      if (!reader) {
+        await db.insert(readers).values({
+          name: googleName,
+          email: payload.email.toLowerCase(),
+          googleId: payload.sub,
+          avatarUrl: googlePicture,
+          emailVerified: true,
+          verificationToken: null,
+          passwordHash: null
+        });
+        reader = await getReaderByEmail(payload.email);
+      }
       else if (reader.googleId && reader.googleId !== payload.sub) return res.redirect("/login?error=oauth");
-      else if (!reader.googleId || (!reader.name.trim() && googleName)) { await db.update(readers).set({ googleId: payload.sub, name: reader.name.trim() || googleName, emailVerified: true, verificationToken: null }).where(eq(readers.id, reader.id)); }
+      else {
+        await db.update(readers).set({
+          googleId: payload.sub,
+          name: reader.name.trim() || googleName,
+          avatarUrl: reader.avatarUrl || googlePicture,
+          emailVerified: true,
+          verificationToken: null
+        }).where(eq(readers.id, reader.id));
+      }
       if (!reader) return res.redirect("/login?error=oauth");
       const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true }, true);
       res.cookie("aurikrex_reader_session", session, { ...getFirstPartyCookieOptions(req), maxAge: 1000 * 60 * 60 * 24 * 30 });

@@ -21,6 +21,8 @@ import {
   getPostById,
   getPublishedPostById,
   getReaderByEmail,
+  getReaderById,
+  updateReaderAvatar,
   getReaderDashboard,
   getReaderPostEngagement,
   getReaderByResetToken,
@@ -608,6 +610,7 @@ export const appRouter = router({
           name: z.string().trim().min(1).max(120),
           email: z.string().email(),
           password: z.string().min(8),
+          avatarUrl: z.string().optional().nullable(),
         })
       )
       .mutation(async ({ input }) => {
@@ -633,6 +636,7 @@ export const appRouter = router({
         await db.insert(readers).values({
           name: input.name.trim(),
           email,
+          avatarUrl: input.avatarUrl || null,
           passwordHash: await hashPassword(input.password),
           verificationToken,
           verificationTokenUsed: null,
@@ -682,7 +686,22 @@ export const appRouter = router({
         setSession(ctx, READER_COOKIE, token, input.remember);
         return { success: true, emailVerified: Boolean(reader.emailVerified) };
       }),
-    session: publicProcedure.query(async ({ ctx }) => requireReader(ctx)),
+    session: publicProcedure.query(async ({ ctx }) => {
+      const payload = await requireReader(ctx);
+      const reader = await getReaderById(payload.id);
+      return {
+        ...payload,
+        name: reader?.name || "",
+        avatarUrl: reader?.avatarUrl || null,
+        emailVerified: Boolean(reader?.emailVerified),
+      };
+    }),
+    updateAvatar: publicProcedure
+      .input(z.object({ avatarUrl: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const reader = await requireReader(ctx);
+        return updateReaderAvatar(reader.id, input.avatarUrl);
+      }),
     verifyEmail: publicProcedure
       .input(z.object({ token: z.string().min(10) }))
       .mutation(async ({ input }) => {

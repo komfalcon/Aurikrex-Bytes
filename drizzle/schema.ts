@@ -74,6 +74,7 @@ export const readers = sqliteTable("readers", {
   lastActiveDate: text("last_active_date"),
   feedViewMode: text("feed_view_mode", { enum: ["editorial", "compact"] }).notNull().default("editorial"),
   feedViewOnboardingCompleted: integer("feed_view_onboarding_completed", { mode: "boolean" }).notNull().default(false),
+  avatarUrl: text("avatar_url"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(now),

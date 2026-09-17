@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Bookmark,
   BookOpen,
+  Camera,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -25,6 +26,8 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
+  Upload,
+  User,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -33,6 +36,12 @@ import { PushSubscribeButton } from "@/components/PushSubscribeButton";
 import { useTheme } from "@/contexts/ThemeContext";
 import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
 import Seo from "@/components/Seo";
+
+const getInitial = (nameOrEmail?: string | null) => {
+  if (!nameOrEmail) return "U";
+  const clean = nameOrEmail.trim().replace(/^@/, "");
+  return clean ? clean[0].toUpperCase() : "U";
+};
 
 const formatDate = (value?: string | Date | number | null) =>
   value
@@ -148,8 +157,117 @@ function ThemeToggle() {
     </button>
   );
 }
+function ProfileLightboxModal({
+  isOpen,
+  onClose,
+  sessionData,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  sessionData: any;
+}) {
+  const utils = trpc.useUtils();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const updateAvatarMutation = trpc.reader.updateAvatar.useMutation({
+    onSuccess: async () => {
+      await utils.reader.session.invalidate();
+      toast.success("Profile photo updated!");
+      setUploading(false);
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to update profile photo.");
+      setUploading(false);
+    },
+  });
+
+  if (!isOpen) return null;
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select a valid image file.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size should be under 5MB.");
+      return;
+    }
+
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        updateAvatarMutation.mutate({ avatarUrl: dataUrl });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const name = sessionData?.name || sessionData?.email?.split("@")[0] || "Reader";
+  const initial = getInitial(name);
+
+  return (
+    <div className="whatsapp-profile-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Profile picture modal">
+      <div className="whatsapp-profile-card" onClick={(e) => e.stopPropagation()}>
+        <button className="whatsapp-profile-close" onClick={onClose} aria-label="Close profile modal">
+          <X size={20} />
+        </button>
+
+        <div className="whatsapp-profile-avatar-wrapper">
+          {sessionData?.avatarUrl ? (
+            <img src={sessionData.avatarUrl} alt={name} className="whatsapp-profile-img" />
+          ) : (
+            <div className="whatsapp-profile-fallback">
+              <span>{initial}</span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="whatsapp-profile-edit-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            title="Change Profile Picture"
+          >
+            <Camera size={18} />
+          </button>
+        </div>
+
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={handleFileChange}
+        />
+
+        <div className="whatsapp-profile-info">
+          <h3>{name}</h3>
+          <p>{sessionData?.email}</p>
+        </div>
+
+        <div className="whatsapp-profile-actions">
+          <button
+            type="button"
+            className="button button-small button-outline"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+          >
+            <Upload size={14} /> {uploading ? "Updating..." : "Change photo"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SiteHeader() {
   const [menu, setMenu] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const utils = trpc.useUtils();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
   const logout = trpc.auth.logout.useMutation({
@@ -176,6 +294,22 @@ export function SiteHeader() {
       <div className="header-actions">
         <PushSubscribeButton variant="header" />
         <ThemeToggle />
+        {signedIn && (
+          <button
+            className="header-avatar-btn"
+            onClick={() => setShowProfileModal(true)}
+            title="View & edit profile picture"
+            aria-label="View & edit profile picture"
+          >
+            {session.data?.avatarUrl ? (
+              <img src={session.data.avatarUrl} alt={session.data?.name || "Profile"} className="header-avatar-img" />
+            ) : (
+              <span className="header-avatar-initial">
+                {getInitial(session.data?.name || session.data?.email || "U")}
+              </span>
+            )}
+          </button>
+        )}
         {signedIn ? (
           <button className="header-login text-button" onClick={() => logout.mutate()}>
             <LogOut size={14} /> Sign out
@@ -219,6 +353,16 @@ export function SiteHeader() {
             </div>
             <div className="mobile-nav-account">
               {signedIn ? <>
+                <button
+                  className="mobile-nav-join text-button"
+                  onClick={() => {
+                    setMenu(false);
+                    setShowProfileModal(true);
+                  }}
+                  style={{ marginBottom: "10px" }}
+                >
+                  <User size={16} /> View Profile Photo
+                </button>
                 <button className="mobile-nav-join text-button" onClick={() => logout.mutate()}><LogOut size={16} /> Sign out</button>
               </> : <>
                 <Link href={authRoutes.login} onClick={() => setMenu(false)}>Sign in</Link>
@@ -228,6 +372,11 @@ export function SiteHeader() {
           </nav>
         </>
       )}
+      <ProfileLightboxModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        sessionData={session.data}
+      />
     </header>
   );
 }
@@ -1708,6 +1857,8 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarPreview, setAvatarPreview] = useState("");
   const [token] = useState(
     () => new URLSearchParams(window.location.search).get("token") || ""
   );
@@ -1726,6 +1877,28 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const [verificationState, setVerificationState] = useState<
     "idle" | "verified" | "already_verified" | "error"
   >("idle");
+
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select a valid image file.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size should be under 5MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        setAvatarUrl(dataUrl);
+        setAvatarPreview(dataUrl);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
   const google = trpc.reader.googleStart.useQuery(undefined, {
     enabled: mode === "login" || mode === "signup",
     retry: false,
@@ -1789,7 +1962,7 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
         setMessage("Passwords do not match.");
         return;
       }
-      signup.mutate({ name, email, password });
+      signup.mutate({ name, email, password, avatarUrl: avatarUrl || undefined });
     }
     if (mode === "forgot") forgot.mutate({ email });
     if (mode === "reset") {
@@ -1973,14 +2146,50 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                 <p className="auth-lede">{copy}</p>
                 <form onSubmit={submit}>
                   {mode === "signup" && (
-                    <label>
-                      Full name
-                      <input
-                        value={name}
-                        onChange={e => setName(e.target.value)}
-                        required
-                      />
-                    </label>
+                    <>
+                      <div className="signup-avatar-field">
+                        <label className="signup-avatar-label">Profile photo (optional)</label>
+                        <div className="signup-avatar-row">
+                          <div className="signup-avatar-preview">
+                            {avatarPreview ? (
+                              <img src={avatarPreview} alt="Preview" />
+                            ) : (
+                              <span>{getInitial(name || email || "U")}</span>
+                            )}
+                          </div>
+                          <label className="button button-small button-outline signup-avatar-upload-btn">
+                            <Camera size={14} /> {avatarPreview ? "Change photo" : "Upload photo"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleAvatarFileChange}
+                              style={{ display: "none" }}
+                            />
+                          </label>
+                          {avatarPreview && (
+                            <button
+                              type="button"
+                              className="text-button text-button-muted"
+                              style={{ fontSize: "12px" }}
+                              onClick={() => {
+                                setAvatarUrl("");
+                                setAvatarPreview("");
+                              }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <label>
+                        Full name
+                        <input
+                          value={name}
+                          onChange={e => setName(e.target.value)}
+                          required
+                        />
+                      </label>
+                    </>
                   )}
                   {mode !== "reset" && (
                     <label>
