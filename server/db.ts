@@ -32,6 +32,7 @@ async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
     ["last_active_date", "text"],
     ["feed_view_mode", "text DEFAULT 'editorial' NOT NULL"],
     ["feed_view_onboarding_completed", "integer DEFAULT 0 NOT NULL"],
+    ["avatar_url", "text"],
   ] as const;
   for (const [name, definition] of repairs) {
     if (names.has(name)) continue;
