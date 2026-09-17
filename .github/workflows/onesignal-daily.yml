@@ -1,4 +1,4 @@
-name: Aurikrex Bytes Push Notifications
+name: OneSignal Daily Notifications
 
 on:
   schedule:
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Trigger push notification API
+      - name: Trigger OneSignal notification API
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
