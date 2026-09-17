@@ -37,18 +37,6 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
 import Seo from "@/components/Seo";
 
-const recentClientErrors: string[] = [];
-if (typeof window !== "undefined") {
-  window.addEventListener("error", (e) => {
-    recentClientErrors.push(`[${new Date().toLocaleTimeString()}] Error: ${e.message}`);
-    if (recentClientErrors.length > 20) recentClientErrors.shift();
-  });
-  window.addEventListener("unhandledrejection", (e) => {
-    recentClientErrors.push(`[${new Date().toLocaleTimeString()}] Rejection: ${e.reason?.message || String(e.reason)}`);
-    if (recentClientErrors.length > 20) recentClientErrors.shift();
-  });
-}
-
 const getInitial = (nameOrEmail?: string | null) => {
   if (!nameOrEmail) return "U";
   const clean = nameOrEmail.trim().replace(/^@/, "");
@@ -1862,127 +1850,6 @@ function ArticleSection({
     </section>
   );
 }
-
-function DiagnosticsModal({
-  isOpen,
-  onClose,
-  googleQuery,
-  currentMessage,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  googleQuery: any;
-  currentMessage: string;
-}) {
-  if (!isOpen) return null;
-
-  const isPwa = typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches;
-  const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
-  const currentUrl = typeof window !== "undefined" ? window.location.href : "";
-  const params = typeof window !== "undefined" ? Object.fromEntries(new URLSearchParams(window.location.search)) : {};
-
-  const reportData = {
-    timestamp: new Date().toISOString(),
-    isPwa,
-    isOnline,
-    currentUrl,
-    urlParams: params,
-    displayMessage: currentMessage,
-    googleAuth: {
-      isLoading: googleQuery.isLoading,
-      isError: googleQuery.isError,
-      errorMessage: googleQuery.error?.message || null,
-      configured: googleQuery.data?.configured ?? null,
-      url: googleQuery.data?.url || null,
-    },
-    clientErrors: recentClientErrors,
-  };
-
-  const copyReport = async () => {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(reportData, null, 2));
-      toast.success("Diagnostic report copied to clipboard!");
-    } catch {
-      toast.error("Failed to copy automatically.");
-    }
-  };
-
-  return (
-    <div className="whatsapp-profile-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Diagnostics modal">
-      <div className="whatsapp-profile-card diagnostic-modal-card" onClick={e => e.stopPropagation()}>
-        <button className="whatsapp-profile-close" onClick={onClose} aria-label="Close diagnostics modal">
-          <X size={20} />
-        </button>
-
-        <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 700, color: "var(--ink)" }}>
-          Diagnostics & Error Report
-        </h3>
-        <p style={{ margin: "0 0 16px", fontSize: "12px", color: "var(--muted)", textAlign: "center" }}>
-          Details on device environment, Google Auth connection, and errors.
-        </p>
-
-        <div className="diagnostic-info-list">
-          <div className="diagnostic-item">
-            <strong>App Mode:</strong> <span>{isPwa ? "PWA (Installed App)" : "Standard Web Browser"}</span>
-          </div>
-          <div className="diagnostic-item">
-            <strong>Network:</strong> <span>{isOnline ? "Online" : "Offline"}</span>
-          </div>
-          <div className="diagnostic-item">
-            <strong>Google API:</strong>{" "}
-            <span>
-              {googleQuery.isLoading
-                ? "Connecting to server..."
-                : googleQuery.isError
-                ? `Error: ${googleQuery.error?.message}`
-                : googleQuery.data?.configured
-                ? "Ready & Configured"
-                : "Not Configured"}
-            </span>
-          </div>
-          {currentMessage && (
-            <div className="diagnostic-item diagnostic-error-item">
-              <strong>Current Error:</strong> <span>{currentMessage}</span>
-            </div>
-          )}
-          {params.reason && (
-            <div className="diagnostic-item diagnostic-error-item">
-              <strong>OAuth Reason:</strong> <span>{params.reason}</span>
-            </div>
-          )}
-          {recentClientErrors.length > 0 && (
-            <div className="diagnostic-item diagnostic-error-item">
-              <strong>Captured Logs:</strong>
-              <div className="diagnostic-log-box">
-                {recentClientErrors.map((err, i) => (
-                  <div key={i}>{err}</div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: "flex", gap: "8px", width: "100%", marginTop: "16px" }}>
-          <button type="button" className="button button-small button-full" onClick={copyReport}>
-            Copy report
-          </button>
-          {googleQuery.data?.url && (
-            <a
-              href={googleQuery.data.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="button button-small button-outline button-full"
-              style={{ textAlign: "center" }}
-            >
-              Open Google Auth
-            </a>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const [location, navigate] = useLocation();
   const utils = trpc.useUtils();
@@ -2001,23 +1868,11 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
     const fromStorage = window.sessionStorage.getItem(AUTH_RETURN_KEY);
     return safeReturnTo(fromUrl || fromStorage);
   });
-  const [message, setMessage] = useState(() => {
-    if (typeof window === "undefined") return "";
-    const params = new URLSearchParams(window.location.search);
-    const err = params.get("error");
-    const reason = params.get("reason");
-    if (err === "oauth") {
-      return reason ? `Google sign-in failed: ${reason}` : "Google sign-in failed. Please try again.";
-    }
-    if (err === "database") {
-      return reason ? `Database error: ${reason}` : "Database error. Please try again.";
-    }
-    return "";
-  });
-  const [showDiagnostics, setShowDiagnostics] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return new URLSearchParams(window.location.search).has("debug");
-  });
+  const [message, setMessage] = useState(() =>
+    new URLSearchParams(window.location.search).get("error") === "oauth"
+      ? "Google sign-in failed. Please try again."
+      : ""
+  );
   const [verificationEmail, setVerificationEmail] = useState("");
   const [verificationState, setVerificationState] = useState<
     "idle" | "verified" | "already_verified" | "error"
@@ -2419,22 +2274,11 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                       href={google.data?.url}
                       aria-disabled={!google.data?.url}
                       onClick={event => {
-                        if (!google.data?.url) {
-                          event.preventDefault();
-                          if (google.isError) {
-                            setMessage(`Google sign-in error: ${google.error.message}`);
-                          } else if (google.isLoading) {
-                            setMessage("Connecting to Google, please tap again in a moment.");
-                          } else if (google.data && !google.data.configured) {
-                            setMessage("Google sign-in is not configured on the server.");
-                          } else {
-                            setMessage("Google sign-in link is not ready yet. Please check your internet connection.");
-                          }
-                        }
+                        if (!google.data?.url) event.preventDefault();
                       }}
                     >
                       <GoogleIcon />
-                      <span>{google.isLoading ? "Connecting to Google..." : "Continue with Google"}</span>
+                      <span>Continue with Google</span>
                     </a>
                     <div className="auth-links">
                       {mode === "login" ? (
@@ -2445,34 +2289,16 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                         </Link>
                       )}
                     </div>
-                    <div style={{ marginTop: "14px", textAlign: "center" }}>
-                      <button
-                        type="button"
-                        className="text-button text-button-muted"
-                        style={{ fontSize: "12px", opacity: 0.75 }}
-                        onClick={() => setShowDiagnostics(true)}
-                      >
-                        Trouble signing in? View diagnostic report
-                      </button>
-                    </div>
                   </>
                 )}
-                {message && (
-                  <p className="form-message form-message-error" role="status" style={{ marginTop: "16px" }}>
-                    {message}
-                  </p>
-                )}
+                <p className="form-message" role="status">
+                  {message}
+                </p>
               </>
             )}
           </div>
         </div>
       </div>
-      <DiagnosticsModal
-        isOpen={showDiagnostics}
-        onClose={() => setShowDiagnostics(false)}
-        googleQuery={google}
-        currentMessage={message}
-      />
     </>
   );
 }

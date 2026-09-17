@@ -21,17 +21,3 @@ export function readToken(token: string): SessionPayload | null {
 export function randomToken() { return crypto.randomBytes(32).toString("hex"); }
 export function normalizeEmail(email: string) { return email.trim().toLowerCase(); }
 export function isValidPassword(password: string) { return password.length >= 8 && /\d/.test(password) && /[^A-Za-z0-9]/.test(password); }
-export function createOAuthState(nonce: string) {
-  return jwt.sign({ kind: "oauth_state", nonce }, secret(), { expiresIn: "15m" });
-}
-export function verifyOAuthState(stateToken: string): { nonce: string } | null {
-  try {
-    const payload = jwt.verify(stateToken, secret()) as { kind?: string; nonce?: string };
-    if (payload && payload.kind === "oauth_state" && payload.nonce) {
-      return { nonce: payload.nonce };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
