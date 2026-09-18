@@ -1,0 +1,32 @@
+name: Generate verified daily Bytes
+
+on:
+  schedule:
+    # 06:05 WAT (05:05 UTC); GitHub Actions is the only scheduler for curation.
+    - cron: "5 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  curate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger curation endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$CRON_SECRET"
+          response="$(curl --fail --show-error --silent --write-out '\n%{http_code}' \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "Accept: application/json" \
+            "https://www.bytes.aurikrex.tech/api/cron/curate")"
+          status="$(echo "$response" | tail -n 1)"
+          body="$(echo "$response" | sed '$d')"
+          echo "HTTP status: $status"
+          echo "Response: $body"
+          curated="$(echo "$body" | jq -r '.curated // 0')"
+          echo "Validated draft Bytes added: $curated"

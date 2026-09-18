@@ -8,7 +8,7 @@ describe("Aurikrex Bytes schema", () => {
     expect(readers).toBeDefined();
     expect(postViews).toBeDefined();
     expect(searchQueries).toBeDefined();
-    expect(Object.keys(posts)).toEqual(expect.arrayContaining(["id", "imageUrl", "headline", "body", "status", "scheduledTime", "publishedTime", "rejectionNote", "createdBy", "updatedAt"]));
+    expect(Object.keys(posts)).toEqual(expect.arrayContaining(["id", "imageUrl", "sourceUrl", "sourcePublisher", "sourcePublishedAt", "duplicateKey", "imageQuery", "imageProvenance", "headline", "body", "status", "scheduledTime", "publishedTime", "rejectionNote", "createdBy", "updatedAt"]));
     expect(Object.keys(adminUsers)).toEqual(expect.arrayContaining(["id", "email", "passwordHash", "role", "isActive", "rememberDeviceToken", "createdAt"]));
     expect(Object.keys(readers)).toEqual(expect.arrayContaining(["id", "email", "passwordHash", "googleId", "emailVerified", "verificationToken", "resetToken", "resetTokenExpires", "createdAt"]));
     expect(POST_STATUSES).toEqual(["draft", "pending_review", "scheduled", "published"]);
