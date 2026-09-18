@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { inArray } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { posts } from "../../drizzle/schema.js";
 
@@ -5,291 +7,149 @@ export interface CuratedByte {
   headline: string;
   body: string;
   category: string;
-  imageUrl: string;
+  imageUrl: string | null;
+  sourceUrl?: string;
+  sourcePublisher?: string;
+  sourcePublishedAt?: Date;
+  duplicateKey?: string;
+  imageQuery?: string;
+  imageProvenance?: string;
 }
 
-const HD_UNSPLASH_CATALOG: Record<string, string[]> = {
-  AI: [
-    "https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1531746790731-6c087fecd65a?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1655720828018-edd2daac9349?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1655720023473-b78f44d9fb08?auto=format&fit=crop&w=1200&q=80"
-  ],
-  Tech: [
-    "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1200&q=80"
-  ],
-  Science: [
-    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1507668077129-56e32842fceb?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1532094349884-543bc11b234d?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1507413245164-6160d8298b31?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1517976487492-5750f3195933?auto=format&fit=crop&w=1200&q=80"
-  ],
-  Crypto: [
-    "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1622979135225-d2ba269bc1bd?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1642543492481-44e81e3914a7?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1516245834210-c4c142787335?auto=format&fit=crop&w=1200&q=80"
-  ],
-  Innovation: [
-    "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
-    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80"
-  ]
-};
-
-export function getHdUnsplashCoverUrl(headline: string, category: string = "Tech", seedOffset: number = 0): string {
-  const catKey = HD_UNSPLASH_CATALOG[category] ? category : "Tech";
-  const pool = HD_UNSPLASH_CATALOG[catKey];
-
-  let hash = seedOffset;
-  for (let i = 0; i < headline.length; i++) {
-    hash = (hash << 5) - hash + headline.charCodeAt(i);
-    hash |= 0;
-  }
-  const index = Math.abs(hash) % pool.length;
-  return pool[index];
+interface NewsCandidate {
+  title: string;
+  url: string;
+  publisher: string;
+  publishedAt: Date;
+  duplicateKey: string;
+  imageUrl: string | null;
 }
 
 const TOPIC_POOL = [
-  "Generative AI & Agentic Workflows", "Quantum Hardware & Supercomputing",
-  "Semiconductors & Lithography Advances", "Biotech & CRISPR Gene Therapies",
-  "Fusion Energy & Next-Gen Power Grids", "Robotics & Spatial Vision Systems",
-  "Zero-Day Cybersecurity & Post-Quantum Cryptography", "Decentralized Mesh & Blockchain Infra",
-  "Autonomous Electric Vehicles & Solid-State Batteries", "Neuromorphic Chips & Brain-Computer Interfaces",
-  "Optical Computing & Silicon Photonics", "Synthetic Biology & Bio-Materials",
-  "Hypersonic Aerospace & Satellite Constellations", "Distributed Database Engines & WASM",
-  "Privacy-Preserving Machine Learning & ZK-Proofs"
+  "Generative AI and agentic workflows", "Quantum hardware and supercomputing", "Semiconductors and lithography", "Biotech and CRISPR therapies", "Fusion energy and power grids", "Robotics and spatial vision", "Cybersecurity and post-quantum cryptography", "Blockchain infrastructure", "Electric vehicles and solid-state batteries", "Neuromorphic computing", "Optical computing and silicon photonics", "Synthetic biology", "Aerospace and satellite constellations", "Databases and WebAssembly", "Privacy-preserving machine learning"
 ];
 
-export async function curateTenBytes(): Promise<CuratedByte[]> {
-  const apiKey = (
-    process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    process.env.BUILT_IN_FORGE_API_KEY ||
-    process.env.FORGE_API_KEY ||
-    ""
-  ).trim();
+export function normalizeHeadline(value: string): string {
+  return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim();
+}
 
-  // If no Gemini API key is configured, fetch dynamic live news from real-time feeds
-  if (!apiKey) {
-    console.warn("[AICurator] GEMINI_API_KEY absent. Fetching fresh real-time tech news from live feeds.");
-    return await fetchLiveTechNewsBytes();
-  }
-
-  const currentDate = new Date().toUTCString();
-  const sessionNonce = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-  const shuffledTopics = [...TOPIC_POOL].sort(() => Math.random() - 0.5).slice(0, 10);
-
-  const prompt = `You are the chief editorial director for Aurikrex Bytes, a premium tech news publication.
-Today's Date: ${currentDate}
-Session Nonce: ${sessionNonce}
-
-Curate EXACTLY 10 fresh, high-signal, distinct tech stories covering these 10 topics:
-${shuffledTopics.map((t, i) => `${i + 1}. ${t}`).join("\n")}
-
-STRICT RULES:
-1. FRESHNESS: Ensure stories are completely fresh and unique. Do NOT output generic repeating templates.
-2. BODY LENGTH CONSTRAINT: For EACH byte, the "body" text MUST be strictly between 600 and 800 characters in length (excluding headline).
-   - Each body brief must be 2 to 3 structured paragraphs providing full technical context, background, and future market impact.
-   - Do NOT write short summaries under 600 characters.
-
-Output a valid JSON array of 10 objects:
-[
-  {
-    "headline": "Crisp, factual headline (under 80 characters)",
-    "body": "Comprehensive 2-3 paragraph news brief. MUST be strictly between 600 and 800 characters long.",
-    "category": "Tech" | "AI" | "Science" | "Crypto" | "Innovation"
-  }
-]
-
-Return ONLY the raw JSON array.`;
-
+export function canonicalizeUrl(value: string): string {
   try {
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-goog-api-key": apiKey
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.95 }
-        })
-      }
-    );
+    const url = new URL(value);
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    for (const key of Array.from(url.searchParams.keys())) if (/^(utm_|fbclid|gclid|ref$)/i.test(key)) url.searchParams.delete(key);
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    return url.toString();
+  } catch { return value.trim().toLowerCase(); }
+}
 
-    if (!response.ok) {
-      console.error("[AICurator] Gemini API failed. Falling back to live tech news feed.");
-      return await fetchLiveTechNewsBytes();
-    }
+export function buildDuplicateKey(title: string, url: string, publishedAt: Date): string {
+  // The URL is retained as provenance, but not used in identity: syndicated copies
+  // of one story often have different URLs and must still collapse to one Byte.
+  void url;
+  return createHash("sha256").update(`${normalizeHeadline(title)}|${publishedAt.toISOString().slice(0, 10)}`).digest("hex");
+}
 
-    const data = await response.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const cleanJson = rawText.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(cleanJson);
+function localDate(timeZone: string, date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return await fetchLiveTechNewsBytes();
-    }
+function zonedMidnight(date: string, timeZone: string): Date {
+  const guess = new Date(`${date}T00:00:00Z`);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(guess);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  const localAsUtc = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour) % 24, Number(values.minute), Number(values.second));
+  return new Date(guess.getTime() - (localAsUtc - guess.getTime()));
+}
 
-    return parsed.slice(0, 10).map((item: any, idx: number) => {
-      let bodyText = String(item.body || "").trim();
-      if (bodyText.length < 600) {
-        bodyText = (bodyText + " " + bodyText).slice(0, 720);
-      } else if (bodyText.length > 800) {
-        bodyText = bodyText.slice(0, 780).replace(/\s+\S*$/, "") + ".";
-      }
+export function getTodayWindow(now = new Date(), timeZone = process.env.APP_TIMEZONE || "Africa/Lagos") {
+  const date = localDate(timeZone, now);
+  const start = zonedMidnight(date, timeZone);
+  return { date, start, end: new Date(start.getTime() + 86_400_000) };
+}
 
-      const headline = String(item.headline || "Tech Update").slice(0, 120);
-      const category = String(item.category || "Tech");
-      const imageUrl = getHdUnsplashCoverUrl(headline, category, idx);
+function publisherFromUrl(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "Hacker News"; }
+}
 
-      return {
-        headline,
-        body: bodyText,
-        category,
-        imageUrl
-      };
-    });
-  } catch (err) {
-    console.error("[AICurator] Gemini curation error:", err);
-    return await fetchLiveTechNewsBytes();
+async function fetchTodayCandidates(): Promise<NewsCandidate[]> {
+  const { start, end } = getTodayWindow();
+  const queries = TOPIC_POOL.slice(0, 5).map(topic => topic.split(" ")[0]);
+  const results = await Promise.all(queries.map(async query => {
+    const response = await fetch(`https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=50`);
+    if (!response.ok) throw new Error(`Hacker News API returned ${response.status}`);
+    return response.json() as Promise<{ hits?: any[] }>;
+  }));
+  const candidates = new Map<string, NewsCandidate>();
+  for (const result of results) for (const hit of result.hits || []) {
+    const publishedAt = new Date(Number(hit.created_at_i) * 1000);
+    const title = String(hit.title || "").trim();
+    const url = String(hit.url || `https://news.ycombinator.com/item?id=${hit.objectID || ""}`);
+    if (!title || title.length < 15 || !Number.isFinite(publishedAt.getTime()) || publishedAt < start || publishedAt >= end) continue;
+    const duplicateKey = buildDuplicateKey(title, url, publishedAt);
+    candidates.set(duplicateKey, { title, url, publisher: publisherFromUrl(url), publishedAt, duplicateKey, imageUrl: null });
   }
+  return Array.from(candidates.values()).sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime()).slice(0, 30);
+}
+
+function imageQuery(title: string): string { return title.replace(/[^a-z0-9 ]/gi, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 8).join(" "); }
+
+function directByte(candidate: NewsCandidate, index: number): CuratedByte {
+  const body = `According to ${candidate.publisher}, ${candidate.title}. The report was published on ${candidate.publishedAt.toISOString()} and is included because it falls within today's verified news window. The underlying development is relevant to technology leaders because it may affect product strategy, infrastructure planning, research priorities, or competitive positioning.\n\nReaders should consult the original report for the complete context, technical evidence, and qualifications that cannot be established from a headline alone. This Byte preserves the source trail so editors can validate the story before publication.`;
+  return { headline: candidate.title.slice(0, 120), body: body.slice(0, 800), category: ["Tech", "AI", "Science", "Innovation", "Crypto"][index % 5], imageUrl: candidate.imageUrl, sourceUrl: candidate.url, sourcePublisher: candidate.publisher, sourcePublishedAt: candidate.publishedAt, duplicateKey: candidate.duplicateKey, imageQuery: imageQuery(candidate.title), imageProvenance: candidate.imageUrl ? "source-article" : "source-image-unavailable" };
+}
+
+export async function curateTenBytes(): Promise<CuratedByte[]> {
+  let candidates: NewsCandidate[];
+  try { candidates = await fetchTodayCandidates(); } catch (error) { console.error("[AICurator] Today-only news retrieval failed", error); return []; }
+  if (!candidates.length) return [];
+  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.BUILT_IN_FORGE_API_KEY || process.env.FORGE_API_KEY || "").trim();
+  if (!apiKey) return candidates.slice(0, 10).map(directByte);
+  const prompt = `Write editorial briefs from ONLY these verified candidates. Do not invent facts, URLs, publishers, or dates. Return JSON array with headline, body, category, sourceUrl, sourcePublishedAt. Every sourceUrl must exactly match a candidate.\n${JSON.stringify(candidates)}`;
+  try {
+    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent", { method: "POST", headers: { "Content-Type": "application/json", "X-goog-api-key": apiKey }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.2 } }) });
+    if (!response.ok) throw new Error(`Gemini returned ${response.status}`);
+    const raw = (await response.json()).candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+    const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    const byUrl = new Map(candidates.map(candidate => [canonicalizeUrl(candidate.url), candidate]));
+    const seen = new Set<string>();
+    return (Array.isArray(parsed) ? parsed : []).map((item: any, index: number) => {
+      const candidate = byUrl.get(canonicalizeUrl(String(item.sourceUrl || "")));
+      if (!candidate || seen.has(candidate.duplicateKey)) return null;
+      seen.add(candidate.duplicateKey);
+      const byte = directByte(candidate, index);
+      const body = String(item.body || "").trim();
+      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : byte.category;
+      return { ...byte, headline: String(item.headline || byte.headline).slice(0, 120), body: body.length >= 600 && body.length <= 800 ? body : byte.body, category };
+    }).filter(Boolean).slice(0, 10) as CuratedByte[];
+  } catch (error) { console.error("[AICurator] Editorial generation failed; using verified headlines", error); return candidates.slice(0, 10).map(directByte); }
 }
 
 export async function runNightlyCuration(status: "draft" | "published" = "draft"): Promise<number> {
   const db = await getDb();
-  if (!db) {
-    console.error("[AICurator] Database unavailable for curation");
-    return 0;
-  }
-
-  console.info("[AICurator] Starting 10-Byte curation drop...");
+  if (!db) return 0;
   const bytes = await curateTenBytes();
   if (!bytes.length) return 0;
-
-  const now = new Date();
+  const duplicateKeys = bytes.map(byte => byte.duplicateKey).filter((key): key is string => Boolean(key));
+  const existing = duplicateKeys.length ? await db.select({ duplicateKey: posts.duplicateKey }).from(posts).where(inArray(posts.duplicateKey, duplicateKeys)) : [];
+  const used = new Set(existing.map(post => post.duplicateKey).filter(Boolean));
   let count = 0;
-
   for (const byte of bytes) {
+    if (!byte.duplicateKey || used.has(byte.duplicateKey)) continue;
     try {
-      await db.insert(posts).values({
-        headline: byte.headline,
-        body: byte.body,
-        imageUrl: byte.imageUrl || getHdUnsplashCoverUrl(byte.headline, byte.category, count),
-        status,
-        createdBy: 1,
-        updatedAt: now
-      });
+      await db.insert(posts).values({ headline: byte.headline, body: byte.body, imageUrl: byte.imageUrl, status, createdBy: 1, updatedAt: new Date(), sourceUrl: byte.sourceUrl, sourcePublisher: byte.sourcePublisher, sourcePublishedAt: byte.sourcePublishedAt, duplicateKey: byte.duplicateKey, imageQuery: byte.imageQuery, imageProvenance: byte.imageProvenance });
+      used.add(byte.duplicateKey);
       count++;
-    } catch (err) {
-      console.error(`[AICurator] Failed to insert byte "${byte.headline}":`, err);
-    }
+    } catch (error) { console.error(`[AICurator] Skipping duplicate or failed insert for ${byte.sourceUrl}`, error); }
   }
-
-  console.info(`[AICurator] Successfully added ${count} fresh Bytes as ${status}!`);
+  console.info(`[AICurator] Added ${count} validated ${status} Bytes`);
   return count;
 }
 
-// Live Real-Time Tech News Aggregator with Randomization & Deduplication
-async function fetchLiveTechNewsBytes(): Promise<CuratedByte[]> {
-  try {
-    const randomPage = Math.floor(Math.random() * 8);
-    const keywords = ["AI", "LLM", "rust", "quantum", "chip", "robotics", "satellite", "security", "framework", "database", "model"];
-    const randomQuery = keywords[Math.floor(Math.random() * keywords.length)];
-
-    const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(randomQuery)}&tags=story&page=${randomPage}&hitsPerPage=30`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("HackerNews API error");
-
-    const data = await res.json();
-    let hits = (data.hits || []).filter((h: any) => h.title && h.title.length > 15);
-
-    if (!hits.length) {
-      const fallbackRes = await fetch(`https://hn.algolia.com/api/v1/search_by_date?tags=story&page=${randomPage}&hitsPerPage=30`);
-      const fallbackData = await fallbackRes.json();
-      hits = (fallbackData.hits || []).filter((h: any) => h.title && h.title.length > 15);
-    }
-
-    // Shuffle hits randomly so every curation run extracts distinct stories
-    hits = hits.sort(() => Math.random() - 0.5);
-
-    const curated: CuratedByte[] = [];
-    const categories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
-
-    for (let i = 0; i < Math.min(hits.length, 10); i++) {
-      const hit = hits[i];
-      const headline = String(hit.title).slice(0, 110);
-      const domain = hit.url ? new URL(hit.url).hostname.replace(/^www\./, "") : "Tech Feed";
-      const category = categories[i % categories.length];
-
-      let body = `Industry intelligence reports indicate new technical developments surrounding ${headline.toLowerCase()}. Published via ${domain}, this update highlights strategic engineering milestones and operational advancements across digital infrastructure.\n\nAs technical organizations evaluate enterprise deployment, engineering teams are focusing on system scalability, low-latency integration, and enhanced security controls.`;
-
-      if (body.length < 600) {
-        body += ` Additional deployment benchmarks demonstrate substantial performance gains, with widespread enterprise adoption anticipated through 2026.`;
-      }
-      if (body.length > 800) {
-        body = body.slice(0, 780).replace(/\s+\S*$/, "") + ".";
-      }
-
-      const imageUrl = getHdUnsplashCoverUrl(headline, category, i);
-
-      curated.push({
-        headline,
-        body,
-        category,
-        imageUrl
-      });
-    }
-
-    return curated;
-  } catch (err) {
-    console.error("[AICurator] Live news aggregation error:", err);
-    return getDynamicFallbackBytes();
-  }
-}
-
-function getDynamicFallbackBytes(): CuratedByte[] {
-  const timeOffset = Date.now();
-  const topics = [
-    { title: "Next-Gen AI Vision Models Expand Real-Time Spatial Mapping Capabilities", cat: "AI" },
-    { title: "Quantum Error Correction Reaches Critical Commercial Threshold", cat: "Tech" },
-    { title: "Solid-State Energy Cells Enter Automated Assembly Trials for EV Fleets", cat: "Innovation" },
-    { title: "Autonomous Orbital Cleaners Deployed to Safely Clear Satellite Debris", cat: "Science" },
-    { title: "Silicon-Photonic Optical Chips Slash Data Center Power Usage by 45%", cat: "Tech" },
-    { title: "Synthetic Biology Platform Creates Biodegradable Marine Structural Polymers", cat: "Science" },
-    { title: "Zero-Trust Encryption Architecture Enhances Decentralized Edge Mesh Networks", cat: "Crypto" },
-    { title: "Neuromorphic Processors Enable 120 FPS Robotics Intelligence at Low Power", cat: "AI" },
-    { title: "Formal Code Verification Engines Prevent Memory Vulnerabilities at Compile Time", cat: "Tech" },
-    { title: "Satellite Laser Communications Link Deep Space Drones to Earth Grid", cat: "Science" }
-  ].sort(() => Math.random() - 0.5);
-
-  return topics.map((t, idx) => {
-    let body = `Leading research institutions and technology providers have announced breakthrough progress in ${t.title.toLowerCase()}. This operational milestone marks a fundamental shift toward next-generation scalable infrastructure across global markets.\n\nEngineers and industry analysts emphasize that these technical enhancements enable low-latency processing, enhanced resource efficiency, and robust security safeguards. Deployment timelines indicate widespread adoption across commercial enterprise platforms through 2026.`;
-
-    if (body.length < 600) {
-      body += ` Additional pilot trials are scheduled for deployment across international testbeds to validate performance standards and operational reliability.`;
-    }
-    if (body.length > 800) {
-      body = body.slice(0, 780).replace(/\s+\S*$/, "") + ".";
-    }
-
-    return {
-      headline: t.title,
-      body,
-      category: t.cat,
-      imageUrl: getHdUnsplashCoverUrl(t.title, t.cat, idx + timeOffset)
-    };
-  });
+// Kept for legacy PDF imports; automated news curation never calls it.
+export function getHdUnsplashCoverUrl(headline: string, category = "Tech", seedOffset = 0): string {
+  return `https://source.unsplash.com/1200x800/?${encodeURIComponent(`${headline} ${category}`)}&sig=${seedOffset}`;
 }

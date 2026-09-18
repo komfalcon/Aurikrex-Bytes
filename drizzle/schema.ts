@@ -32,6 +32,12 @@ export const users = sqliteTable("users", {
 export const posts = sqliteTable("posts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   imageUrl: text("image_url"),
+  sourceUrl: text("source_url"),
+  sourcePublisher: text("source_publisher"),
+  sourcePublishedAt: integer("source_published_at", { mode: "timestamp_ms" }),
+  duplicateKey: text("duplicate_key"),
+  imageQuery: text("image_query"),
+  imageProvenance: text("image_provenance"),
   headline: text("headline").notNull(),
   body: text("body").notNull(),
   status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
@@ -42,7 +48,7 @@ export const posts = sqliteTable("posts", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(now),
-});
+}, table => ({ duplicateKeyUnique: uniqueIndex("posts_duplicate_key_unique").on(table.duplicateKey) }));
 
 export const adminUsers = sqliteTable("admin_users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
