@@ -73,6 +73,27 @@ async function repairEngagementSchema(db: ReturnType<typeof drizzle>) {
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_bookmarks_post_reader_unique ON post_bookmarks (post_id, reader_id)"));
 }
 
+async function repairVerifiedNewsSchema(db: ReturnType<typeof drizzle>) {
+  const columns = await db.all(sql.raw("PRAGMA table_info('posts')"));
+  const names = new Set(
+    columns.map(column => (column as { name?: string }).name).filter(Boolean)
+  );
+  const repairs = [
+    ["source_url", "text"],
+    ["source_publisher", "text"],
+    ["source_published_at", "integer"],
+    ["duplicate_key", "text"],
+    ["image_query", "text"],
+    ["image_provenance", "text"],
+  ] as const;
+  for (const [name, definition] of repairs) {
+    if (names.has(name)) continue;
+    await db.run(sql.raw(`ALTER TABLE posts ADD COLUMN ${name} ${definition}`));
+    console.info(`[Database] Applied missing posts.${name} column`);
+  }
+  await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS posts_duplicate_key_unique ON posts (duplicate_key)"));
+}
+
 export async function getDb() {
   if (!_db && process.env.TURSO_DATABASE_URL) {
     try {
@@ -82,7 +103,7 @@ export async function getDb() {
           authToken: process.env.TURSO_AUTH_TOKEN,
         })
       );
-      _schemaRepair = Promise.all([repairReaderSchema(_db), repairEngagementSchema(_db)]).then(() => undefined).catch(error => {
+      _schemaRepair = Promise.all([repairReaderSchema(_db), repairEngagementSchema(_db), repairVerifiedNewsSchema(_db)]).then(() => undefined).catch(error => {
         console.error("[Database] Schema repair failed:", error);
         throw error;
       });
