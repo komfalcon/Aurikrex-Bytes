@@ -1,4 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState, type ComponentProps } from "react";
+import { createPortal } from "react-dom";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
@@ -181,7 +182,22 @@ function ProfileLightboxModal({
     },
   });
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
+  if (typeof document === "undefined") return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -210,7 +226,7 @@ function ProfileLightboxModal({
   const name = sessionData?.name || sessionData?.email?.split("@")[0] || "Reader";
   const initial = getInitial(name);
 
-  return (
+  return createPortal(
     <div className="whatsapp-profile-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Profile picture modal">
       <div className="whatsapp-profile-card" onClick={(e) => e.stopPropagation()}>
         <button className="whatsapp-profile-close" onClick={onClose} aria-label="Close profile modal">
@@ -261,7 +277,8 @@ function ProfileLightboxModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
