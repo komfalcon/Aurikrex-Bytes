@@ -1,0 +1,15 @@
+﻿name: Auto Publish Scheduled Posts
+
+on:
+  schedule:
+    # Every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  publish-due-posts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Auto Publish API
+        run: |
+          curl -fail -s -X GET "https://aurikrex.tech/api/cron/publish"

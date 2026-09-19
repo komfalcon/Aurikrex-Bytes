@@ -1,0 +1,68 @@
+name: OneSignal Daily Notifications
+
+on:
+  schedule:
+    # Pre-warm 10 minutes early at off-peak minutes to eliminate queue delays:
+    # 06:50 UTC (07:50 AM WAT) -> synchronizes and fires at exact 08:00:00 AM WAT (07:00:00 UTC)
+    - cron: "50 6 * * *"
+    # 20:50 UTC (09:50 PM WAT) -> synchronizes and fires at exact 10:00:00 PM WAT (21:00:00 UTC)
+    - cron: "50 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  send-notifications:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Synchronize to exact target hour
+        run: |
+          set -euo pipefail
+          current_min="$(date -u +%-M)"
+          current_sec="$(date -u +%-S)"
+          echo "Runner initialized at $(date -u '+%H:%M:%S UTC')"
+
+          # If booted in pre-warm window (minute 45-59), count down to exact top of hour
+          if [ "$current_min" -ge 45 ] && [ "$current_min" -le 59 ]; then
+            seconds_to_wait=$(( (60 - current_min) * 60 - current_sec ))
+            if [ "$seconds_to_wait" -gt 0 ] && [ "$seconds_to_wait" -le 900 ]; then
+              echo "Pre-warmed runner ready! Sleeping $seconds_to_wait seconds until $(date -u -d "+$seconds_to_wait seconds" '+%H:%M:%S UTC') / 08:00 AM or 10:00 PM WAT..."
+              sleep "$seconds_to_wait"
+            fi
+          fi
+          echo "Target hour reached at $(date -u '+%H:%M:%S UTC'). Proceeding with notification dispatch..."
+
+      - name: Trigger OneSignal notification API
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          CRON_SEC="${CRON_SECRET:-}"
+          if [ -z "$CRON_SEC" ]; then
+            echo "CRON_SECRET is not configured in GitHub Actions secrets."
+            exit 1
+          fi
+          response="$(curl --show-error --silent --write-out '\n%{http_code}' \
+            --connect-timeout 15 --max-time 60 \
+            -H "Authorization: Bearer ${CRON_SEC}" \
+            -H "Accept: application/json" \
+            "https://www.bytes.aurikrex.tech/api/cron/notify")"
+          status="$(echo "$response" | tail -n 1)"
+          body="$(echo "$response" | sed '$d')"
+          echo "HTTP status: $status"
+          echo "Response: $body"
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "Notification API request failed with HTTP $status."
+            exit 1
+          fi
+          found="$(echo "$body" | jq -r '.sent.found // .found // 0')"
+          sent="$(echo "$body" | jq -r '.sent.sent // .sent // 0')"
+          failed="$(echo "$body" | jq -r '.sent.failed // .failed // 0')"
+          echo "Summary: found=$found, sent=$sent, failed=$failed"
+          if [ "$failed" -gt 0 ]; then
+            echo "Notification delivery reported failures."
+            exit 1
+          fi
+          echo "Push notifications successfully dispatched!"

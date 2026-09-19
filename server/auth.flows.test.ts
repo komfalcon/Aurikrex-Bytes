@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appRouter } from "./routers";
-import { hashPassword, verifyPassword } from "./auth";
+import { appRouter } from "./routers.js";
+import { hashPassword, verifyPassword } from "./auth.js";
 
 describe("custom auth flows", () => {
   it("hashes and verifies passwords without storing plaintext", async () => {

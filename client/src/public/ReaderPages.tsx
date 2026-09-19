@@ -1,8 +1,2321 @@
-import { useState } from "react";
-import { Link, useLocation } from "wouter";
-import { trpc } from "../lib/trpc";
-import { authRoutes, authTitles, type ReaderAuthMode } from "../shared/authUi";
+import { FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState, type ComponentProps } from "react";
+import { createPortal } from "react-dom";
+import { Link, useLocation, useRoute } from "wouter";
+import {
+  ArrowRight,
+  Bookmark,
+  BookOpen,
+  Camera,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  CircleHelp,
+  Clock3,
+  Facebook,
+  FileText,
+  Flame,
+  Instagram,
+  Info,
+  Linkedin,
+  LogOut,
+  Mail,
+  MailOpen,
+  Menu,
+  Moon,
+  Search,
+  Share2,
+  ShieldCheck,
+  Sparkles,
+  Sun,
+  Upload,
+  User,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
+import { trpc } from "@/lib/trpc";
+import { PushSubscribeButton } from "@/components/PushSubscribeButton";
+import { useTheme } from "@/contexts/ThemeContext";
+import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
+import Seo from "@/components/Seo";
 
-export function Home() { const posts = trpc.publicPosts.list.useQuery(); return <main><header className="site-header"><div><p className="eyebrow">Aurikrex Bytes</p><h1>The daily brief, beautifully edited.</h1></div><Link className="outline-button" href={authRoutes.login}>Reader access</Link></header><section className="hero"><div><span className="kicker">Independent editorial briefing</span><h2>Make room for better stories.</h2><p>Short, thoughtful news cards for a more informed day.</p></div><div className="hero-mark">AB<span>01</span></div></section><section className="card-grid">{posts.data?.filter(post => post.status === "published").map(post => <article className="story-card" key={post.id}><div className="story-meta">Published brief</div><h3>{post.headline}</h3><p>{post.body}</p></article>)}{!posts.data?.length && <article className="story-card empty"><div className="story-meta">Your newsroom awaits</div><h3>Stories will appear here.</h3><p>Once the editorial team publishes a card, the public briefing will begin to take shape.</p></article>}</section></main>; }
+const getInitial = (nameOrEmail?: string | null) => {
+  if (!nameOrEmail) return "U";
+  const clean = nameOrEmail.trim().replace(/^@/, "");
+  return clean ? clean[0].toUpperCase() : "U";
+};
 
-export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) { const [, navigate] = useLocation(); const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [token] = useState(() => new URLSearchParams(location.search).get("token") || ""); const [message, setMessage] = useState(""); const login = trpc.reader.login.useMutation({ onSuccess: result => setMessage(result.emailVerified ? "Welcome back." : "Please verify your email before accessing all stories."), onError: e => setMessage(e.message) }); const signup = trpc.reader.signup.useMutation({ onSuccess: () => setMessage("Check your inbox for a verification link."), onError: e => setMessage(e.message) }); const forgot = trpc.reader.requestPasswordReset.useMutation({ onSuccess: () => setMessage("If that address exists, a reset link is on its way.") }); const reset = trpc.reader.resetPassword.useMutation({ onSuccess: () => { setMessage("Password updated. You can sign in now."); navigate("/login"); }, onError: e => setMessage(e.message) }); const verify = trpc.reader.verifyEmail.useMutation({ onSuccess: () => setMessage("Email verified. You can sign in now."), onError: e => setMessage(e.message) }); const google = trpc.reader.googleStart.useQuery(undefined, { enabled: mode === "login" }); const submit = (e: React.FormEvent) => { e.preventDefault(); if (mode === "login") login.mutate({ email, password, remember: true }); if (mode === "signup") signup.mutate({ email, password }); if (mode === "forgot") forgot.mutate({ email }); if (mode === "reset") reset.mutate({ token, password }); if (mode === "verify") verify.mutate({ token }); };  return <main className="auth-wrap"><section className="auth-panel"><p className="eyebrow">Aurikrex Bytes</p><h1>{authTitles[mode]}</h1><p className="muted">A considered daily read for people who want signal without the noise.</p>{mode === "verify" ? <button className="button" onClick={() => verify.mutate({ token })}>Verify email</button> : <form onSubmit={submit}>{mode !== "reset" && <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label>}{mode !== "forgot" && <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} /></label>}<button className="button" type="submit">{mode === "signup" ? "Create account" : mode === "forgot" ? "Send reset link" : mode === "reset" ? "Update password" : "Sign in"}</button></form>}{mode === "login" && <><a className="outline-button" href={google.data?.url || "/login"}>Continue with Google</a><div className="auth-links"><Link href={authRoutes.signup}>Create an account</Link><Link href={authRoutes.forgotPassword}>Forgot password?</Link></div></>}{mode === "signup" && <div className="auth-links"><Link href={authRoutes.login}>Already a reader? Sign in</Link></div>}<p className="form-message">{message}</p></section></main>; }
+const formatDate = (value?: string | Date | number | null) =>
+  value
+    ? new Intl.DateTimeFormat("en", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }).format(new Date(value))
+    : "Today";
+const excerpt = (text: string, length = 150) =>
+  text.length > length ? `${text.slice(0, length).trim()}…` : text;
+const optimizedImage = (url: string, width: number) =>
+  url.includes("res.cloudinary.com") &&
+  url.includes("/upload/") &&
+  !url.includes("f_auto")
+    ? url.replace("/upload/", `/upload/f_auto,q_auto,w_${width}/`)
+    : url;
+
+type FeedViewMode = "editorial" | "compact";
+const FEED_VIEW_MODE_KEY = "aurikrex-feed-view-mode";
+const getInitialFeedViewMode = (): FeedViewMode => {
+  if (typeof window === "undefined") return "editorial";
+  return window.localStorage.getItem(FEED_VIEW_MODE_KEY) === "compact"
+    ? "compact"
+    : "editorial";
+};
+const AUTH_RETURN_KEY = "aurikrex-auth-return-to";
+const safeReturnTo = (value: string | null | undefined) =>
+  value && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
+const authPathWithReturnTo = (returnTo: string) =>
+  `${authRoutes.login}?returnTo=${encodeURIComponent(returnTo)}`;
+const rememberAuthReturnTo = (returnTo: string) => {
+  if (typeof window !== "undefined") window.sessionStorage.setItem(AUTH_RETURN_KEY, returnTo);
+};
+function ProtectedLink({
+  href,
+  children,
+  className,
+  onClick,
+}: {
+  href: string;
+  children: ReactNode;
+  className?: string;
+  onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  return (
+    <Link
+      href={href}
+      className={className}
+      onClick={event => {
+        onClick?.(event);
+        if (!session.isLoading && !session.data) {
+          event.preventDefault();
+          rememberAuthReturnTo(href);
+          navigate(authPathWithReturnTo(href));
+        }
+      }}
+    >
+      {children}
+    </Link>
+  );
+}
+export function Logo({ compact = false, href = "/", showMark = true }: { compact?: boolean; href?: string; showMark?: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={`brand ${compact ? "brand-compact" : ""}`}
+      aria-label="Aurikrex Bytes home"
+    >
+      {showMark && <img src="/logo-512.png" alt="Aurikrex Bytes logo" />}
+      <span>
+        Aurikrex <b>Bytes</b>
+      </span>
+    </Link>
+  );
+}
+function GoogleIcon() {
+  return (
+    <svg className="google-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="#4285F4" d="M21.35 12.27c0-.79-.07-1.55-.2-2.27H12v4.3h5.24a4.48 4.48 0 0 1-1.94 2.94v2.45h3.15c1.85-1.7 2.9-4.2 2.9-7.42Z" />
+      <path fill="#34A853" d="M12 21.75c2.65 0 4.88-.88 6.5-2.38l-3.15-2.45c-.88.59-2 .94-3.35.94-2.57 0-4.75-1.74-5.53-4.08H3.22v2.53A9.82 9.82 0 0 0 12 21.75Z" />
+      <path fill="#FBBC05" d="M6.47 13.78a5.9 5.9 0 0 1 0-3.56V7.69H3.22a9.75 9.75 0 0 0 0 8.62l3.25-2.53Z" />
+      <path fill="#EA4335" d="M12 6.14c1.45 0 2.75.5 3.77 1.48l2.83-2.83C16.88 3.2 14.65 2.25 12 2.25a9.82 9.82 0 0 0-8.78 5.44l3.25 2.53C7.25 7.88 9.43 6.14 12 6.14Z" />
+    </svg>
+  );
+}
+function XBrandIcon() {
+  return (
+    <svg className="footer-social-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z" />
+    </svg>
+  );
+}
+function TikTokBrandIcon() {
+  return (
+    <svg className="footer-social-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" />
+    </svg>
+  );
+}
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button
+      className="icon-button"
+      onClick={toggleTheme}
+      aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+      title="Toggle theme"
+    >
+      {theme === "light" ? <Moon size={17} strokeWidth={1.8} /> : <Sun size={17} strokeWidth={1.8} />}
+    </button>
+  );
+}
+function ProfileLightboxModal({
+  isOpen,
+  onClose,
+  sessionData,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  sessionData: any;
+}) {
+  const utils = trpc.useUtils();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const updateAvatarMutation = trpc.reader.updateAvatar.useMutation({
+    onSuccess: async () => {
+      await utils.reader.session.invalidate();
+      toast.success("Profile photo updated!");
+      setUploading(false);
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to update profile photo.");
+      setUploading(false);
+    },
+  });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+  if (typeof document === "undefined") return null;
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select a valid image file.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size should be under 5MB.");
+      return;
+    }
+
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        updateAvatarMutation.mutate({ avatarUrl: dataUrl });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const name = sessionData?.name || sessionData?.email?.split("@")[0] || "Reader";
+  const initial = getInitial(name);
+
+  return createPortal(
+    <div className="whatsapp-profile-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Profile picture modal">
+      <div className="whatsapp-profile-card" onClick={(e) => e.stopPropagation()}>
+        <button className="whatsapp-profile-close" onClick={onClose} aria-label="Close profile modal">
+          <X size={20} />
+        </button>
+
+        <div className="whatsapp-profile-avatar-wrapper">
+          {sessionData?.avatarUrl ? (
+            <img src={sessionData.avatarUrl} alt={name} className="whatsapp-profile-img" />
+          ) : (
+            <div className="whatsapp-profile-fallback">
+              <span>{initial}</span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="whatsapp-profile-edit-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            title="Change Profile Picture"
+          >
+            <Camera size={18} />
+          </button>
+        </div>
+
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={handleFileChange}
+        />
+
+        <div className="whatsapp-profile-info">
+          <h3>{name}</h3>
+          <p>{sessionData?.email}</p>
+        </div>
+
+        <div className="whatsapp-profile-actions">
+          <button
+            type="button"
+            className="button button-small button-outline"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+          >
+            <Upload size={14} /> {uploading ? "Updating..." : "Change photo"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+export function SiteHeader() {
+  const [menu, setMenu] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const utils = trpc.useUtils();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const logout = trpc.auth.logout.useMutation({
+    onSuccess: () => {
+      // Clear the shared auth snapshot before leaving the dashboard. A normal
+      // reset can briefly refetch stale data and the home route would redirect
+      // back to /dashboard during that window.
+      utils.reader.session.setData(undefined, undefined);
+      setMenu(false);
+      window.location.replace("/");
+    },
+  });
+  const signedIn = Boolean(session.data);
+  const homePath = signedIn ? "/dashboard" : "/";
+  return (
+    <header className="site-header">
+      <Logo href={homePath} />
+      <nav className="main-nav" aria-label="Primary">
+        <Link href={homePath}>{signedIn ? "Dashboard" : "Today"}</Link>
+        {signedIn && <Link href="/saved">Saved</Link>}
+        <Link href="/archive">All Bytes</Link>
+        <Link href="/how-it-works">About</Link>
+      </nav>
+      <div className="header-actions">
+        <PushSubscribeButton variant="header" />
+        <ThemeToggle />
+        {signedIn && (
+          <button
+            className="header-avatar-btn"
+            onClick={() => setShowProfileModal(true)}
+            title="View & edit profile picture"
+            aria-label="View & edit profile picture"
+          >
+            {session.data?.avatarUrl ? (
+              <img src={session.data.avatarUrl} alt={session.data?.name || "Profile"} className="header-avatar-img" />
+            ) : (
+              <span className="header-avatar-initial">
+                {getInitial(session.data?.name || session.data?.email || "U")}
+              </span>
+            )}
+          </button>
+        )}
+        {signedIn ? (
+          <button className="header-login text-button" onClick={() => logout.mutate()}>
+            <LogOut size={14} /> Sign out
+          </button>
+        ) : (
+          <>
+            <Link className="header-login" href={authRoutes.login}>Sign in</Link>
+            <Link className="button button-small" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link>
+          </>
+        )}
+        <button
+          className="mobile-menu"
+          onClick={() => setMenu(value => !value)}
+          aria-label={menu ? "Close navigation menu" : "Open navigation menu"}
+          aria-expanded={menu}
+          aria-controls="mobile-navigation-drawer"
+        >
+          {menu ? <X size={20} strokeWidth={1.8} /> : <Menu size={20} strokeWidth={1.8} />}
+        </button>
+      </div>
+      {menu && (
+        <>
+          <button className="mobile-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMenu(false)} />
+          <nav id="mobile-navigation-drawer" className="mobile-nav" aria-label="Mobile navigation">
+            <div className="mobile-nav-section">
+              <span className="mobile-nav-label">Read</span>
+              <Link href={homePath} onClick={() => setMenu(false)}>{signedIn ? "Dashboard" : "Today"}</Link>
+              <Link href="/archive" onClick={() => setMenu(false)}><BookOpen size={16} /> All Bytes</Link>
+              {signedIn && <Link href="/saved" onClick={() => setMenu(false)}><Bookmark size={16} /> Saved posts</Link>}
+            </div>
+            <div className="mobile-nav-section">
+              <span className="mobile-nav-label">Explore</span>
+              <Link href="/how-it-works" onClick={() => setMenu(false)}><Info size={16} /> About</Link>
+              <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>
+              <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>
+            </div>
+            <div className="mobile-nav-section mobile-nav-legal">
+              <span className="mobile-nav-label">Legal</span>
+              <Link href="/privacy" onClick={() => setMenu(false)}><ShieldCheck size={16} /> Privacy policy</Link>
+              <Link href="/terms" onClick={() => setMenu(false)}><FileText size={16} /> Terms of service</Link>
+            </div>
+            <div className="mobile-nav-account">
+              {signedIn ? <>
+                <button
+                  className="mobile-nav-join text-button"
+                  onClick={() => {
+                    setMenu(false);
+                    setShowProfileModal(true);
+                  }}
+                  style={{ marginBottom: "10px" }}
+                >
+                  <User size={16} /> View Profile Photo
+                </button>
+                <button className="mobile-nav-join text-button" onClick={() => logout.mutate()}><LogOut size={16} /> Sign out</button>
+              </> : <>
+                <Link href={authRoutes.login} onClick={() => setMenu(false)}>Sign in</Link>
+                <Link className="mobile-nav-join" href={authRoutes.signup} onClick={() => setMenu(false)}>Join free <ArrowRight size={14} /></Link>
+              </>}
+            </div>
+          </nav>
+        </>
+      )}
+      <ProfileLightboxModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        sessionData={session.data}
+      />
+    </header>
+  );
+}
+export function SiteFooter() {
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const readerHome = session.data ? "/dashboard" : "/";
+  return (
+    <footer className="site-footer">
+      <div className="footer-inner">
+        <div className="footer-brand-block">
+          <Logo compact href={readerHome} showMark={false} />
+          <p className="footer-note">
+            A calmer way to keep up.
+            <br />
+            Aurikrex Bytes — what matters.
+          </p>
+          <p className="footer-founder">
+            A product of Aurikrex, founded by Korede Omotosho
+          </p>
+          <div className="footer-socials-wrap">
+            <span className="footer-socials-label">Follow Aurikrex Bytes</span>
+            <div className="footer-socials" aria-label="Aurikrex Bytes social links">
+              <a
+              href="https://instagram.com/falcon.omotosho"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Instagram"
+            >
+              <Instagram size={16} />
+            </a>
+            <a
+              href="https://www.tiktok.com/@falcon.omotosho"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="TikTok"
+            >
+              <TikTokBrandIcon />
+            </a>
+            <a
+              href="https://x.com/aurikrex"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Twitter X"
+            >
+              <XBrandIcon />
+            </a>
+            <a
+              href="https://www.linkedin.com/in/falcon-omotosho"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="LinkedIn"
+            >
+              <Linkedin size={16} />
+            </a>
+            <a
+              href="https://www.facebook.com/share/1SsFXC4mZP/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Facebook"
+            >
+              <Facebook size={16} />
+              </a>
+            </div>
+          </div>
+        </div>
+        <div className="footer-links">
+          <span>Explore</span>
+          <Link href={readerHome}>Today's Bytes</Link>
+          <Link href="/archive">All Bytes</Link>
+          <Link href="/how-it-works">How it works</Link>
+        </div>
+        <div className="footer-links">
+          <span>Support</span>
+          <Link href="/help">Help center</Link>
+          <Link href="/contact">Contact</Link>
+          <Link href="/privacy">Privacy</Link>
+          <Link href="/terms">Terms</Link>
+        </div>
+      </div>
+      <div className="footer-bottom">
+        <span>&copy; {new Date().getFullYear()} Aurikrex Bytes.</span>{" "}
+        <span className="footer-tagline">Made for the signal-seekers.</span>
+      </div>
+    </footer>
+  );
+}
+export function PublicLayout({
+  children,
+  seo,
+}: {
+  children: ReactNode;
+  seo?: ComponentProps<typeof Seo>;
+}) {
+  return (
+    <>
+      <Seo
+        {...(seo || {
+          title: "Aurikrex Bytes — What matters in tech",
+          description:
+            "A daily curated technology briefing with the context behind what matters.",
+          path: "/",
+        })}
+      />
+      <SiteHeader />
+      {children}
+      <SiteFooter />
+    </>
+  );
+}
+function ShareButton({ post }: { post: any }) {
+  const [open, setOpen] = useState(false);
+  const shareUrl = `https://www.bytes.aurikrex.tech/post/${post.id}`;
+  const share = async () => {
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
+      
+      try {
+        if (post.imageUrl && navigator.canShare) {
+          // Resize to a reasonable social card size
+          const imageUrl = post.imageUrl.includes("res.cloudinary.com")
+            ? post.imageUrl.replace("/upload/", "/upload/w_1200,h_630,c_fill,q_auto,f_auto/")
+            : post.imageUrl;
+            
+          const response = await fetch(imageUrl);
+          const blob = await response.blob();
+          const file = new File([blob], `post-${post.id}.jpg`, { type: blob.type || "image/jpeg" });
+          
+          if (navigator.canShare({ files: [file] })) {
+            payload.files = [file];
+          }
+        }
+      } catch (e) {
+        console.warn("Could not attach share image:", e);
+      }
+
+      try {
+        await navigator.share(payload);
+      } catch (error) {
+        if ((error as DOMException).name !== "AbortError") setOpen(true);
+      }
+      return;
+    }
+    setOpen(value => !value);
+  };
+  const copy = async () => {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(shareUrl);
+      else {
+        const input = document.createElement("textarea");
+        input.value = shareUrl;
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        input.remove();
+      }
+      toast.success("Link copied");
+      setOpen(false);
+    } catch {
+      toast.error("Copy failed — use the share link directly");
+    }
+  };
+  return <div className="share-control" onClick={e => { e.preventDefault(); e.stopPropagation(); }}>
+    <button type="button" className="engagement-button" onClick={e => { e.preventDefault(); e.stopPropagation(); void share(); }} aria-label="Share post" title="Share post"><Share2 size={15} /></button>
+    {open && <div className="share-menu" onClick={e => e.stopPropagation()}><button type="button" onClick={e => { e.preventDefault(); void copy(); }}><Check size={14} /> Copy link</button><a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(post.headline)}&url=${encodeURIComponent(shareUrl)}`} target="_blank" rel="noreferrer">Share to X</a><a href={shareUrl} target="_blank" rel="noreferrer">Open post</a></div>}
+  </div>;
+}
+
+function FireReactionIcon({ active }: { active: boolean }) {
+  const gradientId = `fire-reaction-${useId().replace(/:/g, "")}`;
+  return (
+    <svg className="fire-reaction-mark" viewBox="0 0 24 24" aria-hidden="true">
+      {active && (
+        <defs>
+          <linearGradient id={gradientId} x1="12" y1="22" x2="12" y2="2" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#1d4ed8" />
+            <stop offset="0.5" stopColor="#7c3aed" />
+            <stop offset="1" stopColor="#f6c85f" />
+          </linearGradient>
+        </defs>
+      )}
+      <path
+        d="M12 2.25c.32 2.14-.2 3.65-1.64 5.08-1.15 1.14-2.61 2.24-2.61 4.48 0 1.24.54 2.37 1.4 3.16-.06-1.78.73-3.17 2.17-4.38.93-.79 1.54-1.71 1.55-3.02 2.25 1.62 4.6 4.37 4.6 7.35 0 1.03-.24 1.99-.68 2.85.57-.29 1.11-.71 1.57-1.22-.16 3.89-2.86 6.53-6.36 6.53-4.1 0-6.9-2.73-6.9-6.58 0-3.3 1.9-5.72 4.01-7.81C10.68 6.98 11.51 5.13 12 2.25Z"
+        fill={active ? `url(#${gradientId})` : "none"}
+        stroke={active ? "none" : "currentColor"}
+        strokeWidth={active ? 0 : 1.5}
+        strokeLinejoin="round"
+      />
+      {active && (
+        <path
+          d="M12.2 11.35c.86 1.03 1.45 2.12 1.45 3.48 0 1.26-.63 2.27-1.66 2.93-.9-.64-1.4-1.57-1.4-2.58 0-1.45.86-2.56 1.61-3.83Z"
+          fill="#fff2be"
+        />
+      )}
+    </svg>
+  );
+}
+
+function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (saved: boolean) => void }) {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const engagement = trpc.reader.engagement.useQuery({ postId: post.id }, { enabled: Boolean(session.data), retry: false });
+  const utils = trpc.useUtils();
+  const reaction = trpc.reader.toggleReaction.useMutation({
+    onMutate: async () => {
+      await utils.reader.engagement.cancel({ postId: post.id });
+      const previous = utils.reader.engagement.getData({ postId: post.id });
+      utils.reader.engagement.setData({ postId: post.id }, current => {
+        const next = current || { reactionCount: 0, hasReacted: false, isBookmarked: false };
+        return { ...next, hasReacted: !next.hasReacted, reactionCount: Math.max(0, next.reactionCount + (next.hasReacted ? -1 : 1)) };
+      });
+      return { previous };
+    },
+    onError: (_error, _input, context) => {
+      if (context?.previous) utils.reader.engagement.setData({ postId: post.id }, context.previous);
+    },
+    onSettled: () => void utils.reader.engagement.invalidate({ postId: post.id }),
+  });
+  const bookmark = trpc.reader.toggleBookmark.useMutation({ onSuccess: data => { onBookmark?.(data.isBookmarked); void utils.reader.engagement.invalidate({ postId: post.id }); void utils.reader.dashboard.invalidate(); void utils.reader.saved.invalidate(); } });
+  const requireLogin = () => {
+    if (session.isLoading) return false;
+    if (!session.data) {
+      const returnTo = `/post/${post.id}`;
+      rememberAuthReturnTo(returnTo);
+      navigate(authPathWithReturnTo(returnTo));
+      return false;
+    }
+    return true;
+  };
+  const state = { ...post, ...(engagement.data || {}) };
+  return <div className="engagement-actions" onClick={e => e.preventDefault()}>
+    <button className={`engagement-button fire-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove Aurikrex fire reaction" : "Send Aurikrex fire reaction"} title="Aurikrex fire reaction"><FireReactionIcon active={Boolean(state.hasReacted)} /><span>{state.reactionCount || 0}</span></button>
+    <button className={`engagement-button ${state.isBookmarked ? "active" : ""}`} onClick={() => requireLogin() && bookmark.mutate({ postId: post.id })} aria-label={state.isBookmarked ? "Remove bookmark" : "Save post"} title={state.isBookmarked ? "Remove bookmark" : "Save post"}><Bookmark size={15} fill={state.isBookmarked ? "currentColor" : "none"} /></button>
+    <ShareButton post={state} />
+  </div>;
+}
+
+function FeedViewModeControl({
+  value,
+  onChange,
+}: {
+  value: FeedViewMode;
+  onChange: (value: FeedViewMode) => void;
+}) {
+  return (
+    <div className="feed-view-control" role="group" aria-label="Mobile feed view">
+      <span className="feed-view-label">Mobile view</span>
+      <div className="feed-view-options">
+        <button
+          type="button"
+          className={value === "editorial" ? "active" : ""}
+          aria-pressed={value === "editorial"}
+          title="Editorial view"
+          onClick={() => onChange("editorial")}
+        >
+          <svg viewBox="0 0 18 18" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="13" height="4" rx="1" />
+            <rect x="2.5" y="11.5" width="13" height="4" rx="1" />
+          </svg>
+          Editorial
+        </button>
+        <button
+          type="button"
+          className={value === "compact" ? "active" : ""}
+          aria-pressed={value === "compact"}
+          title="Compact view"
+          onClick={() => onChange("compact")}
+        >
+          <svg viewBox="0 0 18 18" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="5" height="5" rx="1" />
+            <rect x="10.5" y="2.5" width="5" height="5" rx="1" />
+            <rect x="2.5" y="10.5" width="5" height="5" rx="1" />
+            <rect x="10.5" y="10.5" width="5" height="5" rx="1" />
+          </svg>
+          Compact
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReadingViewPreviewCard({ post, compact = false, index = 0 }: { post: any; compact?: boolean; index?: number }) {
+  const previewPost = index === 0
+    ? post
+    : { ...post, headline: "The context behind the next important shift", body: "A second Byte preview keeps the useful detail visible without taking over the page." };
+  return (
+    <article className={`reading-preview-card ${compact ? "reading-preview-card-compact" : ""}`}>
+      <div className="reading-preview-image">
+        {previewPost.imageUrl ? <img src={optimizedImage(previewPost.imageUrl, compact ? 240 : 480)} alt="" /> : <Sparkles size={compact ? 12 : 16} />}
+      </div>
+      <div className="reading-preview-copy">
+        <span className="reading-preview-meta">Today · 4 min read</span>
+        <strong>{previewPost.headline}</strong>
+        <span>{excerpt(previewPost.body, compact ? 68 : 108)}</span>
+        <span className="reading-preview-action">Read story <ArrowRight size={11} /></span>
+      </div>
+      <div className="reading-preview-engagement" aria-hidden="true"><FireReactionIcon active={index === 0} /><span>{index === 0 ? "12" : "8"}</span><Bookmark size={11} /><Share2 size={11} /></div>
+    </article>
+  );
+}
+
+function ReadingViewOnboarding({
+  value,
+  post,
+  onChange,
+  onContinue,
+  onSkip,
+}: {
+  value: FeedViewMode;
+  post: any;
+  onChange: (value: FeedViewMode) => void;
+  onContinue: () => void;
+  onSkip: () => void;
+}) {
+  const options: Array<{ mode: FeedViewMode; title: string; description: string }> = [
+    { mode: "editorial", title: "Editorial", description: "Best for focused reading and the full publication experience." },
+    { mode: "compact", title: "Compact", description: "Best for scanning more stories quickly while keeping the useful detail." },
+  ];
+  return (
+    <section className="reading-onboarding" aria-labelledby="reading-onboarding-title">
+      <div className="reading-onboarding-intro">
+        <span className="eyebrow">A better way to browse</span>
+        <h2 id="reading-onboarding-title">Choose your reading view</h2>
+        <p>Pick the rhythm that suits your morning. You can change it any time from the briefing header.</p>
+      </div>
+      <div className="reading-onboarding-options" role="radiogroup" aria-label="Reading view options">
+        {options.map(option => {
+          const selected = value === option.mode;
+          return (
+            <button
+              key={option.mode}
+              type="button"
+              className={`reading-onboarding-option ${selected ? "selected" : ""}`}
+              role="radio"
+              aria-checked={selected}
+              onClick={() => onChange(option.mode)}
+            >
+              <div className="reading-onboarding-option-head">
+                <div><span className="reading-onboarding-option-kicker">{option.mode === "editorial" ? "One Byte at a time" : "More signal per screen"}</span><h3>{option.title}</h3></div>
+                <span className="reading-onboarding-check" aria-hidden="true">{selected ? <Check size={15} /> : null}</span>
+              </div>
+              <div className={`reading-preview reading-preview-${option.mode}`}>
+                <ReadingViewPreviewCard post={post} compact={option.mode === "compact"} />
+                {option.mode === "compact" && <ReadingViewPreviewCard post={post} compact index={1} />}
+              </div>
+              <p>{option.description}</p>
+            </button>
+          );
+        })}
+      </div>
+      <div className="reading-onboarding-actions">
+        <button type="button" className="button" onClick={onContinue}>Continue <ArrowRight size={15} /></button>
+        <button type="button" className="text-link" onClick={onSkip}>Choose later</button>
+      </div>
+    </section>
+  );
+}
+
+function getReadPostIds(): Set<number> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem("aurikrex_read_posts");
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markPostAsRead(id: number) {
+  if (typeof window === "undefined" || !id) return;
+  try {
+    const set = getReadPostIds();
+    set.add(id);
+    localStorage.setItem("aurikrex_read_posts", JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
+function TodayCompletionCard({
+  streak = 1,
+  readCount = 0,
+  totalCount = 0,
+}: {
+  streak?: number;
+  readCount?: number;
+  totalCount?: number;
+}) {
+  const isFullyRead = totalCount > 0 && readCount >= totalCount;
+
+  const handleShare = () => {
+    const text = `I just completed today's tech briefing on Aurikrex Bytes! 🔥 ${streak}-day streak active.`;
+    const url = "https://www.bytes.aurikrex.tech/";
+    if (typeof navigator !== "undefined" && navigator.share) {
+      navigator.share({ title: "Aurikrex Bytes Briefing Complete", text, url }).catch(() => undefined);
+    } else if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(`${text} ${url}`);
+      toast.success("Streak text copied to clipboard!");
+    }
+  };
+
+  return (
+    <div className="today-completion-card" role="region" aria-label="Today's briefing completion status">
+      <div className="today-completion-icon">
+        <CheckCircle2 size={40} />
+      </div>
+      <h3 className="today-completion-title">
+        {isFullyRead ? "Nice! You've finished today's Bytes. 🎉" : "You've reached the end of today's drop! 👍"}
+      </h3>
+      <p className="today-completion-subtitle">
+        {isFullyRead
+          ? `You've read all ${totalCount} bytes in today's briefing. Great job keeping your mind sharp and your streak alive!`
+          : `You've scrolled through today's briefing. Read each byte to max out your daily learning streak!`}
+      </p>
+
+      <div className="today-completion-streak">
+        <Flame size={18} fill="currentColor" />
+        <span>{streak} Day Streak Active</span>
+      </div>
+
+      <div className="today-completion-actions">
+        <button type="button" className="button" onClick={handleShare}>
+          <Share2 size={16} /> Share My Streak
+        </button>
+        <Link href="/archive" className="button button-outline">
+          Explore Archive <ArrowRight size={15} />
+        </Link>
+      </div>
+
+      <p style={{ fontSize: "13px", color: "var(--muted, #64748b)", marginTop: "8px", marginBottom: 0 }}>
+        ⏰ See you tomorrow at 8:00 AM for your next briefing drop.
+      </p>
+    </div>
+  );
+}
+
+function PostCard({
+  post,
+  featured = false,
+  isRead = false,
+}: {
+  post: any;
+  featured?: boolean;
+  isRead?: boolean;
+}) {
+  return (
+    <article className={`post-card ${featured ? "post-card-featured" : ""} ${isRead ? "is-read" : ""}`}>
+      <ProtectedLink
+        href={`/post/${post.id}`}
+        className="post-card-link"
+        onClick={() => markPostAsRead(post.id)}
+      >
+        <div className="card-image">
+          {post.imageUrl ? (
+            <img
+              src={optimizedImage(post.imageUrl, featured ? 900 : 600)}
+              alt={post.headline}
+              loading="lazy"
+              decoding="async"
+            />
+          ) : (
+            <div className="image-placeholder">
+              <Sparkles size={22} />
+              <span>Bytes / {String(post.id).padStart(2, "0")}</span>
+            </div>
+          )}
+        </div>
+        <div className="post-card-body">
+          <div className="post-meta">
+            <span>{formatDate(post.publishedTime)}</span>
+            <span>·</span>
+            <span>4 min read</span>
+            {isRead && (
+              <span className="post-card-read-badge">
+                · <Check size={13} /> Read
+              </span>
+            )}
+          </div>
+          <h2>{post.headline}</h2>
+          <p>{excerpt(post.body)}</p>
+          <span className="read-more">
+            {isRead ? "Read again" : "Read story"} <ArrowRight size={15} />
+          </span>
+        </div>
+      </ProtectedLink>
+      <div className="post-card-actions"><EngagementActions post={post} /></div>
+    </article>
+  );
+}
+function PublishedStoryCarousel() {
+  const archive = trpc.publicPosts.carousel.useQuery();
+  const posts = archive.data?.posts ?? [];
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (activeIndex >= posts.length && posts.length > 0) setActiveIndex(0);
+  }, [activeIndex, posts.length]);
+
+  useEffect(() => {
+    if (paused || posts.length < 2) return;
+    const rotation = window.setInterval(() => {
+      setActiveIndex(current => {
+        const candidates = posts.map((_, index) => index).filter(index => index !== current);
+        return candidates[Math.floor(Math.random() * candidates.length)] ?? current;
+      });
+    }, 3000);
+    return () => window.clearInterval(rotation);
+  }, [paused, posts.length]);
+
+  useEffect(() => () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+  }, []);
+
+  const pauseForInteraction = () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    setPaused(true);
+  };
+  const resumeAfterInteraction = () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = setTimeout(() => setPaused(false), 5500);
+  };
+
+  const fallback = {
+    headline: "The quiet shift changing how teams build with AI",
+    body: "A considered look at the tools, habits, and decisions shaping the next chapter of work.",
+    imageUrl: null,
+    publishedTime: null,
+    id: null,
+  };
+  const slides = posts.length ? posts : [fallback];
+  return (
+    <div
+      className={`sample-card sample-card-carousel ${paused ? "is-paused" : ""}`}
+      onPointerEnter={posts.length > 1 ? pauseForInteraction : undefined}
+      onPointerLeave={posts.length > 1 ? resumeAfterInteraction : undefined}
+      onPointerDown={posts.length > 1 ? pauseForInteraction : undefined}
+      onPointerUp={posts.length > 1 ? resumeAfterInteraction : undefined}
+      aria-label={posts.length > 1 ? "Latest published Bytes" : "Example Byte preview"}
+    >
+      <div className="sample-card-slides">
+        {slides.map((post: any, index: number) => {
+          const isActive = index === activeIndex;
+          return posts.length ? (
+            <div key={post.id} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive}>
+              <PostCard post={post} />
+            </div>
+          ) : (
+            <div key="fallback" className="sample-card-slide is-active">
+              <article className="post-card">
+                <div className="card-image"><div className="image-placeholder"><Sparkles size={22} /><span>Preview</span></div></div>
+                <div className="post-card-body"><div className="post-meta"><span>Today</span><span>·</span><span>4 min read</span></div><h2>{fallback.headline}</h2><p>{fallback.body}</p><span className="read-more">Explore the archive <ArrowRight size={15} /></span></div>
+              </article>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function getWeekDays(lastActiveDate: string | null | undefined, currentStreak: number, timeZone: string) {
+  const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
+  const today = new Date(`${todayKey}T12:00:00Z`);
+  const startOfWeek = new Date(today);
+  startOfWeek.setUTCDate(today.getUTCDate() - today.getUTCDay());
+  const streakEnd = lastActiveDate || todayKey;
+  const streakEndDate = new Date(`${streakEnd}T12:00:00Z`);
+  const streakStartDate = new Date(streakEndDate);
+  streakStartDate.setUTCDate(streakEndDate.getUTCDate() - Math.max(currentStreak - 1, 0));
+  const dayFormatter = new Intl.DateTimeFormat("en", { weekday: "narrow", timeZone: "UTC" });
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(startOfWeek);
+    date.setUTCDate(startOfWeek.getUTCDate() + index);
+    const key = date.toISOString().slice(0, 10);
+    return {
+      key,
+      label: dayFormatter.format(date),
+      dateLabel: new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date),
+      isToday: key === todayKey,
+      isFuture: key > todayKey,
+      isActive: key >= streakStartDate.toISOString().slice(0, 10) && key <= streakEnd && key <= todayKey,
+    };
+  });
+}
+function EmptyToday() {
+  return (
+    <div className="empty-state">
+      <div className="empty-icon">
+        <Clock3 size={24} />
+      </div>
+      <span className="eyebrow">The next edition is in progress</span>
+      <h2>Next drop at 8:00 AM</h2>
+      <p>Come back in the morning for the stories worth your attention.</p>
+      <Link className="button button-outline" href="/archive">
+        Browse the archive <ArrowRight size={15} />
+      </Link>
+    </div>
+  );
+}
+export function Home() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  useEffect(() => {
+    if (session.data) navigate("/dashboard");
+  }, [navigate, session.data]);
+  return (
+    <PublicLayout>
+        <main className="landing-page">
+        <section className="hero container">
+          <div className="hero-copy">
+            <span className="eyebrow">
+              <span className="live-dot" />
+              The daily tech briefing
+            </span>
+            <h1>
+              Aurikrex Bytes —<br />
+              <em>what matters.</em>
+            </h1>
+            <p>
+              Five to ten considered technology stories, curated and edited for
+              a better start to your day. A useful daily ritual, delivered at
+              8:00 AM.
+            </p>
+            <div className="hero-actions">
+              <Link className="button" href="/signup">
+                Start reading free <ArrowRight size={16} />
+              </Link>
+              <Link className="text-link" href="/how-it-works">
+                How it works <ArrowRight size={15} />
+              </Link>
+            </div>
+          </div>
+          <div className="hero-note">
+            <span>08:00</span>
+            <strong>Every morning</strong>
+            <p>
+              One calm drop. The context behind what is changing. No endless
+              scroll required.
+            </p>
+          </div>
+        </section>
+        <section className="section container">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">The format</span>
+              <h2>Three steps to better context.</h2>
+            </div>
+          </div>
+          <div className="steps-grid">
+            <div>
+              <span>01</span>
+              <h3>Daily curation</h3>
+              <p>
+                We read widely and select the stories that will shape the day
+                ahead.
+              </p>
+            </div>
+            <div>
+              <span>02</span>
+              <h3>8 AM drop</h3>
+              <p>
+                Our edited briefing arrives as a focused set of branded story
+                cards.
+              </p>
+            </div>
+            <div>
+              <span>03</span>
+              <h3>Read your way</h3>
+              <p>
+                Browse Today's Bytes or search the complete archive whenever you
+                need it.
+              </p>
+            </div>
+          </div>
+        </section>
+        <section className="section container sample-section">
+          <div className="sample-copy">
+            <span className="eyebrow">A Byte, up close</span>
+            <h2>News you can actually use.</h2>
+            <p>
+              Each card gives you a clear headline, the useful context behind
+              it, and a few quiet minutes to understand what matters.
+            </p>
+            <ProtectedLink className="text-link" href="/archive">
+              See the archive <ArrowRight size={15} />
+            </ProtectedLink>
+          </div>
+          <PublishedStoryCarousel />
+        </section>
+        <section className="section why-section">
+          <div className="container">
+            <div className="section-heading">
+              <div>
+                <span className="eyebrow">Why Bytes</span>
+                <h2>Less noise. More signal.</h2>
+              </div>
+            </div>
+            <div className="why-grid">
+              <div>
+                <h3>Edited by a person</h3>
+                <p>
+                  Not an algorithmic firehose. A real editorial choice about
+                  what deserves your attention.
+                </p>
+              </div>
+              <div>
+                <h3>A daily ritual</h3>
+                <p>
+                  Five to ten stories at 8:00 AM, so staying informed has a
+                  beginning and an end.
+                </p>
+              </div>
+              <div>
+                <h3>Built to return to</h3>
+                <p>
+                  A searchable archive that makes the useful stories easy to
+                  find again.
+                </p>
+              </div>
+            </div>
+            <Link className="button" href="/signup">
+              Join Aurikrex Bytes <ArrowRight size={16} />
+            </Link>
+          </div>
+        </section>
+        <section className="manifesto">
+          <div className="container manifesto-inner">
+            <Sparkles size={24} />
+            <div>
+              <span className="eyebrow">The Bytes promise</span>
+              <h2>Make room for what matters.</h2>
+              <p>
+                Start tomorrow’s briefing with a free reader account, or explore
+                the archive first.
+              </p>
+            </div>
+            <Link className="button" href="/signup">
+              Get started <ArrowRight size={15} />
+            </Link>
+          </div>
+        </section>
+      </main>
+    </PublicLayout>
+  );
+}
+export function ReaderDashboard() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const utils = trpc.useUtils();
+  const [tab, setTab] = useState<"today" | "all">("today");
+  const [viewMode, setViewMode] = useState<FeedViewMode>(getInitialFeedViewMode);
+  const [preferenceHydrated, setPreferenceHydrated] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [dashboardSearch, setDashboardSearch] = useState("");
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const dashboard = trpc.reader.dashboard.useQuery(
+    { timeZone },
+    { enabled: Boolean(session.data), retry: false }
+  );
+  const savePreference = trpc.reader.setFeedPreference.useMutation();
+  const [readPostIds, setReadPostIds] = useState<Set<number>>(() => getReadPostIds());
+
+  useEffect(() => {
+    const handleFocus = () => setReadPostIds(getReadPostIds());
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, []);
+
+  const data = dashboard.data;
+  const todayPosts = data?.todayPosts ?? [];
+  const todayReadCount = useMemo(
+    () => todayPosts.filter((p: any) => readPostIds.has(p.id)).length,
+    [todayPosts, readPostIds]
+  );
+  const rawPosts = tab === "today" ? todayPosts : data?.allPosts ?? [];
+  const posts = useMemo(() => {
+    if (tab !== "all" || !dashboardSearch.trim()) return rawPosts;
+    const q = dashboardSearch.toLowerCase();
+    return rawPosts.filter((p: any) =>
+      p.headline?.toLowerCase().includes(q) || p.body?.toLowerCase().includes(q)
+    );
+  }, [rawPosts, tab, dashboardSearch]);
+
+  useEffect(() => {
+    if (!session.isLoading && !session.data) navigate("/login");
+  }, [navigate, session.data, session.isLoading]);
+  useEffect(() => {
+    if (!dashboard.data || preferenceHydrated) return;
+    setViewMode(dashboard.data.reader.feedViewMode === "compact" ? "compact" : "editorial");
+    setShowOnboarding(!dashboard.data.reader.feedViewOnboardingCompleted);
+    setPreferenceHydrated(true);
+  }, [dashboard.data, preferenceHydrated]);
+  useEffect(() => {
+    window.localStorage.setItem(FEED_VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
+  const persistPreference = (nextMode: FeedViewMode, completeOnboarding: boolean) => {
+    const previousMode = viewMode;
+    setViewMode(nextMode);
+    if (completeOnboarding) setShowOnboarding(false);
+    savePreference.mutate(
+      { feedViewMode: nextMode, onboardingCompleted: completeOnboarding || Boolean(dashboard.data?.reader.feedViewOnboardingCompleted) },
+      {
+        onSuccess: () => {
+          if (completeOnboarding) setShowOnboarding(false);
+        },
+        onError: () => {
+          setViewMode(previousMode);
+          if (completeOnboarding) setShowOnboarding(true);
+          toast.error("Your reading preference could not be saved. Please try again.");
+        },
+        onSettled: () => void utils.reader.dashboard.invalidate({ timeZone }),
+      }
+    );
+  };
+  if (session.isLoading || (!session.data && !dashboard.error))
+    return <div className="route-loading">Opening your briefing…</div>;
+  const previewPost = posts[0] ?? data?.allPosts?.[0] ?? { headline: "The useful context behind what matters", body: "A considered look at the stories shaping the day.", imageUrl: null };
+  const firstName = data?.reader.name?.trim().split(/\s+/)[0] || "reader";
+  const weekDays = getWeekDays(data?.streak.lastActiveDate, data?.streak.currentStreak ?? 0, timeZone);
+  return (
+    <PublicLayout seo={{ title: "Your dashboard — Aurikrex Bytes", description: "Your daily Aurikrex Bytes briefing and reading streak.", path: "/dashboard", robots: "noindex,nofollow" }}>
+      <main className="container reader-dashboard">
+        <section className="dashboard-intro">
+          <div className="dashboard-welcome">
+            <span className="eyebrow"><span className="live-dot" /> Your reading desk</span>
+            <h1>Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}, {firstName}.</h1>
+            <p>Here’s the signal worth your attention today.</p>
+          </div>
+          <div className={`streak-card ${data?.streak.increased ? "streak-card-celebrate" : ""}`}>
+            <div className="streak-card-heading">
+              <div className="streak-card-heading-main">
+                <div className="streak-flame"><Flame size={20} fill="currentColor" /></div>
+                <div><strong>{data?.streak.currentStreak ?? 0}</strong><span>day streak</span></div>
+              </div>
+              <small>Best: {data?.streak.longestStreak ?? 0} days</small>
+            </div>
+            <div className="streak-week" aria-label="Current week reading activity">
+              {weekDays.map(day => (
+                <div className={`streak-day ${day.isActive ? "is-active" : ""} ${day.isToday ? "is-today" : ""} ${day.isFuture ? "is-future" : ""}`} key={day.key} title={`${day.dateLabel}${day.isActive ? " · Read" : " · Not read"}`}>
+                  <span>{day.label}</span>
+                  <i aria-hidden="true"><Flame size={13} fill="currentColor" /></i>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+        <div className="dashboard-view-control">
+          <FeedViewModeControl value={viewMode} onChange={mode => persistPreference(mode, false)} />
+          <span className="feed-view-helper">Controls your mobile reading view</span>
+        </div>
+        {showOnboarding && (
+          <ReadingViewOnboarding
+            value={viewMode}
+            post={previewPost}
+            onChange={setViewMode}
+            onContinue={() => persistPreference(viewMode, true)}
+            onSkip={() => persistPreference("editorial", true)}
+          />
+        )}
+        <section className="dashboard-feed">
+          <div className="section-heading dashboard-heading">
+            <div><span className="eyebrow">Your briefing</span><h2>{tab === "today" ? "Today’s Bytes" : "All Bytes"}</h2></div>
+            <div className="dashboard-heading-tools">
+              <div className="reader-tabs" role="tablist" aria-label="Reader feed">
+                <button type="button" role="tab" aria-selected={tab === "today"} className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Today</button>
+                <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
+              </div>
+            </div>
+          </div>
+          {tab === "all" && (
+            <div style={{ marginTop: "16px", marginBottom: "20px" }}>
+              <div className="search-wrap">
+                <Search size={18} />
+                <input
+                  value={dashboardSearch}
+                  onChange={e => setDashboardSearch(e.target.value)}
+                  placeholder="Search brands & topics (e.g. Apple, Google, AI, Nvidia)..."
+                  aria-label="Search all bytes"
+                />
+                {dashboardSearch && (
+                  <button onClick={() => setDashboardSearch("")} aria-label="Clear search">
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+              <div className="brand-filter-chips" role="group" aria-label="Brand & trend quick filters">
+                {BRAND_TAGS.map(tag => {
+                  const isActive = tag === "All" ? !dashboardSearch : dashboardSearch.toLowerCase() === tag.toLowerCase();
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      className={`brand-chip ${isActive ? "active" : ""}`}
+                      onClick={() => setDashboardSearch(tag === "All" ? "" : tag)}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {dashboard.isLoading ? (
+            <div className={`skeleton-grid skeleton-grid-${viewMode}`}><div /><div /><div /></div>
+          ) : posts.length ? (
+            <>
+              <div className={`post-grid post-grid-${viewMode}`}>
+                {posts.map((post: any, index: number) => (
+                  <PostCard
+                    key={post.id}
+                    post={post}
+                    featured={tab === "today" && index === 0}
+                    isRead={readPostIds.has(post.id)}
+                  />
+                ))}
+              </div>
+              {tab === "today" && (
+                <TodayCompletionCard
+                  streak={data?.streak.currentStreak}
+                  readCount={todayReadCount}
+                  totalCount={todayPosts.length}
+                />
+              )}
+            </>
+          ) : (
+            <EmptyToday />
+          )}
+        </section>
+      </main>
+    </PublicLayout>
+  );
+}
+const BRAND_TAGS = ["All", "Apple", "Google", "AI", "Nvidia", "Microsoft", "Meta", "Amazon", "Startups", "Security", "Cloud"];
+
+export function Archive() {
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+
+  const archive = trpc.publicPosts.archive.useQuery({
+    query,
+    page,
+    pageSize: 12,
+  });
+
+  return (
+    <PublicLayout
+      seo={{
+        title: "All Bytes — Aurikrex Bytes archive",
+        description:
+          "Search every considered Aurikrex Bytes technology story by brand, topic, or company trend.",
+        path: page > 1 ? `/archive?page=${page}` : "/archive",
+        prev: page > 1 ? `/archive?page=${page - 1}` : null,
+        next: archive.data?.nextPage
+          ? `/archive?page=${archive.data.nextPage}`
+          : null,
+      }}
+    >
+      <main className="container page-main">
+        <div className="page-intro">
+          <span className="eyebrow">The complete record</span>
+          <h1>All Bytes</h1>
+          <p>Search every story by brand, company, topic, or tech trend.</p>
+        </div>
+
+        <div className="search-wrap">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={e => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search brands & topics (e.g. Apple, Google, AI, Nvidia)..."
+            aria-label="Search the archive"
+          />
+          {query && (
+            <button onClick={() => { setQuery(""); setPage(1); }} aria-label="Clear search">
+              <X size={16} />
+            </button>
+          )}
+        </div>
+
+        <div className="brand-filter-chips" role="group" aria-label="Brand and trend quick filters">
+          {BRAND_TAGS.map(tag => {
+            const isActive = tag === "All" ? !query : query.toLowerCase() === tag.toLowerCase();
+            return (
+              <button
+                key={tag}
+                type="button"
+                className={`brand-chip ${isActive ? "active" : ""}`}
+                onClick={() => {
+                  setQuery(tag === "All" ? "" : tag);
+                  setPage(1);
+                }}
+              >
+                {tag}
+              </button>
+            );
+          })}
+        </div>
+
+        {query && (
+          <div className="search-results-info">
+            <span>
+              Showing results for <strong>"{query}"</strong>
+            </span>
+            <button className="text-button" onClick={() => { setQuery(""); setPage(1); }}>
+              Clear filter
+            </button>
+          </div>
+        )}
+
+        {archive.isLoading ? (
+          <div className="skeleton-grid">
+            <div />
+            <div />
+            <div />
+          </div>
+        ) : archive.data?.posts?.length ? (
+          <>
+            <div className="post-grid archive-grid">
+              {archive.data.posts.map((post: any) => (
+                <PostCard key={post.id} post={post} />
+              ))}
+            </div>
+            <div className="pagination">
+              <button
+                className="button button-outline"
+                disabled={page <= 1}
+                onClick={() => setPage(page - 1)}
+              >
+                Previous
+              </button>
+              <span>Page {page}</span>
+              <button
+                className="button button-outline"
+                disabled={archive.data.nextPage === null}
+                onClick={() => setPage(page + 1)}
+              >
+                Next
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="empty-state">
+            <Search size={24} />
+            <h2>No stories found {query ? `matching "${query}"` : ""}</h2>
+            <p>Try searching for a different brand, company, or tech topic.</p>
+            {query && (
+              <button className="button button-outline" onClick={() => { setQuery(""); setPage(1); }}>
+                Clear search & view all bytes
+              </button>
+            )}
+          </div>
+        )}
+      </main>
+    </PublicLayout>
+  );
+}
+export function PostDetail() {
+  const [, params] = useRoute("/post/:id");
+  const id = Number(params?.id);
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const post = trpc.publicPosts.byId.useQuery(
+    { id },
+    { enabled: Number.isFinite(id) }
+  );
+  useEffect(() => {
+    if (post.data && Number.isFinite(id)) {
+      markPostAsRead(id);
+    }
+  }, [id, post.data]);
+  const engagement = trpc.reader.engagement.useQuery({ postId: id }, { enabled: Boolean(session.data) && Number.isFinite(id), retry: false });
+  const detailPost = post.data ? { ...post.data, ...(engagement.data || {}) } : null;
+  const seo = post.data
+    ? {
+        title: `${post.data.headline} — Aurikrex Bytes`,
+        description: excerpt(post.data.body, 160),
+        path: `/post/${post.data.id}`,
+        image: post.data.imageUrl || "/logo-512.png",
+        type: "article" as const,
+        article: {
+          headline: post.data.headline,
+          datePublished: post.data.publishedTime,
+          image: post.data.imageUrl,
+        },
+      }
+    : {
+        title: "Story — Aurikrex Bytes",
+        description:
+          "Read the latest considered technology story from Aurikrex Bytes.",
+        path: `/post/${Number.isFinite(id) ? id : ""}`,
+      };
+  return (
+    <PublicLayout seo={seo}>
+      <main className="container detail-page">
+        {post.isLoading ? (
+          <div className="detail-loading" />
+        ) : post.data ? (
+          <article>
+            <Link className="back-link" href="/archive">
+              ← Back to all bytes
+            </Link>
+            <div className="detail-meta">
+              <span className="eyebrow">Aurikrex Bytes</span>
+              <span>{formatDate(post.data.publishedTime)} · 4 min read</span>
+            </div>
+            <h1>{post.data.headline}</h1>
+            {post.data.imageUrl && (
+              <img
+                className="detail-image"
+                src={optimizedImage(post.data.imageUrl, 1400)}
+                alt={post.data.headline}
+                loading="eager"
+                fetchPriority="high"
+              />
+            )}
+            <div className="detail-body">
+              {post.data.body
+                .split(/\n+/)
+                .map((paragraph: string, i: number) => (
+                  <p key={i}>{paragraph}</p>
+                ))}
+            </div>
+            <div className="detail-actions"><EngagementActions post={detailPost || post.data} /></div>
+          </article>
+        ) : (
+          <div className="empty-state">
+            <h2>Story not found</h2>
+            <Link className="text-link" href="/archive">
+              Back to the archive <ArrowRight size={15} />
+            </Link>
+          </div>
+        )}
+      </main>
+    </PublicLayout>
+  );
+}
+
+export function SavedPosts() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const saved = trpc.reader.saved.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
+  useEffect(() => { if (!session.isLoading && !session.data) navigate("/login"); }, [navigate, session.data, session.isLoading]);
+  if (session.isLoading || (!session.data && !saved.error)) return <div className="route-loading">Opening your saved stories…</div>;
+  return <PublicLayout seo={{ title: "Saved Posts — Aurikrex Bytes", description: "Stories you saved for later.", path: "/saved", robots: "noindex,nofollow" }}>
+    <main className="container page-main saved-page">
+      <div className="page-intro"><span className="eyebrow">Your reading list</span><h1>Saved Posts</h1><p>Keep the stories worth returning to close at hand.</p></div>
+      {saved.isLoading ? <div className="skeleton-grid"><div /><div /><div /></div> : saved.data?.length ? <div className="post-grid">{saved.data.map((post: any) => <PostCard key={post.id} post={post} />)}</div> : <div className="empty-state"><Bookmark size={24} /><h2>You haven’t saved anything yet</h2><p>Save a story from the feed when you want to come back to it.</p><Link className="button" href="/archive">Browse the archive <ArrowRight size={15} /></Link></div>}
+    </main>
+  </PublicLayout>;
+}
+
+export function HowItWorks() {
+  return (
+    <PublicLayout
+      seo={{
+        title: "How Aurikrex Bytes works",
+        description:
+          "See how Aurikrex Bytes finds the signal, adds context, and delivers a calmer daily tech briefing.",
+        path: "/how-it-works",
+      }}
+    >
+      <main className="container support-page">
+        <span className="eyebrow">A better briefing</span>
+        <h1>How Bytes works</h1>
+        <p className="support-intro">
+          Aurikrex Bytes is a small, daily ritual for people who want the
+          important parts of tech without the endless scroll.
+        </p>
+        {[
+          [
+            "01",
+            "We find the signal",
+            "Every morning, we scan the landscape for the stories that will shape conversations, products, and decisions.",
+          ],
+          [
+            "02",
+            "We add the context",
+            "Headlines are easy. Understanding is harder. Each Byte gives you the useful background in a clear, compact read.",
+          ],
+          [
+            "03",
+            "You start clearer",
+            "A few minutes, a better sense of the day, and then you can get on with the rest of it.",
+          ],
+        ].map(([n, h, p]) => (
+          <div className="step-row" key={n}>
+            <span>{n}</span>
+            <div>
+              <h2>{h}</h2>
+              <p>{p}</p>
+            </div>
+          </div>
+        ))}
+      </main>
+    </PublicLayout>
+  );
+}
+export function HelpCenter() {
+  const qs = [
+    [
+      "How do I create an account?",
+      "Choose Sign in or Join free, then select Create an account. Enter your email and a password of at least eight characters. We will send a verification link before you can use reader-only features.",
+    ],
+    [
+      "How do push notifications work?",
+      "If notifications are enabled on your installed PWA or browser, we can alert you when the 8:00 AM edition is ready. You control permission in your device or browser settings, and you can turn notifications off at any time.",
+    ],
+    [
+      "What is the difference between Today's Bytes and All Bytes?",
+      "Today's Bytes is the current daily drop and resets after midnight until the next 8:00 AM edition. All Bytes is the searchable, reverse-chronological archive of every published story.",
+    ],
+    [
+      "How do I search the archive?",
+      "Open All Bytes and enter a phrase from a headline or story body. Search results are paginated, and you can move between pages without losing your query.",
+    ],
+    [
+      "I forgot my password or did not receive a verification email.",
+      "Use Forgot password on the sign-in page. For a missing verification email, check spam first, then request a new message or contact support if the issue continues.",
+    ],
+    [
+      "How do I report an incorrect or outdated story?",
+      "Email support@aurikrex.tech with the story link and the correction you believe is needed. Include a source where possible so the editorial team can review it quickly.",
+    ],
+    [
+      "How do I contact support?",
+      "Email support@aurikrex.tech for account, editorial, or accessibility help. We aim to respond during normal business hours.",
+    ],
+  ];
+  return (
+    <PublicLayout
+      seo={{
+        title: "Help center — Aurikrex Bytes",
+        description:
+          "Answers about Aurikrex Bytes accounts, daily editions, archive search, notifications, and support.",
+        path: "/help",
+      }}
+    >
+      <main className="container article-page">
+        <span className="eyebrow">Answers, quickly</span>
+        <h1>Help center</h1>
+        <p className="article-lede">
+          Useful answers for your daily reading habit, account, and
+          notifications.
+        </p>
+        <div className="faq-list">
+          {qs.map(([q, a]) => (
+            <details key={q}>
+              <summary>
+                {q}
+                <ChevronDown size={17} />
+              </summary>
+              <p>{a}</p>
+            </details>
+          ))}
+        </div>
+      </main>
+    </PublicLayout>
+  );
+}
+export function Contact() {
+  return (
+    <PublicLayout
+      seo={{
+        title: "Contact Aurikrex Bytes",
+        description:
+          "Contact the Aurikrex Bytes team about account support, editorial feedback, story tips, or partnerships.",
+        path: "/contact",
+      }}
+    >
+      <main className="container support-page">
+        <span className="eyebrow">We are listening</span>
+        <h1>Contact us</h1>
+        <p className="support-intro">
+          Questions, feedback, story tips, or a kind note — send it our way.
+        </p>
+        <div className="contact-grid">
+          <div className="contact-card">
+            <Mail size={21} />
+            <h2>Email the team</h2>
+            <p>
+              For account support, editorial feedback, or partnership enquiries.
+            </p>
+            <a className="inline-link" href="mailto:support@aurikrex.tech">
+              support@aurikrex.tech <ArrowRight size={15} />
+            </a>
+          </div>
+          <div className="contact-card">
+            <ShieldCheck size={21} />
+            <h2>Contact us on WhatsApp</h2>
+            <p>
+              Send us a message on WhatsApp and we will respond during normal business hours.
+            </p>
+            <a
+              className="inline-link"
+              href="https://wa.me/2349113683395"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Message us on WhatsApp <ArrowRight size={15} />
+            </a>
+          </div>
+        </div>
+      </main>
+    </PublicLayout>
+  );
+}
+export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
+  const privacy = kind === "/privacy";
+  return (
+    <PublicLayout
+      seo={{
+        title: `${privacy ? "Privacy policy" : "Terms of service"} — Aurikrex Bytes`,
+        description: privacy
+          ? "Read the Aurikrex Bytes privacy policy, including account data, cookies, analytics, and reader choices."
+          : "Read the Aurikrex Bytes terms of service for using the daily technology briefing.",
+        path: kind,
+      }}
+    >
+      <main className="container article-page">
+        <span className="eyebrow">Aurikrex Bytes</span>
+        <h1>{privacy ? "Privacy policy" : "Terms of service"}</h1>
+        <p className="article-lede">
+          {privacy
+            ? "A clear account of what we collect, why we use it, and the choices available to readers."
+            : "The simple rules for using Aurikrex Bytes thoughtfully as a free reader service."}
+        </p>
+        <div className="legal-meta">
+          <p>
+            <strong>Effective date:</strong> 6 September 2026 ·{" "}
+            <strong>Last updated:</strong> 6 September 2026
+          </p>
+          <p>
+            <strong>Controller:</strong> Aurikrex Bytes — a product of Aurikrex, operated by Korede Samuel Omotosho ·{" "}
+            <strong>Based in:</strong> Lagos, Nigeria
+          </p>
+          <p>
+            <strong>Governing law:</strong> Federal Republic of Nigeria.
+          </p>
+          <p>
+            Third-party policies:{" "}
+            <a href="https://cloudinary.com/privacy" rel="noreferrer">
+              Cloudinary Privacy Policy
+            </a>
+            ,{" "}
+            <a href="https://policies.google.com/privacy" rel="noreferrer">
+              Google Privacy Policy
+            </a>
+            , and{" "}
+            <a href="https://turso.tech/legal/privacy-policy" rel="noreferrer">
+              Turso Privacy Policy
+            </a>
+            ,{" "}
+            <a href="https://www.mailgun.com/legal/privacy-policy/" rel="noreferrer">
+              Mailgun Privacy Policy
+            </a>
+            .
+          </p>
+        </div>
+        {privacy ? (
+          <>
+            <ArticleSection title="Information we collect">
+              When you create a reader account, we collect your email address
+              and a securely hashed password. If you use Google OAuth, we
+              receive the Google account identifier and email needed to create
+              or match your reader account. We also collect usage and analytics
+              data such as stories opened, archive searches, and timestamps so
+              we can understand which parts of the briefing are useful.
+            </ArticleSection>
+            <ArticleSection title="Lawful basis and your rights under the Nigeria Data Protection Act 2023">
+              Our lawful basis for processing your personal data is consent: you
+              actively create an account and agree to these terms. Under the
+              Nigeria Data Protection Act 2023, you may access the personal data
+              we hold about you, request correction of inaccurate data, request
+              deletion of your account and data, and object to our processing of
+              your data. If you believe your rights have been violated, you may
+              lodge a complaint with the Nigeria Data Protection Commission
+              (NDPC).
+            </ArticleSection>
+            <ArticleSection title="Cookies and storage">
+              We use essential session cookies to keep you signed in, remember
+              administrative devices, and protect OAuth flows. Local storage may
+              remember your light or dark mode preference. You can clear cookies
+              through your browser, although doing so may sign you out.
+            </ArticleSection>
+            <ArticleSection title="How we use information">
+              We use information to authenticate accounts, send verification and
+              password-reset emails, provide the daily briefing, measure
+              readership, protect the service, and improve editorial decisions.
+              We do not sell reader information or use reading history for
+              unrelated advertising.
+            </ArticleSection>
+            <ArticleSection title="Service providers">
+              The service may use Turso for application data storage, Cloudinary
+              for post imagery, Google OAuth for optional sign-in, email
+              delivery providers for account messages, and browser/PWA
+              notification services where a reader grants permission. Each
+              provider receives only the information needed for its function.
+            </ArticleSection>
+            <ArticleSection title="Retention and data requests">
+              We retain account and usage data for as long as your account is
+              active. We delete account and usage data within a reasonable period
+              after you request account deletion. Send access, correction, or
+              deletion requests to support@aurikrex.tech. We will verify requests
+              before acting on them and explain any information we must retain
+              for security or legal reasons.
+            </ArticleSection>
+            <ArticleSection title="Contact">
+              For privacy questions or requests, contact support@aurikrex.tech.
+              This policy applies to the free Aurikrex Bytes reader experience
+              and may be updated as the service changes.
+            </ArticleSection>
+          </>
+        ) : (
+          <>
+            <ArticleSection title="The service">
+              Aurikrex Bytes is a free reader briefing that curates and edits
+              technology stories into daily cards. Today's Bytes is the current
+              edition; All Bytes is the searchable archive. The service may
+              change, pause, or add features as we improve it.
+            </ArticleSection>
+            <ArticleSection title="Accounts and responsibilities">
+              Keep your sign-in details secure, provide accurate information,
+              and do not share access in a way that compromises the service or
+              other readers. You must be at least 13 years old to create an
+              account.
+            </ArticleSection>
+            <ArticleSection title="Content and attribution">
+              Our editorial team compiles source material from real reports.
+              Drafts are generated with AI assistance from that compiled source
+              material, and every Byte is reviewed by a human before publishing.
+              Original Aurikrex Bytes writing, edits, design, branding, and
+              software belong to Aurikrex or their licensors. You may read and
+              share links, but do not reproduce the service wholesale or present
+              our edits as your own.
+            </ArticleSection>
+            <ArticleSection title="Acceptable use">
+              Do not scrape or overload the service, interfere with accounts,
+              impersonate others, reverse engineer protected systems, submit
+              malicious material, or use the platform for unlawful activity. We
+              may suspend or terminate access for abuse, fraud, security risk,
+              or serious violations.
+            </ArticleSection>
+            <ArticleSection title="Disclaimer and governing terms">
+              Bytes is provided for general information and context, not
+              financial, legal, medical, or professional advice. We work to keep
+              stories accurate and current but cannot guarantee that every card
+              is complete or error-free. To the extent permitted by law,
+              Aurikrex is not liable for decisions made solely from a Byte.
+              Questions about these terms can be sent to support@aurikrex.tech.
+            </ArticleSection>
+          </>
+        )}
+      </main>
+    </PublicLayout>
+  );
+}
+function ArticleSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="article-section">
+      <h2>{title}</h2>
+      <p>{children}</p>
+    </section>
+  );
+}
+export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
+  const [location, navigate] = useLocation();
+  const utils = trpc.useUtils();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarPreview, setAvatarPreview] = useState("");
+  const [token] = useState(
+    () => new URLSearchParams(window.location.search).get("token") || ""
+  );
+  const [returnTo] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get("returnTo");
+    const fromStorage = window.sessionStorage.getItem(AUTH_RETURN_KEY);
+    return safeReturnTo(fromUrl || fromStorage);
+  });
+  const [message, setMessage] = useState(() =>
+    new URLSearchParams(window.location.search).get("error") === "oauth"
+      ? "Google sign-in failed. Please try again."
+      : ""
+  );
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [verificationState, setVerificationState] = useState<
+    "idle" | "verified" | "already_verified" | "error"
+  >("idle");
+
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select a valid image file.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size should be under 5MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        setAvatarUrl(dataUrl);
+        setAvatarPreview(dataUrl);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+  const google = trpc.reader.googleStart.useQuery(undefined, {
+    enabled: mode === "login" || mode === "signup",
+    retry: false,
+  });
+  const requirements = [
+    { label: "At least 8 characters", valid: password.length >= 8 },
+    { label: "One number", valid: /\d/.test(password) },
+    { label: "One symbol", valid: /[^A-Za-z0-9]/.test(password) },
+  ];
+  const login = trpc.reader.login.useMutation({
+    onSuccess: async r => {
+      await utils.reader.session.invalidate();
+      if (r.emailVerified) {
+        window.sessionStorage.removeItem(AUTH_RETURN_KEY);
+        navigate(returnTo);
+      }
+      else setMessage("Please verify your email before accessing all stories.");
+    },
+    onError: e => setMessage(e.message),
+  });
+  const signup = trpc.reader.signup.useMutation({
+    onSuccess: r => {
+      setVerificationEmail(r.email);
+      setMessage("");
+    },
+    onError: e => setMessage(e.message),
+  });
+  const forgot = trpc.reader.requestPasswordReset.useMutation({
+    onSuccess: () =>
+      setMessage("If that address exists, a reset link is on its way."),
+  });
+  const reset = trpc.reader.resetPassword.useMutation({
+    onSuccess: () => {
+      setMessage("Password updated. You can sign in now.");
+      navigate("/login");
+    },
+    onError: e => setMessage(e.message),
+  });
+  const verify = trpc.reader.verifyEmail.useMutation({
+    onSuccess: r => setVerificationState(r.status),
+    onError: () => setVerificationState("error"),
+  });
+  const resend = trpc.reader.resendVerificationEmail.useMutation({
+    onSuccess: () => setMessage("A fresh verification email is on its way."),
+    onError: e => setMessage(e.message),
+  });
+  useEffect(() => {
+    if (mode === "verify" && token && verificationState === "idle" && !verify.isPending)
+      verify.mutate({ token });
+  }, [mode, token, verificationState, verify.isPending]);
+  useEffect(() => {
+    if (mode !== "verify" || !["verified", "already_verified"].includes(verificationState)) return;
+    const timer = window.setTimeout(() => navigate(authRoutes.login), 1800);
+    return () => window.clearTimeout(timer);
+  }, [mode, navigate, verificationState]);
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (mode === "login") login.mutate({ email, password, remember: true });
+    if (mode === "signup") {
+      if (password !== confirmPassword) {
+        setMessage("Passwords do not match.");
+        return;
+      }
+      signup.mutate({ name, email, password, avatarUrl: avatarUrl || undefined });
+    }
+    if (mode === "forgot") forgot.mutate({ email });
+    if (mode === "reset") {
+      if (password !== confirmPassword) {
+        setMessage("Passwords do not match.");
+        return;
+      }
+      reset.mutate({ token, password });
+    }
+  };
+  const copy =
+    mode === "signup"
+      ? "Join readers who choose context over the scroll."
+      : mode === "forgot"
+        ? "We’ll send a secure link if we find an account for that email."
+        : "Your daily briefing, waiting when you are.";
+  const authPath =
+    mode === "login"
+      ? authRoutes.login
+      : mode === "signup"
+        ? authRoutes.signup
+        : mode === "forgot"
+          ? authRoutes.forgotPassword
+          : mode === "reset"
+            ? authRoutes.resetPassword
+            : authRoutes.verifyEmail;
+  const authLink = (path: string) =>
+    returnTo === "/dashboard"
+      ? path
+      : `${path}?returnTo=${encodeURIComponent(returnTo)}`;
+  const verifyView =
+    mode === "verify" && verificationState === "idle" ? (
+      <div className="verification-state">
+        <div className="verification-icon verification-envelope">
+          <MailOpen size={30} />
+        </div>
+        <h2>Confirm your email</h2>
+        <p className="auth-lede">
+          You’re one click away from your daily Aurikrex Bytes briefing.
+        </p>
+        <button
+          className="button button-full"
+          onClick={() => verify.mutate({ token })}
+          disabled={!token || verify.isPending}
+        >
+          {verify.isPending ? "Verifying…" : "Verify email"} <Check size={16} />
+        </button>
+      </div>
+    ) : verificationState === "verified" ? (
+      <div className="verification-state verification-success">
+        <div className="verification-icon">
+          <Check size={30} />
+        </div>
+        <h2>Email verified</h2>
+        <p className="auth-lede">
+          Your Aurikrex Bytes account is ready. You can sign in and start your
+          daily briefing. Redirecting you to login…
+        </p>
+        <Link className="button button-full" href={authRoutes.login}>
+          Proceed to login <ArrowRight size={16} />
+        </Link>
+      </div>
+    ) : verificationState === "already_verified" ? (
+      <div className="verification-state">
+        <div className="verification-icon">
+          <Check size={30} />
+        </div>
+        <h2>This email is already verified</h2>
+        <p className="auth-lede">
+          This link has already done its job. Redirecting you to login…
+        </p>
+        <Link className="button button-full" href={authRoutes.login}>
+          Go to login <ArrowRight size={16} />
+        </Link>
+      </div>
+    ) : verificationState === "error" ? (
+      <div className="verification-state">
+        <div className="verification-icon verification-icon-error">
+          <X size={30} />
+        </div>
+        <h2>That link needs a refresh</h2>
+        <p className="auth-lede">
+          This verification link is invalid or has expired. Request a new one
+          and we’ll get you back on track.
+        </p>
+        <label>
+          Email address
+          <input
+            type="email"
+            value={verificationEmail || email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="you@example.com"
+          />
+        </label>
+        <button
+          className="button button-full"
+          onClick={() => resend.mutate({ email: verificationEmail || email })}
+          disabled={!email && !verificationEmail}
+        >
+          Resend verification email <Mail size={16} />
+        </button>
+      </div>
+    ) : (
+      <div className="verification-state">
+        <div className="verification-icon verification-envelope">
+          <MailOpen size={30} />
+        </div>
+        <h2>Check your inbox</h2>
+        <p className="auth-lede">
+          We sent a verification email to{" "}
+          <strong>{verificationEmail || "your email address"}</strong>. Click
+          the link inside to confirm your account.
+        </p>
+        <button
+          className="button button-outline button-full"
+          onClick={() => resend.mutate({ email: verificationEmail || email })}
+        >
+          Resend email <Mail size={16} />
+        </button>
+        <p className="verification-hint">
+          Can’t find it? Check your spam or promotions folder.
+        </p>
+      </div>
+    );
+  return (
+    <>
+      <Seo
+        title={
+          (verificationEmail ? "Check your inbox" : authTitles[mode]) +
+          " — Aurikrex Bytes"
+        }
+        description="Sign in or create an Aurikrex Bytes reader account for a calmer daily technology briefing."
+        path={authPath}
+        robots="noindex,nofollow"
+      />
+      <div className="auth-shell">
+        <div className="auth-side">
+          <Logo />
+          <div>
+            <span className="eyebrow">A considered daily read</span>
+            <h1>
+              Your briefing,
+              <br />
+              <em>waiting for you.</em>
+            </h1>
+            <p>
+              Five to ten stories. Better context. A calmer start to the day.
+            </p>
+          </div>
+          <span className="auth-quote">“A little signal goes a long way.”</span>
+        </div>
+        <div className="auth-main">
+          <div className="auth-top">
+            <Logo compact />
+            <div className="auth-top-actions">
+              <ThemeToggle />
+              <button className="text-button" onClick={() => navigate("/")}>
+                Back home
+              </button>
+            </div>
+          </div>
+          <div className="auth-panel">
+            {verificationEmail && mode === "signup" ? (
+              verifyView
+            ) : mode === "verify" ? (
+              <>
+                {verifyView}
+                {!verificationState && (
+                  <button
+                    className="text-button verification-back"
+                    onClick={() => navigate(authRoutes.login)}
+                  >
+                    Back to login
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="eyebrow">Aurikrex Bytes</span>
+                <h2>{authTitles[mode]}</h2>
+                <p className="auth-lede">{copy}</p>
+                <form onSubmit={submit}>
+                  {mode === "signup" && (
+                    <>
+                      <div className="signup-avatar-field">
+                        <label className="signup-avatar-label">Profile photo (optional)</label>
+                        <div className="signup-avatar-row">
+                          <div className="signup-avatar-preview">
+                            {avatarPreview ? (
+                              <img src={avatarPreview} alt="Preview" />
+                            ) : (
+                              <span>{getInitial(name || email || "U")}</span>
+                            )}
+                          </div>
+                          <label className="button button-small button-outline signup-avatar-upload-btn">
+                            <Camera size={14} /> {avatarPreview ? "Change photo" : "Upload photo"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleAvatarFileChange}
+                              style={{ display: "none" }}
+                            />
+                          </label>
+                          {avatarPreview && (
+                            <button
+                              type="button"
+                              className="text-button text-button-muted"
+                              style={{ fontSize: "12px" }}
+                              onClick={() => {
+                                setAvatarUrl("");
+                                setAvatarPreview("");
+                              }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <label>
+                        Full name
+                        <input
+                          value={name}
+                          onChange={e => setName(e.target.value)}
+                          required
+                        />
+                      </label>
+                    </>
+                  )}
+                  {mode !== "reset" && (
+                    <label>
+                      Email address
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        required
+                        placeholder="you@example.com"
+                      />
+                    </label>
+                  )}
+                  {mode !== "forgot" && (
+                    <>
+                      <label>
+                        Password
+                        <input
+                          type="password"
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          required
+                          minLength={8}
+                          placeholder="At least 8 characters, a number and symbol"
+                        />
+                      </label>
+                      {mode === "login" && (
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "-6px", marginBottom: "16px" }}>
+                          <Link className="text-link" style={{ fontSize: "13px" }} href={authRoutes.forgotPassword}>
+                            Forgot password?
+                          </Link>
+                        </div>
+                      )}
+                      {(mode === "signup" || mode === "reset") && (
+                        <>
+                          <ul
+                            className="password-requirements"
+                            aria-label="Password requirements"
+                          >
+                            {requirements.map(item => (
+                              <li
+                                key={item.label}
+                                className={item.valid ? "valid" : ""}
+                              >
+                                <Check size={14} />
+                                {item.label}
+                              </li>
+                            ))}
+                          </ul>
+                          <label>
+                            Confirm password
+                            <input
+                              type="password"
+                              value={confirmPassword}
+                              onChange={e => setConfirmPassword(e.target.value)}
+                              required
+                              minLength={8}
+                            />
+                          </label>
+                        </>
+                      )}
+                    </>
+                  )}
+                  <button className="button button-full" type="submit">
+                    {mode === "signup"
+                      ? "Create account"
+                      : mode === "forgot"
+                        ? "Send reset link"
+                        : mode === "reset"
+                          ? "Update password"
+                          : "Sign in"}{" "}
+                    <ArrowRight size={16} />
+                  </button>
+                </form>
+                {(mode === "login" || mode === "signup") && (
+                  <>
+                    <div className="auth-divider">
+                      <span>or continue with</span>
+                    </div>
+                    <a
+                      className={`google-button ${google.isLoading ? "is-loading" : ""}`}
+                      href={google.data?.url}
+                      aria-disabled={!google.data?.url}
+                      onClick={event => {
+                        if (!google.data?.url) event.preventDefault();
+                      }}
+                    >
+                      <GoogleIcon />
+                      <span>Continue with Google</span>
+                    </a>
+                    <div className="auth-links">
+                      {mode === "login" ? (
+                        <Link href={authLink(authRoutes.signup)}>Create an account</Link>
+                      ) : (
+                        <Link href={authLink(authRoutes.login)}>
+                          Already a reader? Sign in
+                        </Link>
+                      )}
+                    </div>
+                  </>
+                )}
+                <p className="form-message" role="status">
+                  {message}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
