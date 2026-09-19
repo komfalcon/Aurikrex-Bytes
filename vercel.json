@@ -123,10 +123,6 @@
     {
       "path": "/api/cron/notify",
       "schedule": "0 21 * * *"
-    },
-    {
-      "path": "/api/cron/publish",
-      "schedule": "*/5 * * * *"
     }
   ]
 }
