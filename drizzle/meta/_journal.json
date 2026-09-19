@@ -64,6 +64,13 @@
       "when": 1789691492046,
       "tag": "0007_salty_living_tribunal",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789817737000,
+      "tag": "0008_september_19_news_bytes",
+      "breakpoints": true
     }
   ]
 }
