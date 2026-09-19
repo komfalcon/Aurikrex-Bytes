@@ -2,10 +2,11 @@ name: OneSignal Daily Notifications
 
 on:
   schedule:
-    # 8:00 AM WAT (7:00 AM UTC)
-    - cron: "0 7 * * *"
-    # 10:00 PM WAT (9:00 PM UTC)
-    - cron: "0 21 * * *"
+    # Pre-warm 10 minutes early at off-peak minutes to eliminate queue delays:
+    # 06:50 UTC (07:50 AM WAT) -> synchronizes and fires at exact 08:00:00 AM WAT (07:00:00 UTC)
+    - cron: "50 6 * * *"
+    # 20:50 UTC (09:50 PM WAT) -> synchronizes and fires at exact 10:00:00 PM WAT (21:00:00 UTC)
+    - cron: "50 20 * * *"
   workflow_dispatch:
 
 permissions:
@@ -14,8 +15,25 @@ permissions:
 jobs:
   send-notifications:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 15
     steps:
+      - name: Synchronize to exact target hour
+        run: |
+          set -euo pipefail
+          current_min="$(date -u +%-M)"
+          current_sec="$(date -u +%-S)"
+          echo "Runner initialized at $(date -u '+%H:%M:%S UTC')"
+
+          # If booted in pre-warm window (minute 45-59), count down to exact top of hour
+          if [ "$current_min" -ge 45 ] && [ "$current_min" -le 59 ]; then
+            seconds_to_wait=$(( (60 - current_min) * 60 - current_sec ))
+            if [ "$seconds_to_wait" -gt 0 ] && [ "$seconds_to_wait" -le 900 ]; then
+              echo "Pre-warmed runner ready! Sleeping $seconds_to_wait seconds until $(date -u -d "+$seconds_to_wait seconds" '+%H:%M:%S UTC') / 08:00 AM or 10:00 PM WAT..."
+              sleep "$seconds_to_wait"
+            fi
+          fi
+          echo "Target hour reached at $(date -u '+%H:%M:%S UTC'). Proceeding with notification dispatch..."
+
       - name: Trigger OneSignal notification API
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -36,16 +54,15 @@ jobs:
           echo "HTTP status: $status"
           echo "Response: $body"
           if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
-            echo "Notification API request failed."
+            echo "Notification API request failed with HTTP $status."
             exit 1
           fi
           found="$(echo "$body" | jq -r '.sent.found // .found // 0')"
           sent="$(echo "$body" | jq -r '.sent.sent // .sent // 0')"
           failed="$(echo "$body" | jq -r '.sent.failed // .failed // 0')"
-          skipped="$(echo "$body" | jq -r '.sent.skipped // .skipped // false')"
-          echo "Summary: found=$found, sent=$sent, failed=$failed, skipped=$skipped"
+          echo "Summary: found=$found, sent=$sent, failed=$failed"
           if [ "$failed" -gt 0 ]; then
-            echo "Notification delivery reported a failure."
+            echo "Notification delivery reported failures."
             exit 1
           fi
-          echo "Daily notifications processed successfully."
+          echo "Push notifications successfully dispatched!"

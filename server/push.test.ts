@@ -1,57 +1,60 @@
 import { describe, expect, it } from "vitest";
-import { formatPushContent, StoryCandidateForPush } from "./push.js";
+import { formatPushNotificationContent } from "./push.js";
 
-describe("OneSignal push notification content generator", () => {
-  const sampleStory: StoryCandidateForPush = {
+describe("push notification dynamic formatting", () => {
+  const sampleStory = {
     id: 42,
-    headline: "OpenAI and Anthropic announce new safety evaluation frameworks",
-    body: "Major artificial intelligence laboratories have unified their safety and benchmark standards for frontier reasoning models. The joint framework establishes verifiable alignment testing, external red-teaming mandates, and automated risk scoring across high-throughput production clusters before general public deployment.",
-    imageUrl: "https://res.cloudinary.com/bytes/image/upload/v1234/story.jpg",
+    headline: "OpenAI releases new reasoning model architecture",
+    body: "OpenAI today unveiled their latest frontier reasoning architecture designed to automate complex multi-step technical workflows with lower latency and enhanced tool verification across enterprise deployments. The release introduces new quantization options.",
+    imageUrl: "https://res.cloudinary.com/demo/image/upload/sample.jpg",
   };
 
-  it("formats morning notification at 8:00 AM WAT with story headline and body snippet", () => {
-    // 07:00 UTC is 08:00 WAT
-    const morningDate = new Date("2026-09-18T07:00:00Z");
-    const content = formatPushContent(sampleStory, morningDate, "Africa/Lagos", "https://www.bytes.aurikrex.tech");
+  it("formats morning briefing notification with headline, body snippet, and canonical URL", () => {
+    // 08:00 AM in Africa/Lagos (07:00 UTC)
+    const morningTime = new Date("2026-09-19T07:00:00.000Z");
+    const result = formatPushNotificationContent(sampleStory, "Africa/Lagos", morningTime);
 
-    expect(content.heading).toContain("🌅 Morning Brief:");
-    expect(content.heading).toContain("OpenAI and Anthropic");
-    expect(content.url).toBe("https://www.bytes.aurikrex.tech/post/42");
-    expect(content.imageUrl).toBe(sampleStory.imageUrl);
-    expect(content.body.length).toBeLessThanOrEqual(110);
-    expect(content.body.endsWith("...")).toBe(true);
-    expect(content.body).toContain("Major artificial intelligence laboratories");
+    expect(result.heading).toBe("🌅 Morning Brief: OpenAI releases new reasoning model architecture");
+    expect(result.content.length).toBeLessThanOrEqual(110);
+    expect(result.content.endsWith("...")).toBe(true);
+    expect(result.url).toContain("/post/42");
+    expect(result.imageUrl).toBe("https://res.cloudinary.com/demo/image/upload/sample.jpg");
   });
 
-  it("formats evening recap at 10:00 PM WAT with story headline and body snippet", () => {
-    // 21:00 UTC is 22:00 WAT (10:00 PM)
-    const eveningDate = new Date("2026-09-18T21:00:00Z");
-    const content = formatPushContent(sampleStory, eveningDate, "Africa/Lagos", "https://www.bytes.aurikrex.tech");
+  it("formats evening recap notification during nighttime hours", () => {
+    // 10:00 PM in Africa/Lagos (21:00 UTC)
+    const eveningTime = new Date("2026-09-19T21:00:00.000Z");
+    const result = formatPushNotificationContent(sampleStory, "Africa/Lagos", eveningTime);
 
-    expect(content.heading).toContain("🌙 Evening Recap:");
-    expect(content.heading).toContain("OpenAI and Anthropic");
-    expect(content.url).toBe("https://www.bytes.aurikrex.tech/post/42");
-    expect(content.imageUrl).toBe(sampleStory.imageUrl);
+    expect(result.heading).toBe("🌙 Evening Recap: OpenAI releases new reasoning model architecture");
+    expect(result.content.length).toBeLessThanOrEqual(110);
+    expect(result.url).toContain("/post/42");
   });
 
-  it("ignores data: URL images and keeps only HTTP/HTTPS images for push", () => {
-    const svgStory: StoryCandidateForPush = {
+  it("cleans source tags from notification headline", () => {
+    const taggedStory = {
       id: 99,
-      headline: "Quantum algorithm breakthrough",
-      body: "Researchers have discovered a new quantum error-mitigation technique.",
-      imageUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+      headline: "Show HN: FastKV – In-memory distributed store",
+      body: "FastKV is a new in-memory distributed key-value store optimized for high-throughput microservices.",
+      imageUrl: null,
     };
-    const content = formatPushContent(svgStory, new Date(), "Africa/Lagos", "https://www.bytes.aurikrex.tech");
-    expect(content.imageUrl).toBeUndefined();
+    const morningTime = new Date("2026-09-19T07:00:00.000Z");
+    const result = formatPushNotificationContent(taggedStory, "Africa/Lagos", morningTime);
+
+    expect(result.heading).toBe("🌅 Morning Brief: FastKV – In-memory distributed store");
+    expect(result.heading).not.toContain("Show HN:");
+    expect(result.imageUrl).toBeNull();
   });
 
-  it("gracefully falls back when no story has been published yet", () => {
-    const morningDate = new Date("2026-09-18T07:00:00Z");
-    const fallback = formatPushContent(null, morningDate, "Africa/Lagos", "https://www.bytes.aurikrex.tech");
+  it("provides clean fallback copy when no story is provided", () => {
+    const morningTime = new Date("2026-09-19T07:00:00.000Z");
+    const morningResult = formatPushNotificationContent(null, "Africa/Lagos", morningTime);
+    expect(morningResult.heading).toBe("🌅 Daily Tech Briefing is Ready");
+    expect(morningResult.url).toContain("/dashboard");
 
-    expect(fallback.heading).toBe("🌅 Today's Tech Briefing is Ready");
-    expect(fallback.body).toBe("Catch up on the latest verified tech developments on Aurikrex Bytes.");
-    expect(fallback.url).toBe("https://www.bytes.aurikrex.tech/dashboard");
-    expect(fallback.imageUrl).toBeUndefined();
+    const eveningTime = new Date("2026-09-19T21:00:00.000Z");
+    const eveningResult = formatPushNotificationContent(null, "Africa/Lagos", eveningTime);
+    expect(eveningResult.heading).toBe("🌙 Evening Tech Roundup");
+    expect(eveningResult.url).toContain("/dashboard");
   });
 });
