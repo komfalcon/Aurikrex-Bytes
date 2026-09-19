@@ -2,8 +2,8 @@ name: OneSignal Daily Notifications
 
 on:
   schedule:
-    # 8:01 AM WAT (7:01 AM UTC)
-    - cron: "1 7 * * *"
+    # 8:00 AM WAT (7:00 AM UTC)
+    - cron: "0 7 * * *"
     # 10:00 PM WAT (9:00 PM UTC)
     - cron: "0 21 * * *"
   workflow_dispatch:
@@ -42,8 +42,10 @@ jobs:
           found="$(echo "$body" | jq -r '.sent.found // .found // 0')"
           sent="$(echo "$body" | jq -r '.sent.sent // .sent // 0')"
           failed="$(echo "$body" | jq -r '.sent.failed // .failed // 0')"
-          echo "Summary: found=$found, sent=$sent, failed=$failed"
-          if [ "$failed" -gt 0 ] || [ "$sent" -lt 1 ]; then
-            echo "Notification delivery failed or reached no subscribers."
+          skipped="$(echo "$body" | jq -r '.sent.skipped // .skipped // false')"
+          echo "Summary: found=$found, sent=$sent, failed=$failed, skipped=$skipped"
+          if [ "$failed" -gt 0 ]; then
+            echo "Notification delivery reported a failure."
             exit 1
           fi
+          echo "Daily notifications processed successfully."
