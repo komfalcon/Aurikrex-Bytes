@@ -106,14 +106,14 @@ function buildMetaTags(seo: PostSeo) {
     `<meta name="twitter:title" content="${htmlEscape(seo.headline)}">`,
     `<meta name="twitter:description" content="${htmlEscape(seo.description)}">`,
     `<meta name="twitter:image" content="${htmlEscape(seo.imageUrl)}">`,
-    `<link rel="canonical" href="${htmlEscape(seo.canonicalUrl)}">`,
     `<link rel="icon" type="image/x-icon" href="${siteUrl()}/favicon.ico">`,
-    `<link rel="icon" type="image/png" sizes="48x48" href="${siteUrl()}/favicon.ico">`,
+    `<link rel="icon" type="image/png" sizes="48x48" href="${siteUrl()}/favicon-48x48.png">`,
+    `<link rel="icon" type="image/png" sizes="96x96" href="${siteUrl()}/favicon-96x96.png">`,
     `<link rel="icon" type="image/svg+xml" href="${siteUrl()}/logo.svg">`,
     `<link rel="icon" type="image/png" sizes="192x192" href="${siteUrl()}/logo-192.png">`,
     `<link rel="icon" type="image/png" sizes="512x512" href="${siteUrl()}/logo-512.png">`,
     `<link rel="shortcut icon" href="${siteUrl()}/favicon.ico">`,
-    `<link rel="apple-touch-icon" sizes="192x192" href="${siteUrl()}/logo-192.png">`,
+    `<link rel="apple-touch-icon" sizes="180x180" href="${siteUrl()}/apple-touch-icon.png">`,
   ];
   if (published)
     tags.push(
@@ -353,6 +353,14 @@ export function registerSeoRoutes(app: Express) {
           "Disallow: /falcon-system-auth",
           "Disallow: /api/trpc",
           "Disallow: /api/cron",
+          "",
+          "User-agent: Googlebot-Image",
+          "Allow: /",
+          "Allow: /favicon.ico",
+          "Allow: /*.png",
+          "Allow: /*.ico",
+          "Allow: /*.svg",
+          "",
           `Sitemap: ${siteUrl()}/sitemap.xml`,
           "",
         ].join("\n")
