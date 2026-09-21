@@ -646,6 +646,7 @@ export async function runNightlyCuration(status: "draft" | "published" = "draft"
       await db.insert(posts).values({
         headline: byte.headline,
         body: byte.body,
+        category: byte.category || "Tech",
         imageUrl: byte.imageUrl,
         status,
         createdBy: 1,

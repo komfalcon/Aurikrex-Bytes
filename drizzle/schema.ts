@@ -40,6 +40,7 @@ export const posts = sqliteTable("posts", {
   imageProvenance: text("image_provenance"),
   headline: text("headline").notNull(),
   body: text("body").notNull(),
+  category: text("category").notNull().default("Tech"),
   status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
   scheduledTime: integer("scheduled_time", { mode: "timestamp_ms" }),
   publishedTime: integer("published_time", { mode: "timestamp_ms" }),

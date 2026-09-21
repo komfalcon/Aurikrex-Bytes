@@ -107,6 +107,13 @@ function buildMetaTags(seo: PostSeo) {
     `<meta name="twitter:description" content="${htmlEscape(seo.description)}">`,
     `<meta name="twitter:image" content="${htmlEscape(seo.imageUrl)}">`,
     `<link rel="canonical" href="${htmlEscape(seo.canonicalUrl)}">`,
+    `<link rel="icon" type="image/x-icon" href="${siteUrl()}/favicon.ico">`,
+    `<link rel="icon" type="image/png" sizes="48x48" href="${siteUrl()}/favicon.ico">`,
+    `<link rel="icon" type="image/svg+xml" href="${siteUrl()}/logo.svg">`,
+    `<link rel="icon" type="image/png" sizes="192x192" href="${siteUrl()}/logo-192.png">`,
+    `<link rel="icon" type="image/png" sizes="512x512" href="${siteUrl()}/logo-512.png">`,
+    `<link rel="shortcut icon" href="${siteUrl()}/favicon.ico">`,
+    `<link rel="apple-touch-icon" sizes="192x192" href="${siteUrl()}/logo-192.png">`,
   ];
   if (published)
     tags.push(

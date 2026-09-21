@@ -85,6 +85,7 @@ async function repairVerifiedNewsSchema(db: ReturnType<typeof drizzle>) {
     ["duplicate_key", "text"],
     ["image_query", "text"],
     ["image_provenance", "text"],
+    ["category", "text DEFAULT 'Tech' NOT NULL"],
   ] as const;
   for (const [name, definition] of repairs) {
     if (names.has(name)) continue;
@@ -482,7 +483,9 @@ export async function searchPublishedPosts(
   const search = normalizedQuery
     ? or(
       like(posts.headline, `%${normalizedQuery}%`),
-      like(posts.body, `%${normalizedQuery}%`)
+      like(posts.body, `%${normalizedQuery}%`),
+      like(posts.category, `%${normalizedQuery}%`),
+      like(posts.sourcePublisher, `%${normalizedQuery}%`)
     )
     : undefined;
   const where = search

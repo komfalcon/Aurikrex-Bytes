@@ -189,6 +189,7 @@ export const appRouter = router({
         z.object({
           headline: z.string().min(1).max(120),
           body: z.string().min(1).max(800),
+          category: z.string().optional(),
           imageUrl: z.string().url().optional(),
         })
       )
@@ -203,6 +204,7 @@ export const appRouter = router({
           });
         const result = await db.insert(posts).values({
           ...input,
+          category: input.category || "Tech",
           status: "draft",
           createdBy: admin.id,
           updatedAt: new Date(),
@@ -231,6 +233,7 @@ export const appRouter = router({
           await db.insert(posts).values({
             headline: byte.headline,
             body: byte.body,
+            category: byte.category || "Tech",
             imageUrl: byte.imageUrl,
             status: "draft",
             createdBy: admin.id,
@@ -246,6 +249,7 @@ export const appRouter = router({
           id: z.number().int().positive(),
           headline: z.string().min(1).optional(),
           body: z.string().min(1).optional(),
+          category: z.string().optional(),
           imageUrl: z.string().url().nullable().optional(),
         })
       )
