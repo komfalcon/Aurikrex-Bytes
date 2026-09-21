@@ -1344,7 +1344,7 @@ export function Archive() {
       seo={{
         title: "All Bytes — Aurikrex Bytes archive",
         description:
-          "Search every considered Aurikrex Bytes technology story by brand, topic, or company trend.",
+          "Browse and search every published edition of Aurikrex Bytes — your daily curated technology, AI, startup, and software engineering news archive.",
         path: page > 1 ? `/archive?page=${page}` : "/archive",
         prev: page > 1 ? `/archive?page=${page - 1}` : null,
         next: archive.data?.nextPage

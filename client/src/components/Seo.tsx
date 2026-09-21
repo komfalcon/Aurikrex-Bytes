@@ -38,6 +38,7 @@ export default function Seo({ title, description, path = "/", image = DEFAULT_IM
     const imageUrl = absoluteUrl(image, window.location.origin);
     document.title = title;
     setMeta("name", "description", description);
+    setMeta("name", "keywords", "tech news, AI news, startup news, technology briefing, Aurikrex Bytes, daily tech digest");
     setMeta("name", "robots", robots);
     setMeta("property", "og:site_name", SITE_NAME);
     setMeta("property", "og:title", title);
@@ -45,6 +46,8 @@ export default function Seo({ title, description, path = "/", image = DEFAULT_IM
     setMeta("property", "og:type", type);
     setMeta("property", "og:url", url);
     setMeta("property", "og:image", imageUrl);
+    setMeta("property", "og:image:width", "1200");
+    setMeta("property", "og:image:height", "630");
     setMeta("property", "og:image:alt", title);
     setMeta("name", "twitter:card", "summary_large_image");
     setMeta("name", "twitter:title", title);
@@ -54,25 +57,73 @@ export default function Seo({ title, description, path = "/", image = DEFAULT_IM
     if (prev) setLink("prev", absoluteUrl(prev, window.location.origin)); else clearLink("prev");
     if (next) setLink("next", absoluteUrl(next, window.location.origin)); else clearLink("next");
 
-    const existing = document.head.querySelector<HTMLScriptElement>('script[data-seo-jsonld="true"]');
-    if (existing) existing.remove();
+    document.head.querySelectorAll<HTMLScriptElement>('script[data-seo-jsonld]').forEach(s => s.remove());
+
     if (article) {
       const script = document.createElement("script");
       script.type = "application/ld+json";
-      script.dataset.seoJsonld = "true";
+      script.dataset.seoJsonld = "article";
       script.textContent = JSON.stringify({
         "@context": "https://schema.org",
         "@type": "NewsArticle",
+        name: article.headline,
         headline: article.headline,
+        description,
+        url,
         image: [absoluteUrl(article.image || image, window.location.origin)],
         datePublished: article.datePublished ? new Date(article.datePublished).toISOString() : undefined,
         dateModified: article.datePublished ? new Date(article.datePublished).toISOString() : undefined,
+        isAccessibleForFree: true,
+        articleSection: "Technology",
+        inLanguage: "en",
         author: { "@type": "Organization", name: SITE_NAME, url: SITE_URL },
-        publisher: { "@type": "Organization", name: SITE_NAME, url: SITE_URL, logo: { "@type": "ImageObject", url: DEFAULT_IMAGE } },
+        publisher: { "@type": "Organization", name: SITE_NAME, url: SITE_URL, logo: { "@type": "ImageObject", url: DEFAULT_IMAGE, width: 512, height: 512 } },
         mainEntityOfPage: { "@type": "WebPage", "@id": url },
-        description,
       });
       document.head.appendChild(script);
+    }
+
+    if (path === "/" || path === "") {
+      const websiteScript = document.createElement("script");
+      websiteScript.type = "application/ld+json";
+      websiteScript.dataset.seoJsonld = "website";
+      websiteScript.textContent = JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        name: SITE_NAME,
+        url: SITE_URL,
+        description,
+        potentialAction: {
+          "@type": "SearchAction",
+          target: { "@type": "EntryPoint", urlTemplate: `${SITE_URL}/archive?q={search_term_string}` },
+          "query-input": "required name=search_term_string"
+        }
+      });
+      document.head.appendChild(websiteScript);
+
+      const orgScript = document.createElement("script");
+      orgScript.type = "application/ld+json";
+      orgScript.dataset.seoJsonld = "organization";
+      orgScript.textContent = JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        name: SITE_NAME,
+        url: SITE_URL,
+        logo: { "@type": "ImageObject", url: DEFAULT_IMAGE, width: 512, height: 512 },
+        description,
+        founder: {
+          "@type": "Person",
+          name: "Korede Omotosho"
+        },
+        sameAs: [
+          "https://x.com/aurikrex",
+          "https://instagram.com/falcon.omotosho",
+          "https://www.linkedin.com/in/falcon-omotosho",
+          "https://www.facebook.com/share/1SsFXC4mZP/",
+          "https://www.tiktok.com/@falcon.omotosho"
+        ]
+      });
+      document.head.appendChild(orgScript);
     }
   }, [title, description, path, image, type, publishedTime, article, prev, next, robots]);
   return null;

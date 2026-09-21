@@ -90,6 +90,7 @@ function buildMetaTags(seo: PostSeo) {
   const tags = [
     `<title>${htmlEscape(seo.title)}</title>`,
     `<meta name="description" content="${htmlEscape(seo.description)}">`,
+    `<meta name="keywords" content="tech news, AI news, startup news, technology briefing, Aurikrex Bytes, daily tech digest">`,
     `<meta name="robots" content="index,follow,max-image-preview:large">`,
     `<meta property="og:site_name" content="Aurikrex Bytes">`,
     `<meta property="og:title" content="${htmlEscape(seo.headline)}">`,
@@ -97,7 +98,10 @@ function buildMetaTags(seo: PostSeo) {
     `<meta property="og:type" content="article">`,
     `<meta property="og:url" content="${htmlEscape(seo.canonicalUrl)}">`,
     `<meta property="og:image" content="${htmlEscape(seo.imageUrl)}">`,
+    `<meta property="og:image:width" content="1200">`,
+    `<meta property="og:image:height" content="630">`,
     `<meta property="og:image:alt" content="${htmlEscape(seo.headline)}">`,
+    `<meta property="article:section" content="Technology">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${htmlEscape(seo.headline)}">`,
     `<meta name="twitter:description" content="${htmlEscape(seo.description)}">`,
@@ -112,11 +116,16 @@ function buildMetaTags(seo: PostSeo) {
     `<script type="application/ld+json">${safeJson({
       "@context": "https://schema.org",
       "@type": "NewsArticle",
+      name: seo.headline,
       headline: seo.headline,
       description: seo.description,
+      url: seo.canonicalUrl,
       image: [seo.imageUrl],
       datePublished: published,
       dateModified: published,
+      isAccessibleForFree: true,
+      articleSection: "Technology",
+      inLanguage: "en",
       author: {
         "@type": "Organization",
         name: "Aurikrex Bytes",
@@ -126,7 +135,7 @@ function buildMetaTags(seo: PostSeo) {
         "@type": "Organization",
         name: "Aurikrex Bytes",
         url: siteUrl(),
-        logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png` },
+        logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png`, width: 512, height: 512 },
       },
       mainEntityOfPage: { "@type": "WebPage", "@id": seo.canonicalUrl },
     })}</script>`
@@ -332,9 +341,11 @@ export function registerSeoRoutes(app: Express) {
         [
           "User-agent: *",
           "Allow: /",
+          "Allow: /api/share/",
           "Disallow: /admin",
           "Disallow: /falcon-system-auth",
-          "Disallow: /api",
+          "Disallow: /api/trpc",
+          "Disallow: /api/cron",
           `Sitemap: ${siteUrl()}/sitemap.xml`,
           "",
         ].join("\n")
@@ -342,25 +353,26 @@ export function registerSeoRoutes(app: Express) {
   });
 
   app.get("/sitemap.xml", async (_req: Request, res: Response) => {
-    const staticPaths = [
-      "/",
-      "/archive",
-      "/how-it-works",
-      "/help",
-      "/contact",
-      "/privacy",
-      "/terms",
+    type StaticEntry = { path: string; priority: string; changefreq: string };
+    const staticEntries: StaticEntry[] = [
+      { path: "/",             priority: "1.0", changefreq: "daily" },
+      { path: "/archive",      priority: "0.9", changefreq: "daily" },
+      { path: "/how-it-works", priority: "0.6", changefreq: "monthly" },
+      { path: "/help",         priority: "0.4", changefreq: "monthly" },
+      { path: "/contact",      priority: "0.4", changefreq: "monthly" },
+      { path: "/privacy",      priority: "0.3", changefreq: "yearly" },
+      { path: "/terms",        priority: "0.3", changefreq: "yearly" },
     ];
-    const urls = staticPaths.map(
-      pathValue =>
-        `<url><loc>${xmlEscape(`${siteUrl()}${pathValue}`)}</loc></url>`
+    const urls = staticEntries.map(
+      ({ path: pathValue, priority, changefreq }) =>
+        `<url><loc>${xmlEscape(`${siteUrl()}${pathValue}`)}</loc><changefreq>${changefreq}</changefreq><priority>${priority}</priority></url>`
     );
     try {
       const posts = await listPublishedPosts();
       for (const post of posts) {
         const lastmod = post.publishedTime || post.updatedAt;
         urls.push(
-          `<url><loc>${xmlEscape(`${siteUrl()}/post/${post.id}`)}</loc>${lastmod ? `<lastmod>${new Date(lastmod).toISOString()}</lastmod>` : ""}</url>`
+          `<url><loc>${xmlEscape(`${siteUrl()}/post/${post.id}`)}</loc>${lastmod ? `<lastmod>${new Date(lastmod).toISOString()}</lastmod>` : ""}<changefreq>weekly</changefreq><priority>0.8</priority></url>`
         );
       }
     } catch (error) {
@@ -403,22 +415,76 @@ export function registerSeoRoutes(app: Express) {
   app.get("/api/share/static", (req: Request, res: Response) => {
     const pathValue = req.query.path as string;
     const staticMap: Record<string, { title: string; description: string }> = {
-      "root": { title: "Aurikrex Bytes â€” What matters in tech", description: "A focused editorial desk for shaping the next considered brief." },
-      "archive": { title: "All Bytes â€” Aurikrex Bytes archive", description: "Read all published editions of Aurikrex Bytes." },
-      "help": { title: "Help Center â€” Aurikrex Bytes", description: "Support and FAQs for Aurikrex Bytes." },
-      "contact": { title: "Contact Us â€” Aurikrex Bytes", description: "Get in touch with the Aurikrex Bytes team." },
-      "privacy": { title: "Privacy Policy â€” Aurikrex Bytes", description: "Privacy policy for Aurikrex Bytes." },
-      "terms": { title: "Terms of Service â€” Aurikrex Bytes", description: "Terms of Service for Aurikrex Bytes." }
+      "root": { title: "Aurikrex Bytes — What matters in tech", description: "Aurikrex Bytes is your daily curated tech news briefing — AI, startups, chips, and what matters in technology today." },
+      "archive": { title: "All Bytes — Aurikrex Bytes archive", description: "Browse every published edition of Aurikrex Bytes — your daily curated technology and AI news digest." },
+      "how-it-works": { title: "How It Works — Aurikrex Bytes", description: "Learn how Aurikrex Bytes curates the best tech news stories each day — AI, chips, and startup coverage that matters." },
+      "help": { title: "Help Center — Aurikrex Bytes", description: "Support and FAQs for Aurikrex Bytes readers." },
+      "contact": { title: "Contact Us — Aurikrex Bytes", description: "Get in touch with the Aurikrex Bytes team." },
+      "privacy": { title: "Privacy Policy — Aurikrex Bytes", description: "Privacy policy for Aurikrex Bytes." },
+      "terms": { title: "Terms of Service — Aurikrex Bytes", description: "Terms of Service for Aurikrex Bytes." }
     };
     const metadata = staticMap[pathValue] || staticMap["root"];
+    const canonicalUrl = `${siteUrl()}/${pathValue === "root" ? "" : pathValue || ""}`;
     const seo: PostSeo = {
       title: metadata.title,
       description: metadata.description,
       headline: metadata.title,
-      canonicalUrl: `${siteUrl()}/${pathValue === "root" ? "" : pathValue || ""}`,
+      canonicalUrl,
       imageUrl: `${siteUrl()}/logo-512.png`
     };
-    return res.status(200).type("html").send(renderShareDocument(seo));
+
+    // Inject WebSite + Organization JSON-LD on the homepage for Google brand Knowledge Panel
+    const isHomepage = !pathValue || pathValue === "root";
+    const extraLd = isHomepage ? `
+    <script type="application/ld+json">${safeJson({
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "Aurikrex Bytes",
+      url: siteUrl(),
+      description: metadata.description,
+      potentialAction: {
+        "@type": "SearchAction",
+        target: { "@type": "EntryPoint", urlTemplate: `${siteUrl()}/archive?q={search_term_string}` },
+        "query-input": "required name=search_term_string"
+      }
+    })}</script>
+    <script type="application/ld+json">${safeJson({
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "Aurikrex Bytes",
+      url: siteUrl(),
+      logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png`, width: 512, height: 512 },
+      description: metadata.description,
+      founder: {
+        "@type": "Person",
+        name: "Korede Omotosho"
+      },
+      sameAs: [
+        "https://x.com/aurikrex",
+        "https://instagram.com/falcon.omotosho",
+        "https://www.linkedin.com/in/falcon-omotosho",
+        "https://www.facebook.com/share/1SsFXC4mZP/",
+        "https://www.tiktok.com/@falcon.omotosho"
+      ]
+    })}</script>` : "";
+
+    const doc = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="keywords" content="tech news, AI news, startup news, technology briefing, Aurikrex Bytes, daily tech digest">
+    ${buildMetaTags(seo)}${extraLd}
+  </head>
+  <body>
+    <main>
+      <h1>${htmlEscape(seo.headline)}</h1>
+      <p>${htmlEscape(seo.description)}</p>
+      <a href="${htmlEscape(seo.canonicalUrl)}">Visit Aurikrex Bytes</a>
+    </main>
+  </body>
+</html>`;
+    return res.status(200).type("html").send(doc);
   });
 }
 
