@@ -390,7 +390,10 @@ function imageQuery(title: string): string {
  * Ensures the editorial brief sits strictly within the [600, 800] character envelope.
  * Intelligently trims on sentence boundaries if too long, or extends with journalistic context if too short.
  */
-export function clampEditorialBrief(body: string, candidate: NewsCandidate): string {
+export function clampEditorialBrief(
+  body: string,
+  candidate: { publisher: string; publishedAt: Date }
+): string {
   let text = body.trim().replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
 
   const extensions = [

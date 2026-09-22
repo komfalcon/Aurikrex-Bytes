@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowRight, ArrowUpRight, CalendarClock, Check, FilePlus2, LayoutDashboard, LogOut, Moon, Search, Shield, Sun, Trash2, Send, CheckSquare, Square } from "lucide-react";
+import { ArrowRight, ArrowUpRight, CalendarClock, Check, FilePlus2, LayoutDashboard, LogOut, Moon, Search, Shield, Sun, Trash2, Send, CheckSquare, Square, AlertTriangle, KeyRound, Power, X } from "lucide-react";
 import { trpc } from "../lib/trpc";
 import { Logo } from "../public/ReaderPages";
 import { useTheme } from "../contexts/ThemeContext";
@@ -60,7 +60,166 @@ export function AdminLogin() {
   );
 }
 
+function MaintenanceButton({
+  role,
+  isMaintenance,
+  onOpenModal,
+}: {
+  role: string;
+  isMaintenance: boolean;
+  onOpenModal: () => void;
+}) {
+  if (role === "admin") {
+    return (
+      <button
+        type="button"
+        className={`maintenance-status-badge ${isMaintenance ? "active" : "inactive"}`}
+        onClick={onOpenModal}
+        title={isMaintenance ? "Maintenance is ACTIVE (click to turn OFF)" : "Maintenance is OFF (click to turn ON)"}
+      >
+        <span className={`maintenance-badge-dot ${isMaintenance ? "pulsing" : ""}`} />
+        <span>{isMaintenance ? "Maintenance: ON" : "Maintenance: OFF"}</span>
+      </button>
+    );
+  }
+
+  return (
+    <span
+      className={`maintenance-status-badge ${isMaintenance ? "active" : "inactive"} readonly`}
+      title={isMaintenance ? "Maintenance is active (Admin only control)" : "Maintenance is off"}
+    >
+      <span className={`maintenance-badge-dot ${isMaintenance ? "pulsing" : ""}`} />
+      <span>{isMaintenance ? "Maintenance: ON" : "Maintenance: OFF"}</span>
+    </span>
+  );
+}
+
+function MaintenanceModal({
+  isOpen,
+  onClose,
+  isMaintenance,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  isMaintenance: boolean;
+}) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const utils = trpc.useUtils();
+
+  const toggleMutation = trpc.admin.setMaintenanceMode.useMutation({
+    onSuccess: () => {
+      void utils.admin.maintenanceStatus.invalidate();
+      void utils.system.maintenanceStatus.invalidate();
+      onClose();
+      setPassword("");
+      setError("");
+    },
+    onError: (err) => {
+      setError(err.message || "Incorrect verification password. Action denied.");
+    },
+  });
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!password) {
+      setError("Please enter the verification password.");
+      return;
+    }
+    setError("");
+    toggleMutation.mutate({
+      enabled: !isMaintenance,
+      password,
+    });
+  };
+
+  return (
+    <div className="maintenance-modal-backdrop" onClick={onClose}>
+      <div className="maintenance-modal-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="maintenance-modal-header">
+          <div className="maintenance-modal-icon-title">
+            <div className={`maintenance-modal-icon ${isMaintenance ? "icon-off" : "icon-on"}`}>
+              {isMaintenance ? <Power size={20} /> : <AlertTriangle size={20} />}
+            </div>
+            <div>
+              <h3>{isMaintenance ? "Turn Off Maintenance Mode" : "Turn On Maintenance Mode"}</h3>
+              <p>Admin verification required</p>
+            </div>
+          </div>
+          <button type="button" className="admin-icon-button" onClick={onClose} aria-label="Close modal">
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="maintenance-modal-form">
+          <div className="maintenance-modal-notice">
+            {isMaintenance ? (
+              <p>
+                Turning <strong>OFF</strong> maintenance mode will immediately restore full public access
+                to Aurikrex Bytes for all readers.
+              </p>
+            ) : (
+              <p>
+                Turning <strong>ON</strong> maintenance mode will immediately block public access to all URLs
+                and display the <strong>Under Maintenance</strong> page. Only admin URLs will remain accessible.
+              </p>
+            )}
+          </div>
+
+          <label className="maintenance-password-label">
+            <span>Admin verification password <em style={{ fontSize: "12px", color: "var(--muted)", fontStyle: "normal" }}>(Case-sensitive)</em></span>
+            <div className="maintenance-password-input-wrap">
+              <KeyRound size={16} className="maintenance-input-icon" />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                autoFocus
+                required
+              />
+            </div>
+          </label>
+
+          {error && (
+            <div className="maintenance-modal-error">
+              <AlertTriangle size={15} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="maintenance-modal-actions">
+            <button
+              type="button"
+              className="button button-outline"
+              onClick={onClose}
+              disabled={toggleMutation.isPending}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className={`button ${isMaintenance ? "button-primary" : "button-danger"}`}
+              disabled={toggleMutation.isPending}
+            >
+              {toggleMutation.isPending ? "Verifying…" : (isMaintenance ? "Restore Public Access" : "Activate Maintenance Mode")}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export function AdminFrame({ children, title, role, active }: { children: React.ReactNode; title?: string; role: string; active?: "inbox" | "new" | "team" | "analytics" }) {
+  const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
+  const maintenanceQuery = trpc.admin.maintenanceStatus.useQuery(undefined, {
+    refetchInterval: 15000,
+  });
+  const isMaintenance = Boolean(maintenanceQuery.data?.maintenance);
+
   const items = [
     { href: "/admin", label: "Inbox", icon: LayoutDashboard, key: "inbox" },
     { href: "/admin/new", label: "New post", icon: FilePlus2, key: "new" },
@@ -94,16 +253,45 @@ export function AdminFrame({ children, title, role, active }: { children: React.
         </div>
       </aside>
       <section className="admin-main">
+        {isMaintenance && (
+          <div className="maintenance-active-banner">
+            <div className="maintenance-banner-text">
+              <span className="maintenance-banner-dot" />
+              <span><strong>Under Maintenance Mode is currently ACTIVE.</strong> Public access to all pages is blocked.</span>
+            </div>
+            {role === "admin" && (
+              <button
+                type="button"
+                className="maintenance-banner-action-btn"
+                onClick={() => setShowMaintenanceModal(true)}
+              >
+                Turn Off
+              </button>
+            )}
+          </div>
+        )}
         {title && (
           <header className="admin-header">
             <div>
               <span className="eyebrow">Editorial desk</span>
               <h1>{title}</h1>
             </div>
-            <span className="admin-role-badge">{role}</span>
+            <div className="admin-header-actions">
+              <MaintenanceButton
+                role={role}
+                isMaintenance={isMaintenance}
+                onOpenModal={() => setShowMaintenanceModal(true)}
+              />
+              <span className="admin-role-badge">{role}</span>
+            </div>
           </header>
         )}
         {children}
+        <MaintenanceModal
+          isOpen={showMaintenanceModal}
+          onClose={() => setShowMaintenanceModal(false)}
+          isMaintenance={isMaintenance}
+        />
       </section>
     </main>
   );

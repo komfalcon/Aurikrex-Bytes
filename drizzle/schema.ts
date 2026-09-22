@@ -147,3 +147,14 @@ export const oneSignalSubscriptions = sqliteTable("onesignal_subscriptions", {
   subscriptionId: text("subscription_id").notNull().unique(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
+
+export const systemSettings = sqliteTable("system_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(now),
+});
+
+export type SystemSetting = typeof systemSettings.$inferSelect;
+

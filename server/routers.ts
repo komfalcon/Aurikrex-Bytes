@@ -40,6 +40,8 @@ import {
   togglePostBookmark,
   togglePostReaction,
   updateReaderFeedPreference,
+  isMaintenanceMode,
+  setMaintenanceMode,
 } from "./db.js";
 import {
   cloudinaryConfigured,
@@ -552,6 +554,34 @@ export const appRouter = router({
       if (!cloudinaryConfigured()) return { configured: false };
       return { configured: true, ...getCloudinaryUploadSignature() };
     }),
+    maintenanceStatus: publicProcedure.query(async () => {
+      return { maintenance: await isMaintenanceMode() };
+    }),
+    setMaintenanceMode: publicProcedure
+      .input(
+        z.object({
+          enabled: z.boolean(),
+          password: z.string(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const admin = await requireAdmin(ctx);
+        if (admin.role !== "admin") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Only administrators can toggle maintenance mode.",
+          });
+        }
+        const expected = process.env.MAINTENANCE_PASSWORD || "KorexTonyFalconStark1025$";
+        if (input.password !== expected) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Incorrect verification password. Action denied.",
+          });
+        }
+        await setMaintenanceMode(input.enabled);
+        return { success: true, maintenance: input.enabled };
+      }),
   }),
   reader: router({
     oneSignalAppId: publicProcedure.query(() => ENV.oneSignalAppId),

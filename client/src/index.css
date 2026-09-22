@@ -5168,3 +5168,506 @@ body.has-install-prompt {
   cursor: pointer;
 }
 
+/* ==========================================================================
+   Under Maintenance Mode & Admin Controls
+   ========================================================================== */
+
+.admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.maintenance-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.maintenance-status-badge.inactive {
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.maintenance-status-badge.inactive:hover {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.maintenance-status-badge.active {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.35);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.2);
+}
+
+.maintenance-status-badge.active:hover {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.6);
+}
+
+.maintenance-status-badge.readonly {
+  cursor: default;
+}
+
+.maintenance-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.maintenance-status-badge.active .maintenance-badge-dot {
+  background: #ef4444;
+}
+
+.maintenance-badge-dot.pulsing {
+  animation: maintenance-pulse 1.8s infinite;
+}
+
+@keyframes maintenance-pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  70% {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+.maintenance-active-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.14), rgba(239, 68, 68, 0.14));
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--ink);
+  padding: 12px 18px;
+  border-radius: 12px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.08);
+}
+
+.maintenance-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.maintenance-banner-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #f59e0b;
+  flex-shrink: 0;
+  animation: maintenance-pulse-amber 1.8s infinite;
+}
+
+@keyframes maintenance-pulse-amber {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);
+  }
+  70% {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 8px rgba(245, 158, 11, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+}
+
+.maintenance-banner-action-btn {
+  background: #f59e0b;
+  color: #0b1220;
+  border: none;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
+  cursor: pointer;
+}
+
+.maintenance-banner-action-btn:hover {
+  opacity: 0.9;
+}
+
+/* Maintenance Modal */
+.maintenance-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(11, 18, 32, 0.75);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.maintenance-modal-dialog {
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.maintenance-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.maintenance-modal-icon-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.maintenance-modal-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.maintenance-modal-icon.icon-on {
+  background: rgba(245, 158, 11, 0.14);
+  color: #f59e0b;
+}
+
+.maintenance-modal-icon.icon-off {
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--blue);
+}
+
+.maintenance-modal-icon-title h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.maintenance-modal-icon-title p {
+  margin: 2px 0 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.maintenance-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.maintenance-modal-notice {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13.5px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.maintenance-modal-notice p {
+  margin: 0;
+}
+
+.maintenance-password-label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.maintenance-password-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.maintenance-input-icon {
+  position: absolute;
+  left: 14px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.maintenance-password-input-wrap input {
+  width: 100%;
+  padding: 10px 14px 10px 40px;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  transition: border-color 0.15s ease;
+}
+
+.maintenance-password-input-wrap input:focus {
+  border-color: var(--blue);
+}
+
+.maintenance-modal-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.maintenance-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.button-danger {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+}
+
+.button-danger:hover {
+  background: #dc2626;
+}
+
+/* Public Maintenance Page Layout */
+.maintenance-layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.maintenance-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 32px;
+  max-width: var(--max);
+  width: 100%;
+  margin: 0 auto;
+}
+
+.maintenance-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  max-width: 600px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.maintenance-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 48px 36px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.maintenance-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 6px 14px;
+  border-radius: 999px;
+  margin-bottom: 24px;
+}
+
+.maintenance-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: maintenance-pulse-amber 1.8s infinite;
+}
+
+.maintenance-icon-wrap {
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+  color: var(--blue);
+}
+
+.maintenance-title {
+  font-family: var(--serif);
+  font-size: clamp(2rem, 5vw, 2.75rem);
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0 0 16px 0;
+  color: var(--ink);
+}
+
+.maintenance-title em {
+  font-style: italic;
+  color: var(--blue);
+}
+
+.maintenance-description {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--muted);
+  margin: 0 0 32px 0;
+  max-width: 480px;
+}
+
+.maintenance-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 32px;
+}
+
+@media (max-width: 520px) {
+  .maintenance-info-grid {
+    grid-template-columns: 1fr;
+  }
+  .maintenance-card {
+    padding: 36px 20px;
+  }
+}
+
+.maintenance-info-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  text-align: left;
+}
+
+.maintenance-info-icon {
+  color: var(--blue);
+  flex-shrink: 0;
+}
+
+.maintenance-info-item div {
+  display: flex;
+  flex-direction: column;
+}
+
+.maintenance-info-item strong {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.maintenance-info-item span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.maintenance-actions {
+  width: 100%;
+}
+
+.maintenance-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 24px;
+}
+
+.maintenance-footer-hint {
+  margin-top: 24px;
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.maintenance-admin-link {
+  color: var(--blue);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.maintenance-admin-link:hover {
+  text-decoration: underline;
+}
+
+.maintenance-footer {
+  text-align: center;
+  padding: 24px;
+  font-size: 12.5px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+
+

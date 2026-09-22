@@ -8,6 +8,8 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import PWAInstallPrompt from "./components/PWAInstallPrompt";
 import Seo from "./components/Seo";
 import { Archive, Contact, HelpCenter, Home, HowItWorks, PostDetail, ReaderAuth, ReaderDashboard, SavedPosts, SupportPage } from "./public/ReaderPages";
+import MaintenancePage from "./public/MaintenancePage";
+import { trpc } from "./lib/trpc";
 
 const AdminDashboard = React.lazy(() => import("./admin/AdminPages").then(m => ({ default: m.AdminDashboard })));
 const AdminLogin = React.lazy(() => import("./admin/AdminPages").then(m => ({ default: m.AdminLogin })));
@@ -27,6 +29,16 @@ function ScrollToTop() {
 }
 
 function Router() {
+  const [location] = useLocation();
+  const isAdminPath = location.startsWith("/admin") || location.startsWith("/falcon-system-auth");
+  const maintenanceQuery = trpc.system.maintenanceStatus.useQuery(undefined, {
+    refetchInterval: 30000,
+  });
+
+  if (maintenanceQuery.data?.maintenance && !isAdminPath) {
+    return <MaintenancePage />;
+  }
+
   return <Switch>
     <Route path="/dashboard" component={ReaderDashboard} />
     <Route path="/saved" component={SavedPosts} />

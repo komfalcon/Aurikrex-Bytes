@@ -12,6 +12,7 @@ import {
   searchQueries,
   users,
   pushSubscriptions,
+  systemSettings,
 } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
 import { updateDailyStreak } from "./streak.js";
@@ -95,6 +96,14 @@ async function repairVerifiedNewsSchema(db: ReturnType<typeof drizzle>) {
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS posts_duplicate_key_unique ON posts (duplicate_key)"));
 }
 
+async function repairSystemSettingsSchema(db: ReturnType<typeof drizzle>) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS system_settings (
+    key text PRIMARY KEY NOT NULL,
+    value text NOT NULL,
+    updated_at integer NOT NULL
+  )`));
+}
+
 export async function getDb() {
   if (!_db && process.env.TURSO_DATABASE_URL) {
     try {
@@ -104,7 +113,12 @@ export async function getDb() {
           authToken: process.env.TURSO_AUTH_TOKEN,
         })
       );
-      _schemaRepair = Promise.all([repairReaderSchema(_db), repairEngagementSchema(_db), repairVerifiedNewsSchema(_db)]).then(() => undefined).catch(error => {
+      _schemaRepair = Promise.all([
+        repairReaderSchema(_db),
+        repairEngagementSchema(_db),
+        repairVerifiedNewsSchema(_db),
+        repairSystemSettingsSchema(_db),
+      ]).then(() => undefined).catch(error => {
         console.error("[Database] Schema repair failed:", error);
         throw error;
       });
@@ -616,3 +630,33 @@ export async function createIngestedPost(input: {
     .returning();
   return created;
 }
+
+export async function getSystemSetting(key: string): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(systemSettings).where(eq(systemSettings.key, key)).limit(1);
+  return rows[0] ? rows[0].value : null;
+}
+
+export async function setSystemSetting(key: string, value: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  const now = new Date();
+  await db
+    .insert(systemSettings)
+    .values({ key, value, updatedAt: now })
+    .onConflictDoUpdate({
+      target: systemSettings.key,
+      set: { value, updatedAt: now },
+    });
+}
+
+export async function isMaintenanceMode(): Promise<boolean> {
+  const val = await getSystemSetting("maintenance_mode");
+  return val === "true";
+}
+
+export async function setMaintenanceMode(enabled: boolean): Promise<void> {
+  await setSystemSetting("maintenance_mode", enabled ? "true" : "false");
+}
+

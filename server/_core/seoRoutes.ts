@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import sharp from "sharp";
-import { getPostById, listPublishedPosts } from "../db.js";
+import { getPostById, listPublishedPosts, isMaintenanceMode } from "../db.js";
 
 const siteUrl = () =>
   (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.tech").replace(/\/$/, "");
@@ -183,6 +183,27 @@ function renderShareDocument(seo: PostSeo) {
 </html>`;
 }
 
+function renderMaintenanceDocument() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurikrex Bytes — Under Maintenance</title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  </head>
+  <body style="background:#090d16;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px;text-align:center;">
+    <div style="max-width:480px;background:#111c2e;border:1px solid #1e293b;border-radius:18px;padding:40px 28px;box-shadow:0 16px 40px rgba(0,0,0,0.45);">
+      <div style="display:inline-block;width:12px;height:12px;background:#f59e0b;border-radius:50%;margin-bottom:16px;box-shadow:0 0 12px #f59e0b;"></div>
+      <h1 style="color:#f8fafc;font-size:24px;font-weight:700;margin:0 0 12px 0;">Under Maintenance</h1>
+      <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 24px 0;">Aurikrex Bytes is currently undergoing scheduled maintenance and updates. We'll be back online shortly.</p>
+      <div style="font-size:12px;color:#64748b;">HTTP 503 • Service Temporarily Unavailable</div>
+    </div>
+  </body>
+</html>`;
+}
+
 async function readProductionShell() {
   const shellPath = path.resolve(import.meta.dirname, "public", "index.html");
   return fs.promises.readFile(shellPath, "utf8");
@@ -248,34 +269,40 @@ async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
     <text x="110" y="130" fill="#a78bfa" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="2">AURIKREX BYTES</text>
     <rect x="110" y="150" width="120" height="4" fill="url(#line)"/>
     <text x="110" y="185" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
-    <text x="110" y="${bodyY}" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${bodyLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 30}">${escapeXml(line)}</tspan>`).join("")}</text>
-    <text x="110" y="510" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
-    <text x="110" y="543" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">www.bytes.aurikrex.tech</text>
+    ${bodyLines.map((line, i) => `<text x="110" y="${bodyY + i * 34}" fill="#94a3b8" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${escapeXml(line)}</text>`).join("")}
+    <g transform="translate(110, 480)">
+      <circle cx="20" cy="20" r="18" fill="#1e293b"/>
+      <path d="M12 20 L18 26 L28 14" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <text x="48" y="26" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="600">CURATED EDITORIAL</text>
+    </g>
   </svg>`;
-
-  return sharp(Buffer.from(svg)).png().toBuffer();
+  return Buffer.from(svg);
 }
 
-function wrapTitle(title: string, maxCharsPerLine: number) {
-  const words = title.split(/\s+/);
+function wrapTitle(text: string, maxCharsPerLine: number): string[] {
+  const words = text.split(" ");
   const lines: string[] = [];
-  let current = "";
+  let currentLine = "";
+
   for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length > maxCharsPerLine && current) {
-      lines.push(current);
-      current = word;
+    if ((currentLine + " " + word).trim().length <= maxCharsPerLine) {
+      currentLine = (currentLine + " " + word).trim();
     } else {
-      current = next;
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
     }
   }
-  if (current) lines.push(current);
-  return lines.slice(0, 3);
+  if (currentLine) lines.push(currentLine);
+  return lines.slice(0, 3); // max 3 lines for card aesthetic
 }
 
-async function generateShareCard(post: SeoPost) {
-  const coverBuffer = post.imageUrl ? await fetchRemoteImageBuffer(post.imageUrl) : null;
-  return await buildShareSvg(post, coverBuffer);
+async function generateShareCard(post: SeoPost): Promise<Buffer> {
+  let coverBuffer: Buffer | null = null;
+  if (post.imageUrl) {
+    coverBuffer = await fetchRemoteImageBuffer(post.imageUrl);
+  }
+  const svg = await buildShareSvg(post, coverBuffer);
+  return sharp(svg).png({ quality: 90 }).toBuffer();
 }
 
 function escapeXml(value: string) {
@@ -295,6 +322,11 @@ async function sendPostPreview(
 ) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return next();
+
+  if (await isMaintenanceMode()) {
+    res.setHeader("Retry-After", "1800");
+    return res.status(503).type("html").send(renderMaintenanceDocument());
+  }
 
   try {
     const post = await getPostById(id);
@@ -427,7 +459,11 @@ export function registerSeoRoutes(app: Express) {
     }
   );
 
-  app.get("/api/share/static", (req: Request, res: Response) => {
+  app.get("/api/share/static", async (req: Request, res: Response) => {
+    if (await isMaintenanceMode()) {
+      res.setHeader("Retry-After", "1800");
+      return res.status(503).type("html").send(renderMaintenanceDocument());
+    }
     const pathValue = req.query.path as string;
     const staticMap: Record<string, { title: string; description: string }> = {
       "root": { title: "Aurikrex Bytes — What matters in tech", description: "Aurikrex Bytes is your daily curated tech news briefing — AI, startups, chips, and what matters in technology today." },
