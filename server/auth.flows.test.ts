@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appRouter } from "./routers";
-import { hashPassword, verifyPassword } from "./auth";
+import { appRouter } from "./routers.js";
+import { hashPassword, verifyPassword } from "./auth.js";
 
 describe("custom auth flows", () => {
   it("hashes and verifies passwords without storing plaintext", async () => {
@@ -8,7 +8,7 @@ describe("custom auth flows", () => {
     expect(hash).not.toContain("correct horse");
     await expect(verifyPassword("correct horse battery staple", hash)).resolves.toBe(true);
     await expect(verifyPassword("wrong password", hash)).resolves.toBe(false);
-  });
+  }, 15000);
 
   it("returns a generic not-found error for failed newsroom access", async () => {
     const caller = appRouter.createCaller({

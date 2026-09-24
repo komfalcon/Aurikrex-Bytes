@@ -1,0 +1,16 @@
+User-agent: *
+Allow: /
+Allow: /api/share/
+Disallow: /admin
+Disallow: /falcon-system-auth
+Disallow: /api/trpc
+Disallow: /api/cron
+
+User-agent: Googlebot-Image
+Allow: /
+Allow: /favicon.ico
+Allow: /*.png
+Allow: /*.ico
+Allow: /*.svg
+
+Sitemap: https://www.bytes.aurikrex.tech/sitemap.xml
