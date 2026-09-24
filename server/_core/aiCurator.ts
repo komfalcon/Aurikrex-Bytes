@@ -94,8 +94,40 @@ export function isNonNewsHeadline(title: string): boolean {
   return false;
 }
 
+export function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&#(\d+);/g, (_, dec) => {
+      try {
+        return String.fromCharCode(Number(dec));
+      } catch {
+        return _;
+      }
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      try {
+        return String.fromCharCode(parseInt(hex, 16));
+      } catch {
+        return _;
+      }
+    })
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#8216;/g, "'")
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8220;/g, '"')
+    .replace(/&#8221;/g, '"')
+    .replace(/&#8211;/g, "–")
+    .replace(/&#8212;/g, "—")
+    .replace(/&ndash;/g, "–")
+    .replace(/&mdash;/g, "—")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
 export function cleanHeadline(title: string): string {
-  let cleaned = title.trim();
+  let cleaned = decodeHtmlEntities(title.trim());
   // Strip leading Show HN: / Launch HN: / Tell HN:
   cleaned = cleaned.replace(/^(show\s+hn|launch\s+hn|tell\s+hn)\s*:\s*/i, "");
   // Strip tags like [video], [pdf], [audio], [YYYY], (YYYY), etc.
@@ -388,28 +420,15 @@ function imageQuery(title: string): string {
 }
 
 /**
- * Ensures the editorial brief sits strictly within the [600, 800] character envelope.
- * Intelligently trims on sentence boundaries if too long, or extends with journalistic context if too short.
+ * Ensures the editorial brief sits cleanly within a comfortable character boundary.
+ * Surgically trims at clean sentence boundaries if too long.
+ * Never appends generic filler or robotic boilerplate.
  */
 export function clampEditorialBrief(
   body: string,
-  candidate: { publisher: string; publishedAt: Date }
+  candidate?: { publisher?: string; publishedAt?: Date }
 ): string {
   let text = body.trim().replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
-
-  const extensions = [
-    `Verified reporting was originally published by ${candidate.publisher} on ${candidate.publishedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.`,
-    `The announcement highlights strategic shifts in software architecture, distributed systems infrastructure, and production engineering roadmaps.`,
-    `Industry stakeholders and technical engineering leads are tracking these developments closely as additional implementation benchmarks, API specifications, and enterprise rollouts continue to emerge.`,
-    `For engineering organizations evaluating next-generation technology adoption, these developments provide essential context for capital allocation, technical debt remediation, and long-term capability planning.`,
-  ];
-
-  // If shorter than 600 chars, extend with journalistic context until length >= 600
-  let extIdx = 0;
-  while (text.length < 600 && extIdx < extensions.length) {
-    text = (text + " " + extensions[extIdx]).trim();
-    extIdx++;
-  }
 
   // If longer than 800 chars, surgically trim at last clean sentence boundary
   if (text.length > 800) {
@@ -420,12 +439,12 @@ export function clampEditorialBrief(
       truncated.lastIndexOf("! "),
       truncated.lastIndexOf("? ")
     );
-    if (lastSentenceEnd > 580) {
+    if (lastSentenceEnd > 550) {
       text = truncated.slice(0, lastSentenceEnd + 1).trim();
     } else {
       // Clean word boundary cut
       const lastSpace = truncated.lastIndexOf(" ");
-      text = (lastSpace > 580 ? truncated.slice(0, lastSpace) : truncated).trim() + "...";
+      text = (lastSpace > 550 ? truncated.slice(0, lastSpace) : truncated).trim() + "...";
     }
   }
 
@@ -444,35 +463,17 @@ export async function curateTenBytes(): Promise<CuratedByte[]> {
 
   const apiKeys = getAiApiKeys();
 
-  // If no Gemini key is provided, return candidates with high-signal fallback
+  // If no Gemini / AI key is provided, log clearly and skip curation.
+  // Never fall back to generic robotic templates.
   if (!apiKeys.length) {
-    const results: CuratedByte[] = [];
-    for (let i = 0; i < Math.min(candidates.length, 10); i++) {
-      const candidate = candidates[i];
-      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][i % 5];
-      const imageUrl = candidate.imageUrl || (await extractSourceArticleImage(candidate.url)) || generateEditorialSvgCard(candidate.title, category);
-      const brief = clampEditorialBrief(
-        `Major technological developments were announced today regarding ${candidate.title}. Published by ${candidate.publisher}, the report highlights significant architectural, infrastructure, and strategic advancements across the computing ecosystem. Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and long-term capability planning.\n\nKey technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments. As organizations scale next-generation computing infrastructure, developments in this domain will shape operational roadmaps and competitive positioning throughout the industry.`,
-        candidate
-      );
-      results.push({
-        headline: candidate.title.slice(0, 120),
-        body: brief,
-        category,
-        imageUrl,
-        sourceUrl: candidate.url,
-        sourcePublisher: candidate.publisher,
-        sourcePublishedAt: candidate.publishedAt,
-        duplicateKey: candidate.duplicateKey,
-        imageQuery: imageQuery(candidate.title),
-        imageProvenance: candidate.imageUrl ? "source-article" : "editorial-card",
-      });
-    }
-    return results;
+    console.warn(
+      "[AICurator] No GEMINI_API_KEY or GOOGLE_API_KEY configured. Skipping curation to prevent fallback template pollution."
+    );
+    return [];
   }
 
-  // Model cascade: try gemini-1.5-flash first, fallback to gemini-2.0-flash, then gemini-flash-latest
-  const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
+  // Model cascade: try gemini-2.5-flash first, fallback to gemini-1.5-flash, then gemini-2.0-flash
+  const modelCandidates = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"];
   const prompt = `You are the executive tech editor for Aurikrex Bytes.
 Write an authoritative, high-signal editorial brief for up to 10 of these verified candidate news stories.
 
@@ -616,36 +617,7 @@ ${JSON.stringify(
     });
   }
 
-  // If Gemini produced fewer than 10, backfill with high-signal candidate briefs
-  if (curatedBytes.length < 10) {
-    for (const candidate of candidates) {
-      if (curatedBytes.length >= 10) break;
-      if (seen.has(candidate.duplicateKey)) continue;
-      seen.add(candidate.duplicateKey);
-
-      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
-      let imageUrl = candidate.imageUrl || (await extractSourceArticleImage(candidate.url)) || generateEditorialSvgCard(candidate.title, category);
-
-      const brief = clampEditorialBrief(
-        `Major technological developments were announced today regarding ${candidate.title}. Published by ${candidate.publisher}, the report highlights significant architectural, infrastructure, and strategic advancements across the computing ecosystem. Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and long-term capability planning.\n\nKey technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments. As organizations scale next-generation computing infrastructure, developments in this domain will shape operational roadmaps and competitive positioning throughout the industry.`,
-        candidate
-      );
-
-      curatedBytes.push({
-        headline: candidate.title.slice(0, 120),
-        body: brief,
-        category,
-        imageUrl,
-        sourceUrl: candidate.url,
-        sourcePublisher: candidate.publisher,
-        sourcePublishedAt: candidate.publishedAt,
-        duplicateKey: candidate.duplicateKey,
-        imageQuery: imageQuery(candidate.title),
-        imageProvenance: candidate.imageUrl ? "source-article" : "editorial-card",
-      });
-    }
-  }
-
+  console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
   return curatedBytes;
 }
 

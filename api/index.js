@@ -320,6 +320,36 @@ async function repairSystemSettingsSchema(db) {
     updated_at integer NOT NULL
   )`));
 }
+async function cleanupTemplatedPosts(db) {
+  try {
+    await db.run(
+      sql.raw(
+        "DELETE FROM posts WHERE status = 'draft' AND body LIKE '%Major technological developments were announced today regarding%'"
+      )
+    );
+    const rows = await db.all(
+      sql.raw(
+        "SELECT id, headline, source_publisher FROM posts WHERE status = 'published' AND body LIKE '%Major technological developments were announced today regarding%'"
+      )
+    );
+    for (const row of rows) {
+      const cleanTitle = String(row.headline || "")
+        .replace(/&#8217;/g, "'")
+        .replace(/&#8216;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, "&")
+        .replace(/&#39;/g, "'");
+      const cleanBody = `${cleanTitle}. Reporting published by ${row.source_publisher || "verified sources"}.\n\nEngineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and capability planning.\n\nKey technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments.`;
+      await db.run(
+        sql.raw(
+          `UPDATE posts SET headline = '${cleanTitle.replace(/'/g, "''")}', body = '${cleanBody.replace(/'/g, "''")}', updated_at = ${Date.now()} WHERE id = ${row.id}`
+        )
+      );
+    }
+  } catch (error) {
+    console.warn("[Database] Templated posts cleanup note:", error);
+  }
+}
 async function getDb() {
   if (!_db && process.env.TURSO_DATABASE_URL) {
     try {
@@ -333,7 +363,8 @@ async function getDb() {
         repairReaderSchema(_db),
         repairEngagementSchema(_db),
         repairVerifiedNewsSchema(_db),
-        repairSystemSettingsSchema(_db)
+        repairSystemSettingsSchema(_db),
+        cleanupTemplatedPosts(_db)
       ]).then(() => void 0).catch((error) => {
         console.error("[Database] Schema repair failed:", error);
         throw error;
@@ -928,8 +959,31 @@ function isNonNewsHeadline(title) {
   if (/\bask\s+hn:\s+/i.test(lower)) return true;
   return false;
 }
+function decodeHtmlEntities(str) {
+  return str
+    .replace(/&#(\d+);/g, (_, dec) => {
+      try { return String.fromCharCode(Number(dec)); } catch { return _; }
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      try { return String.fromCharCode(parseInt(hex, 16)); } catch { return _; }
+    })
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#8216;/g, "'")
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8220;/g, '"')
+    .replace(/&#8221;/g, '"')
+    .replace(/&#8211;/g, "–")
+    .replace(/&#8212;/g, "—")
+    .replace(/&ndash;/g, "–")
+    .replace(/&mdash;/g, "—")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
 function cleanHeadline(title) {
-  let cleaned = title.trim();
+  let cleaned = decodeHtmlEntities(title.trim());
   cleaned = cleaned.replace(/^(show\s+hn|launch\s+hn|tell\s+hn)\s*:\s*/i, "");
   cleaned = cleaned.replace(/\s*\[(video|pdf|audio|\d{4})\]\s*/gi, " ");
   cleaned = cleaned.replace(/\s*\((video|pdf|audio|\d{4})\)\s*/gi, " ");
@@ -1134,17 +1188,6 @@ function imageQuery(title) {
 }
 function clampEditorialBrief(body, candidate) {
   let text2 = body.trim().replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
-  const extensions = [
-    `Verified reporting was originally published by ${candidate.publisher} on ${candidate.publishedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.`,
-    `The announcement highlights strategic shifts in software architecture, distributed systems infrastructure, and production engineering roadmaps.`,
-    `Industry stakeholders and technical engineering leads are tracking these developments closely as additional implementation benchmarks, API specifications, and enterprise rollouts continue to emerge.`,
-    `For engineering organizations evaluating next-generation technology adoption, these developments provide essential context for capital allocation, technical debt remediation, and long-term capability planning.`
-  ];
-  let extIdx = 0;
-  while (text2.length < 600 && extIdx < extensions.length) {
-    text2 = (text2 + " " + extensions[extIdx]).trim();
-    extIdx++;
-  }
   if (text2.length > 800) {
     const truncated = text2.slice(0, 790);
     const lastSentenceEnd = Math.max(
@@ -1153,11 +1196,11 @@ function clampEditorialBrief(body, candidate) {
       truncated.lastIndexOf("! "),
       truncated.lastIndexOf("? ")
     );
-    if (lastSentenceEnd > 580) {
+    if (lastSentenceEnd > 550) {
       text2 = truncated.slice(0, lastSentenceEnd + 1).trim();
     } else {
       const lastSpace = truncated.lastIndexOf(" ");
-      text2 = (lastSpace > 580 ? truncated.slice(0, lastSpace) : truncated).trim() + "...";
+      text2 = (lastSpace > 550 ? truncated.slice(0, lastSpace) : truncated).trim() + "...";
     }
   }
   return text2;
@@ -1173,33 +1216,12 @@ async function curateTenBytes() {
   if (!candidates.length) return [];
   const apiKeys = getAiApiKeys();
   if (!apiKeys.length) {
-    const results = [];
-    for (let i = 0; i < Math.min(candidates.length, 10); i++) {
-      const candidate = candidates[i];
-      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][i % 5];
-      const imageUrl = candidate.imageUrl || await extractSourceArticleImage(candidate.url) || generateEditorialSvgCard(candidate.title, category);
-      const brief = clampEditorialBrief(
-        `Major technological developments were announced today regarding ${candidate.title}. Published by ${candidate.publisher}, the report highlights significant architectural, infrastructure, and strategic advancements across the computing ecosystem. Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and long-term capability planning.
-
-Key technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments. As organizations scale next-generation computing infrastructure, developments in this domain will shape operational roadmaps and competitive positioning throughout the industry.`,
-        candidate
-      );
-      results.push({
-        headline: candidate.title.slice(0, 120),
-        body: brief,
-        category,
-        imageUrl,
-        sourceUrl: candidate.url,
-        sourcePublisher: candidate.publisher,
-        sourcePublishedAt: candidate.publishedAt,
-        duplicateKey: candidate.duplicateKey,
-        imageQuery: imageQuery(candidate.title),
-        imageProvenance: candidate.imageUrl ? "source-article" : "editorial-card"
-      });
-    }
-    return results;
+    console.warn(
+      "[AICurator] No GEMINI_API_KEY or GOOGLE_API_KEY configured. Skipping curation to prevent fallback template pollution."
+    );
+    return [];
   }
-  const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
+  const modelCandidates = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"];
   const prompt = `You are the executive tech editor for Aurikrex Bytes.
 Write an authoritative, high-signal editorial brief for up to 10 of these verified candidate news stories.
 
@@ -1318,33 +1340,7 @@ ${JSON.stringify(
       imageProvenance: provenance
     });
   }
-  if (curatedBytes.length < 10) {
-    for (const candidate of candidates) {
-      if (curatedBytes.length >= 10) break;
-      if (seen.has(candidate.duplicateKey)) continue;
-      seen.add(candidate.duplicateKey);
-      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
-      let imageUrl = candidate.imageUrl || await extractSourceArticleImage(candidate.url) || generateEditorialSvgCard(candidate.title, category);
-      const brief = clampEditorialBrief(
-        `Major technological developments were announced today regarding ${candidate.title}. Published by ${candidate.publisher}, the report highlights significant architectural, infrastructure, and strategic advancements across the computing ecosystem. Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and long-term capability planning.
-
-Key technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments. As organizations scale next-generation computing infrastructure, developments in this domain will shape operational roadmaps and competitive positioning throughout the industry.`,
-        candidate
-      );
-      curatedBytes.push({
-        headline: candidate.title.slice(0, 120),
-        body: brief,
-        category,
-        imageUrl,
-        sourceUrl: candidate.url,
-        sourcePublisher: candidate.publisher,
-        sourcePublishedAt: candidate.publishedAt,
-        duplicateKey: candidate.duplicateKey,
-        imageQuery: imageQuery(candidate.title),
-        imageProvenance: candidate.imageUrl ? "source-article" : "editorial-card"
-      });
-    }
-  }
+  console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
   return curatedBytes;
 }
 async function runNightlyCuration(status = "draft") {
