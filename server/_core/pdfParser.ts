@@ -1,5 +1,6 @@
 import { CuratedByte, cleanHeadline, clampEditorialBrief } from "./aiCurator.js";
 import { cloudinaryConfigured } from "../services.js";
+import { getAiApiKeys } from "./aiKeys.js";
 
 /**
  * Extracts domain-specific theme and branding parameters for bespoke card generation.
@@ -213,46 +214,51 @@ async function uploadBase64ToCloudinary(base64DataUri: string): Promise<string |
 
 /**
  * Attempts to recreate the screenshot image via Imagen 3 using a detailed visual prompt.
+ * Automatically tries all configured AI API keys in order as fallback.
  */
-async function generateAiRecreatedImage(prompt: string, apiKey: string): Promise<string | null> {
-  if (!apiKey || !prompt) return null;
-  try {
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-goog-api-key": apiKey,
-        },
-        body: JSON.stringify({
-          instances: [
-            {
-              prompt: `${prompt}. High-quality editorial technology photography, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
-            },
-          ],
-          parameters: {
-            sampleCount: 1,
-            aspectRatio: "16:9",
-          },
-        }),
-      }
-    );
+async function generateAiRecreatedImage(prompt: string, apiKeys: string[]): Promise<string | null> {
+  if (!apiKeys.length || !prompt) return null;
 
-    if (response.ok) {
-      const data = await response.json();
-      const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
-      if (base64Bytes) {
-        const dataUri = `data:image/jpeg;base64,${base64Bytes}`;
-        const cdnUrl = await uploadBase64ToCloudinary(dataUri);
-        return cdnUrl || dataUri;
+  for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
+    const apiKey = apiKeys[keyIdx];
+    try {
+      const response = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-goog-api-key": apiKey,
+          },
+          body: JSON.stringify({
+            instances: [
+              {
+                prompt: `${prompt}. High-quality editorial technology photography, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
+              },
+            ],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio: "16:9",
+            },
+          }),
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
+        if (base64Bytes) {
+          const dataUri = `data:image/jpeg;base64,${base64Bytes}`;
+          const cdnUrl = await uploadBase64ToCloudinary(dataUri);
+          return cdnUrl || dataUri;
+        }
+      } else {
+        const errText = await response.text().catch(() => "");
+        console.warn(`[PDFParser] Imagen generation with API key #${keyIdx + 1} returned ${response.status}:`, errText.slice(0, 100));
       }
-    } else {
-      const errText = await response.text();
-      console.warn("[PDFParser] Imagen generation unavailable on this key tier:", errText.slice(0, 100));
+    } catch (err) {
+      console.warn(`[PDFParser] Error generating image via Imagen with API key #${keyIdx + 1}:`, err instanceof Error ? err.message : String(err));
     }
-  } catch (err) {
-    console.warn("[PDFParser] Error generating image via Imagen:", err instanceof Error ? err.message : String(err));
   }
   return null;
 }
@@ -272,15 +278,9 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
     plainText = pdfBase64OrText;
   }
 
-  const apiKey = (
-    process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    process.env.BUILT_IN_FORGE_API_KEY ||
-    process.env.FORGE_API_KEY ||
-    ""
-  ).trim();
+  const apiKeys = getAiApiKeys();
 
-  if (!apiKey) {
+  if (!apiKeys.length) {
     console.warn("[PDFParser] No GEMINI_API_KEY found. Unable to parse PDF document natively.");
     return [
       {
@@ -328,51 +328,64 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
   const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
   let rawJson = "[]";
 
-  for (const model of modelCandidates) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-goog-api-key": apiKey,
-          },
-          body: JSON.stringify({
-            contents: [{ parts: requestParts }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              temperature: 0.3,
-              responseSchema: {
-                type: "ARRAY",
-                items: {
-                  type: "OBJECT",
-                  properties: {
-                    headline: { type: "STRING" },
-                    body: { type: "STRING" },
-                    category: { type: "STRING", enum: ["Tech", "AI", "Science", "Innovation", "Crypto"] },
-                    imagePrompt: { type: "STRING" },
-                    source: { type: "STRING" },
+  keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
+    const apiKey = apiKeys[keyIdx];
+    const keyLabel = `Key #${keyIdx + 1}${keyIdx > 0 ? " (fallback)" : " (primary)"}`;
+
+    for (const model of modelCandidates) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-goog-api-key": apiKey,
+            },
+            body: JSON.stringify({
+              contents: [{ parts: requestParts }],
+              generationConfig: {
+                responseMimeType: "application/json",
+                temperature: 0.3,
+                responseSchema: {
+                  type: "ARRAY",
+                  items: {
+                    type: "OBJECT",
+                    properties: {
+                      headline: { type: "STRING" },
+                      body: { type: "STRING" },
+                      category: { type: "STRING", enum: ["Tech", "AI", "Science", "Innovation", "Crypto"] },
+                      imagePrompt: { type: "STRING" },
+                      source: { type: "STRING" },
+                    },
+                    required: ["headline", "body", "category"],
                   },
-                  required: ["headline", "body", "category"],
                 },
               },
-            },
-          }),
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const errStatus = response.status;
+          const errText = await response.text().catch(() => "");
+          console.warn(`[PDFParser] ${keyLabel} with model ${model} returned ${errStatus}:`, errText.slice(0, 150));
+          if (errStatus === 429 || errStatus === 403) {
+            console.warn(`[PDFParser] ${keyLabel} hit rate limit or quota. Switching to next AI API key...`);
+            continue keyLoop;
+          }
+          continue;
         }
-      );
 
-      if (!response.ok) {
-        const errText = await response.text();
-        console.warn(`[PDFParser] Gemini model ${model} returned ${response.status}:`, errText.slice(0, 150));
-        continue;
+        const resData = await response.json();
+        rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+        if (rawJson && rawJson !== "[]") {
+          console.info(`[PDFParser] Successfully parsed document using ${keyLabel} (${model})`);
+          break keyLoop;
+        }
+      } catch (err) {
+        console.warn(`[PDFParser] Error calling model ${model} with ${keyLabel}:`, err instanceof Error ? err.message : String(err));
       }
-
-      const resData = await response.json();
-      rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-      if (rawJson && rawJson !== "[]") break;
-    } catch (err) {
-      console.warn(`[PDFParser] Error calling model ${model}:`, err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -412,7 +425,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
     // Recreate image: Tier 1 via Imagen, Tier 2 via dynamic topic card
     let imageUrl: string | null = null;
     if (item.imagePrompt) {
-      imageUrl = await generateAiRecreatedImage(item.imagePrompt, apiKey);
+      imageUrl = await generateAiRecreatedImage(item.imagePrompt, apiKeys);
     }
     if (!imageUrl) {
       imageUrl = generateDynamicByteCard(cleanTitle, category, item.source);

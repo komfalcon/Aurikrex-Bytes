@@ -822,6 +822,38 @@ var init_services = __esm({
   }
 });
 
+// server/_core/aiKeys.ts
+function getAiApiKeys() {
+  const keys = [];
+  const candidateSources = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_SECONDARY,
+    process.env.GEMINI_API_KEY_BACKUP,
+    process.env.GOOGLE_API_KEY,
+    process.env.GOOGLE_API_KEY_2,
+    process.env.GOOGLE_API_KEY_SECONDARY,
+    process.env.BUILT_IN_FORGE_API_KEY,
+    process.env.FORGE_API_KEY
+  ];
+  for (const source of candidateSources) {
+    if (!source || typeof source !== "string") continue;
+    const parts = source.split(/[,;]/);
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed && !keys.includes(trimmed)) {
+        keys.push(trimmed);
+      }
+    }
+  }
+  return keys;
+}
+var init_aiKeys = __esm({
+  "server/_core/aiKeys.ts"() {
+    "use strict";
+  }
+});
+
 // server/_core/aiCurator.ts
 var aiCurator_exports = {};
 __export(aiCurator_exports, {
@@ -1139,8 +1171,8 @@ async function curateTenBytes() {
     return [];
   }
   if (!candidates.length) return [];
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.BUILT_IN_FORGE_API_KEY || process.env.FORGE_API_KEY || "").trim();
-  if (!apiKey) {
+  const apiKeys = getAiApiKeys();
+  if (!apiKeys.length) {
     const results = [];
     for (let i = 0; i < Math.min(candidates.length, 10); i++) {
       const candidate = candidates[i];
@@ -1200,34 +1232,49 @@ ${JSON.stringify(
     }))
   )}`;
   let rawJson = "[]";
-  for (const model of modelCandidates) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-goog-api-key": apiKey
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              temperature: 0.3
-            }
-          })
+  keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
+    const apiKey = apiKeys[keyIdx];
+    const keyLabel = `Key #${keyIdx + 1}${keyIdx > 0 ? " (fallback)" : " (primary)"}`;
+    for (const model of modelCandidates) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-goog-api-key": apiKey
+            },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                responseMimeType: "application/json",
+                temperature: 0.3
+              }
+            })
+          }
+        );
+        if (!response.ok) {
+          const errStatus = response.status;
+          const errText = await response.text().catch(() => "");
+          console.warn(
+            `[AICurator] Gemini model ${model} failed with ${keyLabel} (${errStatus}): ${errText.slice(0, 150)}`
+          );
+          if (errStatus === 429 || errStatus === 403) {
+            console.warn(`[AICurator] ${keyLabel} hit rate limit or quota. Switching to next AI API key...`);
+            continue keyLoop;
+          }
+          continue;
         }
-      );
-      if (!response.ok) {
-        console.warn(`[AICurator] Gemini model ${model} failed (${response.status}), trying next...`);
-        continue;
+        const resData = await response.json();
+        rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+        if (rawJson && rawJson !== "[]") {
+          console.info(`[AICurator] Successfully curated briefs using ${keyLabel} (${model})`);
+          break keyLoop;
+        }
+      } catch (err) {
+        console.warn(`[AICurator] Error calling ${model} with ${keyLabel}:`, err);
       }
-      const resData = await response.json();
-      rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-      if (rawJson && rawJson !== "[]") break;
-    } catch (err) {
-      console.warn(`[AICurator] Error calling ${model}:`, err);
     }
   }
   let parsed = [];
@@ -1341,6 +1388,7 @@ var init_aiCurator = __esm({
     "use strict";
     init_db();
     init_schema();
+    init_aiKeys();
   }
 });
 
@@ -1516,44 +1564,47 @@ async function uploadBase64ToCloudinary(base64DataUri) {
     return null;
   }
 }
-async function generateAiRecreatedImage(prompt, apiKey) {
-  if (!apiKey || !prompt) return null;
-  try {
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-goog-api-key": apiKey
-        },
-        body: JSON.stringify({
-          instances: [
-            {
-              prompt: `${prompt}. High-quality editorial technology photography, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`
+async function generateAiRecreatedImage(prompt, apiKeys) {
+  if (!apiKeys.length || !prompt) return null;
+  for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
+    const apiKey = apiKeys[keyIdx];
+    try {
+      const response = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-goog-api-key": apiKey
+          },
+          body: JSON.stringify({
+            instances: [
+              {
+                prompt: `${prompt}. High-quality editorial technology photography, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`
+              }
+            ],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio: "16:9"
             }
-          ],
-          parameters: {
-            sampleCount: 1,
-            aspectRatio: "16:9"
-          }
-        })
+          })
+        }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
+        if (base64Bytes) {
+          const dataUri = `data:image/jpeg;base64,${base64Bytes}`;
+          const cdnUrl = await uploadBase64ToCloudinary(dataUri);
+          return cdnUrl || dataUri;
+        }
+      } else {
+        const errText = await response.text().catch(() => "");
+        console.warn(`[PDFParser] Imagen generation with API key #${keyIdx + 1} returned ${response.status}:`, errText.slice(0, 100));
       }
-    );
-    if (response.ok) {
-      const data = await response.json();
-      const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
-      if (base64Bytes) {
-        const dataUri = `data:image/jpeg;base64,${base64Bytes}`;
-        const cdnUrl = await uploadBase64ToCloudinary(dataUri);
-        return cdnUrl || dataUri;
-      }
-    } else {
-      const errText = await response.text();
-      console.warn("[PDFParser] Imagen generation unavailable on this key tier:", errText.slice(0, 100));
+    } catch (err) {
+      console.warn(`[PDFParser] Error generating image via Imagen with API key #${keyIdx + 1}:`, err instanceof Error ? err.message : String(err));
     }
-  } catch (err) {
-    console.warn("[PDFParser] Error generating image via Imagen:", err instanceof Error ? err.message : String(err));
   }
   return null;
 }
@@ -1567,8 +1618,8 @@ async function parsePdfToBytes(pdfBase64OrText) {
   } else {
     plainText = pdfBase64OrText;
   }
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.BUILT_IN_FORGE_API_KEY || process.env.FORGE_API_KEY || "").trim();
-  if (!apiKey) {
+  const apiKeys = getAiApiKeys();
+  if (!apiKeys.length) {
     console.warn("[PDFParser] No GEMINI_API_KEY found. Unable to parse PDF document natively.");
     return [
       {
@@ -1613,49 +1664,61 @@ ${plainText.slice(0, 5e4)}`
   });
   const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
   let rawJson = "[]";
-  for (const model of modelCandidates) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-goog-api-key": apiKey
-          },
-          body: JSON.stringify({
-            contents: [{ parts: requestParts }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              temperature: 0.3,
-              responseSchema: {
-                type: "ARRAY",
-                items: {
-                  type: "OBJECT",
-                  properties: {
-                    headline: { type: "STRING" },
-                    body: { type: "STRING" },
-                    category: { type: "STRING", enum: ["Tech", "AI", "Science", "Innovation", "Crypto"] },
-                    imagePrompt: { type: "STRING" },
-                    source: { type: "STRING" }
-                  },
-                  required: ["headline", "body", "category"]
+  keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
+    const apiKey = apiKeys[keyIdx];
+    const keyLabel = `Key #${keyIdx + 1}${keyIdx > 0 ? " (fallback)" : " (primary)"}`;
+    for (const model of modelCandidates) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-goog-api-key": apiKey
+            },
+            body: JSON.stringify({
+              contents: [{ parts: requestParts }],
+              generationConfig: {
+                responseMimeType: "application/json",
+                temperature: 0.3,
+                responseSchema: {
+                  type: "ARRAY",
+                  items: {
+                    type: "OBJECT",
+                    properties: {
+                      headline: { type: "STRING" },
+                      body: { type: "STRING" },
+                      category: { type: "STRING", enum: ["Tech", "AI", "Science", "Innovation", "Crypto"] },
+                      imagePrompt: { type: "STRING" },
+                      source: { type: "STRING" }
+                    },
+                    required: ["headline", "body", "category"]
+                  }
                 }
               }
-            }
-          })
+            })
+          }
+        );
+        if (!response.ok) {
+          const errStatus = response.status;
+          const errText = await response.text().catch(() => "");
+          console.warn(`[PDFParser] ${keyLabel} with model ${model} returned ${errStatus}:`, errText.slice(0, 150));
+          if (errStatus === 429 || errStatus === 403) {
+            console.warn(`[PDFParser] ${keyLabel} hit rate limit or quota. Switching to next AI API key...`);
+            continue keyLoop;
+          }
+          continue;
         }
-      );
-      if (!response.ok) {
-        const errText = await response.text();
-        console.warn(`[PDFParser] Gemini model ${model} returned ${response.status}:`, errText.slice(0, 150));
-        continue;
+        const resData = await response.json();
+        rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+        if (rawJson && rawJson !== "[]") {
+          console.info(`[PDFParser] Successfully parsed document using ${keyLabel} (${model})`);
+          break keyLoop;
+        }
+      } catch (err) {
+        console.warn(`[PDFParser] Error calling model ${model} with ${keyLabel}:`, err instanceof Error ? err.message : String(err));
       }
-      const resData = await response.json();
-      rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-      if (rawJson && rawJson !== "[]") break;
-    } catch (err) {
-      console.warn(`[PDFParser] Error calling model ${model}:`, err instanceof Error ? err.message : String(err));
     }
   }
   let parsed = [];
@@ -1684,7 +1747,7 @@ ${plainText.slice(0, 5e4)}`
     });
     let imageUrl = null;
     if (item.imagePrompt) {
-      imageUrl = await generateAiRecreatedImage(item.imagePrompt, apiKey);
+      imageUrl = await generateAiRecreatedImage(item.imagePrompt, apiKeys);
     }
     if (!imageUrl) {
       imageUrl = generateDynamicByteCard(cleanTitle, category, item.source);
@@ -1703,6 +1766,7 @@ var init_pdfParser = __esm({
     "use strict";
     init_aiCurator();
     init_services();
+    init_aiKeys();
   }
 });
 

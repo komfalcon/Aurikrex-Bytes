@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { inArray } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { posts } from "../../drizzle/schema.js";
+import { getAiApiKeys } from "./aiKeys.js";
 
 export interface CuratedByte {
   headline: string;
@@ -441,16 +442,10 @@ export async function curateTenBytes(): Promise<CuratedByte[]> {
   }
   if (!candidates.length) return [];
 
-  const apiKey = (
-    process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    process.env.BUILT_IN_FORGE_API_KEY ||
-    process.env.FORGE_API_KEY ||
-    ""
-  ).trim();
+  const apiKeys = getAiApiKeys();
 
   // If no Gemini key is provided, return candidates with high-signal fallback
-  if (!apiKey) {
+  if (!apiKeys.length) {
     const results: CuratedByte[] = [];
     for (let i = 0; i < Math.min(candidates.length, 10); i++) {
       const candidate = candidates[i];
@@ -512,36 +507,58 @@ ${JSON.stringify(
 
   let rawJson = "[]";
 
-  for (const model of modelCandidates) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-goog-api-key": apiKey,
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              temperature: 0.3,
+  // Multi-key & multi-model fallback cascade:
+  // Iterate through available API keys. If the primary key encounters quota exhaustion (403),
+  // rate limits (429), or failures, automatically switch to the secondary fallback API key.
+  keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
+    const apiKey = apiKeys[keyIdx];
+    const keyLabel = `Key #${keyIdx + 1}${keyIdx > 0 ? " (fallback)" : " (primary)"}`;
+
+    for (const model of modelCandidates) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-goog-api-key": apiKey,
             },
-          }),
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                responseMimeType: "application/json",
+                temperature: 0.3,
+              },
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const errStatus = response.status;
+          const errText = await response.text().catch(() => "");
+          console.warn(
+            `[AICurator] Gemini model ${model} failed with ${keyLabel} (${errStatus}): ${errText.slice(0, 150)}`
+          );
+
+          // If rate-limited (429) or quota exceeded (403), this key is exhausted.
+          // Switch to fallback key immediately.
+          if (errStatus === 429 || errStatus === 403) {
+            console.warn(`[AICurator] ${keyLabel} hit rate limit or quota. Switching to next AI API key...`);
+            continue keyLoop;
+          }
+          continue;
         }
-      );
 
-      if (!response.ok) {
-        console.warn(`[AICurator] Gemini model ${model} failed (${response.status}), trying next...`);
-        continue;
+        const resData = await response.json();
+        rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+        if (rawJson && rawJson !== "[]") {
+          console.info(`[AICurator] Successfully curated briefs using ${keyLabel} (${model})`);
+          break keyLoop;
+        }
+      } catch (err) {
+        console.warn(`[AICurator] Error calling ${model} with ${keyLabel}:`, err);
       }
-
-      const resData = await response.json();
-      rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-      if (rawJson && rawJson !== "[]") break;
-    } catch (err) {
-      console.warn(`[AICurator] Error calling ${model}:`, err);
     }
   }
 

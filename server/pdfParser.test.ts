@@ -33,26 +33,31 @@ describe("Multi-Story PDF AI Engine", () => {
   });
 
   it("provides graceful fallback response when API key is not configured", async () => {
-    const origKey = process.env.GEMINI_API_KEY;
-    const origGoogle = process.env.GOOGLE_API_KEY;
-    const origBuiltIn = process.env.BUILT_IN_FORGE_API_KEY;
-    const origForge = process.env.FORGE_API_KEY;
+    const origKeys: Record<string, string | undefined> = {
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+      GEMINI_API_KEY_2: process.env.GEMINI_API_KEY_2,
+      GEMINI_API_KEY_SECONDARY: process.env.GEMINI_API_KEY_SECONDARY,
+      GEMINI_API_KEY_BACKUP: process.env.GEMINI_API_KEY_BACKUP,
+      GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
+      GOOGLE_API_KEY_2: process.env.GOOGLE_API_KEY_2,
+      GOOGLE_API_KEY_SECONDARY: process.env.GOOGLE_API_KEY_SECONDARY,
+      BUILT_IN_FORGE_API_KEY: process.env.BUILT_IN_FORGE_API_KEY,
+      FORGE_API_KEY: process.env.FORGE_API_KEY,
+    };
 
     try {
-      delete process.env.GEMINI_API_KEY;
-      delete process.env.GOOGLE_API_KEY;
-      delete process.env.BUILT_IN_FORGE_API_KEY;
-      delete process.env.FORGE_API_KEY;
+      for (const k of Object.keys(origKeys)) {
+        delete process.env[k];
+      }
 
       const results = await parsePdfToBytes("test plain text");
       expect(results.length).toBe(1);
       expect(results[0].headline).toBe("Gemini API Key Required for PDF Ingestion");
       expect(results[0].imageUrl).toContain("data:image/svg+xml;base64,");
     } finally {
-      if (origKey) process.env.GEMINI_API_KEY = origKey;
-      if (origGoogle) process.env.GOOGLE_API_KEY = origGoogle;
-      if (origBuiltIn) process.env.BUILT_IN_FORGE_API_KEY = origBuiltIn;
-      if (origForge) process.env.FORGE_API_KEY = origForge;
+      for (const [k, v] of Object.entries(origKeys)) {
+        if (v !== undefined) process.env[k] = v;
+      }
     }
   });
 });
