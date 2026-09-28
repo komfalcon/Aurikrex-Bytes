@@ -877,7 +877,10 @@ async function generateNvidiaFluxImage(prompt) {
   const nvidiaKey = getNvidiaApiKey();
   if (!nvidiaKey || !prompt) return null;
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8e3);
     const response = await fetch("https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell", {
+      signal: controller.signal,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -885,11 +888,10 @@ async function generateNvidiaFluxImage(prompt) {
         "Authorization": `Bearer ${nvidiaKey}`
       },
       body: JSON.stringify({
-        prompt: `${prompt}. High-quality editorial technology photography, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
-        aspect_ratio: "16:9",
-        mode: "base"
+        prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`
       })
     });
+    clearTimeout(timeout);
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
       console.warn(`[NVIDIA FLUX] Generation failed (${response.status}):`, errText.slice(0, 150));
@@ -950,6 +952,7 @@ __export(aiCurator_exports, {
   getTodayWindow: () => getTodayWindow,
   isNonNewsHeadline: () => isNonNewsHeadline,
   normalizeHeadline: () => normalizeHeadline,
+  parseAiJsonResponse: () => parseAiJsonResponse,
   runNightlyCuration: () => runNightlyCuration
 });
 import { createHash } from "node:crypto";
@@ -1287,6 +1290,54 @@ ${bg}`.trim();
   if (typeof item.brief === "string" && item.brief.length > 30) return item.brief.trim();
   return "";
 }
+function extractArrayFromObject(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object" && parsed !== null) {
+    const arrayKey = Object.keys(parsed).find((k) => Array.isArray(parsed[k]));
+    if (arrayKey) return parsed[arrayKey];
+  }
+  return [];
+}
+function parseAiJsonResponse(rawJson) {
+  if (!rawJson || typeof rawJson !== "string") return [];
+  let cleaned = rawJson.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const firstBracket = cleaned.search(/[\[\{]/);
+  const lastBracket = Math.max(cleaned.lastIndexOf("]"), cleaned.lastIndexOf("}"));
+  if (firstBracket !== -1 && lastBracket > firstBracket) {
+    cleaned = cleaned.slice(firstBracket, lastBracket + 1);
+  }
+  try {
+    const parsed = JSON.parse(cleaned);
+    const arr = extractArrayFromObject(parsed);
+    if (arr.length > 0) return arr;
+  } catch (err1) {
+    console.warn("[AICurator] Standard JSON.parse failed, attempting repair:", err1 instanceof Error ? err1.message : String(err1));
+  }
+  try {
+    const sanitized = cleaned.replace(/("(?:[^"\\]|\\.)*")/g, (match) => {
+      return match.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t");
+    });
+    const parsed = JSON.parse(sanitized);
+    const arr = extractArrayFromObject(parsed);
+    if (arr.length > 0) return arr;
+  } catch (err2) {
+    console.warn("[AICurator] Sanitized JSON.parse failed, attempting regex object extraction:", err2 instanceof Error ? err2.message : String(err2));
+  }
+  const objects = [];
+  const objectMatches = cleaned.match(/\{[^{}]*(?:"headline"|"title"|"body"|"summary"|"text")[^{}]*\}/gi) || [];
+  for (const block of objectMatches) {
+    try {
+      const safeBlock = block.replace(/("(?:[^"\\]|\\.)*")/g, (m) => m.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t"));
+      const obj = JSON.parse(safeBlock);
+      if (obj && typeof obj === "object") objects.push(obj);
+    } catch {
+    }
+  }
+  if (objects.length > 0) {
+    console.info(`[AICurator] Recovered ${objects.length} story objects via regex block parsing.`);
+  }
+  return objects;
+}
 async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
   let candidates;
   try {
@@ -1356,7 +1407,8 @@ ${JSON.stringify(
               { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
               { role: "user", content: prompt }
             ],
-            temperature: 0.3
+            temperature: 0.3,
+            max_tokens: 3500
           })
         });
         if (response.ok) {
@@ -1370,6 +1422,9 @@ ${JSON.stringify(
         } else {
           const errText = await response.text().catch(() => "");
           console.warn(`[AICurator] Mistral AI model ${model} failed (${response.status}): ${errText.slice(0, 150)}`);
+          if (response.status === 429) {
+            await new Promise((r) => setTimeout(r, 400));
+          }
         }
       } catch (err) {
         console.warn(`[AICurator] Error calling Mistral AI model ${model}:`, err instanceof Error ? err.message : String(err));
@@ -1395,7 +1450,8 @@ ${JSON.stringify(
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: {
                   responseMimeType: "application/json",
-                  temperature: 0.3
+                  temperature: 0.3,
+                  maxOutputTokens: 3500
                 }
               })
             }
@@ -1424,48 +1480,17 @@ ${JSON.stringify(
       }
     }
   }
-  let parsed = [];
-  try {
-    const cleanedJson = rawJson.replace(/```json|```/g, "").trim();
-    const jsonObj = JSON.parse(cleanedJson);
-    if (Array.isArray(jsonObj)) {
-      parsed = jsonObj;
-    } else if (typeof jsonObj === "object" && jsonObj !== null) {
-      const arrayKey = Object.keys(jsonObj).find((k) => Array.isArray(jsonObj[k]));
-      if (arrayKey) {
-        parsed = jsonObj[arrayKey];
-      }
-    }
-  } catch (err) {
-    console.warn("[AICurator] Failed to parse JSON from AI response:", err);
-    parsed = [];
-  }
+  const parsed = parseAiJsonResponse(rawJson);
   const byUrl = new Map(candidates.map((candidate) => [canonicalizeUrl(candidate.url), candidate]));
   const seen = /* @__PURE__ */ new Set();
-  const curatedBytes = [];
-  for (let i = 0; i < parsed.length && curatedBytes.length < 10; i++) {
+  const draftItems = [];
+  for (let i = 0; i < parsed.length && draftItems.length < 10; i++) {
     const item = parsed[i];
     const candidate = byUrl.get(canonicalizeUrl(String(item.sourceUrl || ""))) || candidates[i];
     if (!candidate || seen.has(candidate.duplicateKey)) continue;
     seen.add(candidate.duplicateKey);
-    const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
+    const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : ["Tech", "AI", "Science", "Innovation", "Crypto"][draftItems.length % 5];
     const itemHeadline = extractAiHeadline(item, candidate.title);
-    let imageUrl = candidate.imageUrl;
-    let provenance = "source-article";
-    if (!imageUrl) {
-      imageUrl = await extractSourceArticleImage(candidate.url);
-    }
-    if (!imageUrl && getNvidiaApiKey()) {
-      const fluxImg = await generateNvidiaFluxImage(itemHeadline);
-      if (fluxImg) {
-        imageUrl = fluxImg;
-        provenance = "nvidia-flux";
-      }
-    }
-    if (!imageUrl) {
-      imageUrl = generateEditorialSvgCard(itemHeadline, category);
-      provenance = "editorial-card";
-    }
     const rawBody = extractAiBody(item);
     const clampedBody = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
     const finalBody = clampedBody || clampEditorialBrief(
@@ -1476,39 +1501,14 @@ Engineering teams and technology leaders are evaluating the practical implicatio
 As computing infrastructure scales to meet modern operational demands, technical shifts in this domain will define upcoming industry benchmarks, API standards, and capability roadmaps.`,
       candidate
     );
-    curatedBytes.push({
-      headline: itemHeadline,
-      body: finalBody,
-      category,
-      imageUrl,
-      sourceUrl: candidate.url,
-      sourcePublisher: candidate.publisher,
-      sourcePublishedAt: candidate.publishedAt,
-      duplicateKey: candidate.duplicateKey,
-      imageQuery: imageQuery(itemHeadline),
-      imageProvenance: provenance
-    });
+    draftItems.push({ candidate, headline: itemHeadline, body: finalBody, category });
   }
-  console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
-  if (curatedBytes.length < 10) {
+  if (draftItems.length < 10) {
     for (const candidate of candidates) {
-      if (curatedBytes.length >= 10) break;
+      if (draftItems.length >= 10) break;
       if (seen.has(candidate.duplicateKey)) continue;
       seen.add(candidate.duplicateKey);
-      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
-      let imageUrl = candidate.imageUrl || await extractSourceArticleImage(candidate.url);
-      let provenance = candidate.imageUrl ? "source-article" : "editorial-card";
-      if (!imageUrl && getNvidiaApiKey()) {
-        const fluxImg = await generateNvidiaFluxImage(candidate.title);
-        if (fluxImg) {
-          imageUrl = fluxImg;
-          provenance = "nvidia-flux";
-        }
-      }
-      if (!imageUrl) {
-        imageUrl = generateEditorialSvgCard(candidate.title, category);
-        provenance = "editorial-card";
-      }
+      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][draftItems.length % 5];
       const cleanedTitle = cleanHeadline(candidate.title);
       const brief = clampEditorialBrief(
         `${cleanedTitle}. Verified reporting published by ${candidate.publisher} details significant architectural, strategic, and infrastructure developments across the ${category.toLowerCase()} ecosystem.
@@ -1518,20 +1518,43 @@ Engineering teams and technology leaders are evaluating the practical implicatio
 As computing infrastructure scales to meet modern operational demands, technical shifts in this domain will define upcoming industry benchmarks, API standards, and capability roadmaps.`,
         candidate
       );
-      curatedBytes.push({
-        headline: cleanedTitle.slice(0, 120),
-        body: brief,
-        category,
-        imageUrl,
-        sourceUrl: candidate.url,
-        sourcePublisher: candidate.publisher,
-        sourcePublishedAt: candidate.publishedAt,
-        duplicateKey: candidate.duplicateKey,
-        imageQuery: imageQuery(candidate.title),
-        imageProvenance: provenance
-      });
+      draftItems.push({ candidate, headline: cleanedTitle.slice(0, 120), body: brief, category });
     }
   }
+  console.info(`[AICurator] Assembled ${draftItems.length} candidate briefs. Resolving cover images in parallel...`);
+  const curatedBytes = await Promise.all(
+    draftItems.map(async (draft) => {
+      let imageUrl = draft.candidate.imageUrl;
+      let provenance = "source-article";
+      if (!imageUrl) {
+        imageUrl = await extractSourceArticleImage(draft.candidate.url);
+      }
+      if (!imageUrl && getNvidiaApiKey()) {
+        const fluxImg = await generateNvidiaFluxImage(draft.headline);
+        if (fluxImg) {
+          imageUrl = fluxImg;
+          provenance = "nvidia-flux";
+        }
+      }
+      if (!imageUrl) {
+        imageUrl = generateEditorialSvgCard(draft.headline, draft.category);
+        provenance = "editorial-card";
+      }
+      return {
+        headline: draft.headline,
+        body: draft.body,
+        category: draft.category,
+        imageUrl,
+        sourceUrl: draft.candidate.url,
+        sourcePublisher: draft.candidate.publisher,
+        sourcePublishedAt: draft.candidate.publishedAt,
+        duplicateKey: draft.candidate.duplicateKey,
+        imageQuery: imageQuery(draft.headline),
+        imageProvenance: provenance
+      };
+    })
+  );
+  console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
   return curatedBytes;
 }
 async function runNightlyCuration(status = "draft") {

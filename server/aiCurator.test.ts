@@ -8,9 +8,46 @@ import {
   getTodayWindow,
   isNonNewsHeadline,
   normalizeHeadline,
+  parseAiJsonResponse,
 } from "./_core/aiCurator.js";
 
 describe("verified news curation safeguards", () => {
+  it("parses JSON from AI response even with unescaped newlines and codeblocks", () => {
+    const rawAiOutput = `\`\`\`json
+{
+  "stories": [
+    {
+      "headline": "Mistral Releases New AI Model",
+      "body": "Paragraph 1: The core event happened today.\n\nParagraph 2: Strategic impact is massive.\n\nParagraph 3: Timeline is immediate.",
+      "category": "AI",
+      "sourceUrl": "https://example.com/mistral"
+    }
+  ]
+}
+\`\`\``;
+
+    const result = parseAiJsonResponse(rawAiOutput);
+    expect(result).toHaveLength(1);
+    expect(result[0].headline).toBe("Mistral Releases New AI Model");
+    expect(result[0].category).toBe("AI");
+  });
+
+  it("handles malformed JSON with unescaped literal line breaks inside strings", () => {
+    const malformedOutput = `{
+  "stories": [
+    {
+      "headline": "Unescaped Newline Test",
+      "body": "Paragraph 1 line one.
+Paragraph 2 line two.",
+      "category": "Tech"
+    }
+  ]
+}`;
+
+    const result = parseAiJsonResponse(malformedOutput);
+    expect(result).toHaveLength(1);
+    expect(result[0].headline).toBe("Unescaped Newline Test");
+  });
   it("canonicalizes tracking parameters and trailing slashes", () => {
     expect(canonicalizeUrl("https://WWW.Example.com/story/?utm_source=x&ref=home#comments")).toBe(
       "https://example.com/story"

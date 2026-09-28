@@ -29,7 +29,11 @@ export async function generateNvidiaFluxImage(prompt: string): Promise<string | 
   if (!nvidiaKey || !prompt) return null;
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
     const response = await fetch("https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell", {
+      signal: controller.signal,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -40,6 +44,7 @@ export async function generateNvidiaFluxImage(prompt: string): Promise<string | 
         prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
       }),
     });
+    clearTimeout(timeout);
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");

@@ -502,6 +502,69 @@ function extractAiBody(item: any): string {
   return "";
 }
 
+function extractArrayFromObject(parsed: any): any[] {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object" && parsed !== null) {
+    const arrayKey = Object.keys(parsed).find(k => Array.isArray(parsed[k]));
+    if (arrayKey) return parsed[arrayKey];
+  }
+  return [];
+}
+
+export function parseAiJsonResponse(rawJson: string): any[] {
+  if (!rawJson || typeof rawJson !== "string") return [];
+
+  // Step 1: Strip markdown code block fences and whitespace
+  let cleaned = rawJson.replace(/```json/gi, "").replace(/```/g, "").trim();
+
+  // Step 2: Slice from first '{' or '[' to last '}' or ']'
+  const firstBracket = cleaned.search(/[\[\{]/);
+  const lastBracket = Math.max(cleaned.lastIndexOf("]"), cleaned.lastIndexOf("}"));
+  if (firstBracket !== -1 && lastBracket > firstBracket) {
+    cleaned = cleaned.slice(firstBracket, lastBracket + 1);
+  }
+
+  // Step 3: Try standard JSON.parse first
+  try {
+    const parsed = JSON.parse(cleaned);
+    const arr = extractArrayFromObject(parsed);
+    if (arr.length > 0) return arr;
+  } catch (err1) {
+    console.warn("[AICurator] Standard JSON.parse failed, attempting repair:", err1 instanceof Error ? err1.message : String(err1));
+  }
+
+  // Step 4: Repair unescaped literal control characters (\r \n \t) inside double-quoted string values
+  try {
+    const sanitized = cleaned.replace(/("(?:[^"\\]|\\.)*")/g, (match) => {
+      return match.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t");
+    });
+    const parsed = JSON.parse(sanitized);
+    const arr = extractArrayFromObject(parsed);
+    if (arr.length > 0) return arr;
+  } catch (err2) {
+    console.warn("[AICurator] Sanitized JSON.parse failed, attempting regex object extraction:", err2 instanceof Error ? err2.message : String(err2));
+  }
+
+  // Step 5: Fallback regex block parsing to extract story objects containing headline/title/body
+  const objects: any[] = [];
+  const objectMatches = cleaned.match(/\{[^{}]*(?:"headline"|"title"|"body"|"summary"|"text")[^{}]*\}/gi) || [];
+  for (const block of objectMatches) {
+    try {
+      const safeBlock = block.replace(/("(?:[^"\\]|\\.)*")/g, (m) => m.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t"));
+      const obj = JSON.parse(safeBlock);
+      if (obj && typeof obj === "object") objects.push(obj);
+    } catch {
+      // Ignore individual corrupted block
+    }
+  }
+
+  if (objects.length > 0) {
+    console.info(`[AICurator] Recovered ${objects.length} story objects via regex block parsing.`);
+  }
+
+  return objects;
+}
+
 export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<CuratedByte[]> {
   let candidates: NewsCandidate[];
   try {
@@ -593,6 +656,10 @@ ${JSON.stringify(
         } else {
           const errText = await response.text().catch(() => "");
           console.warn(`[AICurator] Mistral AI model ${model} failed (${response.status}): ${errText.slice(0, 150)}`);
+          if (response.status === 429) {
+            // Short pause if hit rate limit
+            await new Promise(r => setTimeout(r, 400));
+          }
         }
       } catch (err) {
         console.warn(`[AICurator] Error calling Mistral AI model ${model}:`, err instanceof Error ? err.message : String(err));
@@ -655,61 +722,31 @@ ${JSON.stringify(
     }
   }
 
-  let parsed: any[] = [];
-  try {
-    const cleanedJson = rawJson.replace(/```json|```/g, "").trim();
-    const jsonObj = JSON.parse(cleanedJson);
-    if (Array.isArray(jsonObj)) {
-      parsed = jsonObj;
-    } else if (typeof jsonObj === "object" && jsonObj !== null) {
-      const arrayKey = Object.keys(jsonObj).find(k => Array.isArray((jsonObj as any)[k]));
-      if (arrayKey) {
-        parsed = (jsonObj as any)[arrayKey];
-      }
-    }
-  } catch (err) {
-    console.warn("[AICurator] Failed to parse JSON from AI response:", err);
-    parsed = [];
-  }
-
+  const parsed = parseAiJsonResponse(rawJson);
   const byUrl = new Map(candidates.map(candidate => [canonicalizeUrl(candidate.url), candidate]));
   const seen = new Set<string>();
-  const curatedBytes: CuratedByte[] = [];
 
-  for (let i = 0; i < parsed.length && curatedBytes.length < 10; i++) {
+  interface DraftStoryItem {
+    candidate: NewsCandidate;
+    headline: string;
+    body: string;
+    category: string;
+  }
+
+  const draftItems: DraftStoryItem[] = [];
+
+  // 1. Process LLM-parsed items
+  for (let i = 0; i < parsed.length && draftItems.length < 10; i++) {
     const item = parsed[i];
-    // Match candidate by URL first, or fallback to candidate at position i
     const candidate = byUrl.get(canonicalizeUrl(String(item.sourceUrl || ""))) || candidates[i];
     if (!candidate || seen.has(candidate.duplicateKey)) continue;
     seen.add(candidate.duplicateKey);
 
     const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
       ? String(item.category)
-      : ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
+      : ["Tech", "AI", "Science", "Innovation", "Crypto"][draftItems.length % 5];
 
     const itemHeadline = extractAiHeadline(item, candidate.title);
-    let imageUrl = candidate.imageUrl;
-    let provenance = "source-article";
-
-    if (!imageUrl) {
-      imageUrl = await extractSourceArticleImage(candidate.url);
-    }
-
-    // Priority 3: Photorealistic 16:9 PNG generated via NVIDIA NIM FLUX.1
-    if (!imageUrl && getNvidiaApiKey()) {
-      const fluxImg = await generateNvidiaFluxImage(itemHeadline);
-      if (fluxImg) {
-        imageUrl = fluxImg;
-        provenance = "nvidia-flux";
-      }
-    }
-
-    // Priority 4: High-contrast editorial SVG card fallback
-    if (!imageUrl) {
-      imageUrl = generateEditorialSvgCard(itemHeadline, category);
-      provenance = "editorial-card";
-    }
-
     const rawBody = extractAiBody(item);
     const clampedBody = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
 
@@ -718,35 +755,41 @@ ${JSON.stringify(
       candidate
     );
 
-    curatedBytes.push({
-      headline: itemHeadline,
-      body: finalBody,
-      category,
-      imageUrl,
-      sourceUrl: candidate.url,
-      sourcePublisher: candidate.publisher,
-      sourcePublishedAt: candidate.publishedAt,
-      duplicateKey: candidate.duplicateKey,
-      imageQuery: imageQuery(itemHeadline),
-      imageProvenance: provenance,
-    });
+    draftItems.push({ candidate, headline: itemHeadline, body: finalBody, category });
   }
 
-  console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
-
-  // If LLM produced fewer than 10, backfill with high-signal candidate briefs
-  if (curatedBytes.length < 10) {
+  // 2. Backfill with remaining candidates if fewer than 10
+  if (draftItems.length < 10) {
     for (const candidate of candidates) {
-      if (curatedBytes.length >= 10) break;
+      if (draftItems.length >= 10) break;
       if (seen.has(candidate.duplicateKey)) continue;
       seen.add(candidate.duplicateKey);
 
-      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
-      let imageUrl = candidate.imageUrl || (await extractSourceArticleImage(candidate.url));
-      let provenance = candidate.imageUrl ? "source-article" : "editorial-card";
+      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][draftItems.length % 5];
+      const cleanedTitle = cleanHeadline(candidate.title);
+      const brief = clampEditorialBrief(
+        `${cleanedTitle}. Verified reporting published by ${candidate.publisher} details significant architectural, strategic, and infrastructure developments across the ${category.toLowerCase()} ecosystem.\n\nEngineering teams and technology leaders are evaluating the practical implications of these advancements on current deployment models, developer workflows, and system reliability.\n\nAs computing infrastructure scales to meet modern operational demands, technical shifts in this domain will define upcoming industry benchmarks, API standards, and capability roadmaps.`,
+        candidate
+      );
+
+      draftItems.push({ candidate, headline: cleanedTitle.slice(0, 120), body: brief, category });
+    }
+  }
+
+  console.info(`[AICurator] Assembled ${draftItems.length} candidate briefs. Resolving cover images in parallel...`);
+
+  // 3. Resolve images for all 10 stories IN PARALLEL to prevent Vercel 300s timeout
+  const curatedBytes: CuratedByte[] = await Promise.all(
+    draftItems.map(async (draft) => {
+      let imageUrl = draft.candidate.imageUrl;
+      let provenance = "source-article";
+
+      if (!imageUrl) {
+        imageUrl = await extractSourceArticleImage(draft.candidate.url);
+      }
 
       if (!imageUrl && getNvidiaApiKey()) {
-        const fluxImg = await generateNvidiaFluxImage(candidate.title);
+        const fluxImg = await generateNvidiaFluxImage(draft.headline);
         if (fluxImg) {
           imageUrl = fluxImg;
           provenance = "nvidia-flux";
@@ -754,31 +797,26 @@ ${JSON.stringify(
       }
 
       if (!imageUrl) {
-        imageUrl = generateEditorialSvgCard(candidate.title, category);
+        imageUrl = generateEditorialSvgCard(draft.headline, draft.category);
         provenance = "editorial-card";
       }
 
-      const cleanedTitle = cleanHeadline(candidate.title);
-      const brief = clampEditorialBrief(
-        `${cleanedTitle}. Verified reporting published by ${candidate.publisher} details significant architectural, strategic, and infrastructure developments across the ${category.toLowerCase()} ecosystem.\n\nEngineering teams and technology leaders are evaluating the practical implications of these advancements on current deployment models, developer workflows, and system reliability.\n\nAs computing infrastructure scales to meet modern operational demands, technical shifts in this domain will define upcoming industry benchmarks, API standards, and capability roadmaps.`,
-        candidate
-      );
-
-      curatedBytes.push({
-        headline: cleanedTitle.slice(0, 120),
-        body: brief,
-        category,
+      return {
+        headline: draft.headline,
+        body: draft.body,
+        category: draft.category,
         imageUrl,
-        sourceUrl: candidate.url,
-        sourcePublisher: candidate.publisher,
-        sourcePublishedAt: candidate.publishedAt,
-        duplicateKey: candidate.duplicateKey,
-        imageQuery: imageQuery(candidate.title),
+        sourceUrl: draft.candidate.url,
+        sourcePublisher: draft.candidate.publisher,
+        sourcePublishedAt: draft.candidate.publishedAt,
+        duplicateKey: draft.candidate.duplicateKey,
+        imageQuery: imageQuery(draft.headline),
         imageProvenance: provenance,
-      });
-    }
-  }
+      };
+    })
+  );
 
+  console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
   return curatedBytes;
 }
 
