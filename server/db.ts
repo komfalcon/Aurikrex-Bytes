@@ -105,40 +105,8 @@ async function repairSystemSettingsSchema(db: ReturnType<typeof drizzle>) {
 }
 
 async function cleanupTemplatedPosts(db: ReturnType<typeof drizzle>) {
-  try {
-    // Purge all draft posts that contain the generic boilerplate template
-    await db.run(
-      sql.raw(
-        "DELETE FROM posts WHERE status = 'draft' AND body LIKE '%Major technological developments were announced today regarding%'"
-      )
-    );
-
-    // Clean up published posts if any contain the generic boilerplate line
-    const rows = await db.all(
-      sql.raw(
-        "SELECT id, headline, source_publisher FROM posts WHERE status = 'published' AND body LIKE '%Major technological developments were announced today regarding%'"
-      )
-    );
-
-    for (const row of rows as any[]) {
-      const cleanTitle = String(row.headline || "")
-        .replace(/&#8217;/g, "'")
-        .replace(/&#8216;/g, "'")
-        .replace(/&quot;/g, '"')
-        .replace(/&amp;/g, "&")
-        .replace(/&#39;/g, "'");
-
-      const cleanBody = `${cleanTitle}. Reporting published by ${row.source_publisher || "verified sources"}.\n\nEngineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and capability planning.\n\nKey technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments.`;
-
-      await db.run(
-        sql.raw(
-          `UPDATE posts SET headline = '${cleanTitle.replace(/'/g, "''")}', body = '${cleanBody.replace(/'/g, "''")}', updated_at = ${Date.now()} WHERE id = ${row.id}`
-        )
-      );
-    }
-  } catch (error) {
-    console.warn("[Database] Templated posts cleanup note:", error);
-  }
+  // No-op to prevent auto-deleting created posts
+  return;
 }
 
 export async function getDb() {

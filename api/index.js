@@ -321,33 +321,7 @@ async function repairSystemSettingsSchema(db) {
   )`));
 }
 async function cleanupTemplatedPosts(db) {
-  try {
-    await db.run(
-      sql.raw(
-        "DELETE FROM posts WHERE status = 'draft' AND body LIKE '%Major technological developments were announced today regarding%'"
-      )
-    );
-    const rows = await db.all(
-      sql.raw(
-        "SELECT id, headline, source_publisher FROM posts WHERE status = 'published' AND body LIKE '%Major technological developments were announced today regarding%'"
-      )
-    );
-    for (const row of rows) {
-      const cleanTitle = String(row.headline || "").replace(/&#8217;/g, "'").replace(/&#8216;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&#39;/g, "'");
-      const cleanBody = `${cleanTitle}. Reporting published by ${row.source_publisher || "verified sources"}.
-
-Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and capability planning.
-
-Key technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments.`;
-      await db.run(
-        sql.raw(
-          `UPDATE posts SET headline = '${cleanTitle.replace(/'/g, "''")}', body = '${cleanBody.replace(/'/g, "''")}', updated_at = ${Date.now()} WHERE id = ${row.id}`
-        )
-      );
-    }
-  } catch (error) {
-    console.warn("[Database] Templated posts cleanup note:", error);
-  }
+  return;
 }
 async function getDb() {
   if (!_db && process.env.TURSO_DATABASE_URL) {
@@ -1432,7 +1406,7 @@ ${JSON.stringify(
   const curatedBytes = [];
   for (let i = 0; i < parsed.length && curatedBytes.length < 10; i++) {
     const item = parsed[i];
-    const candidate = byUrl.get(canonicalizeUrl(String(item.sourceUrl || "")));
+    const candidate = byUrl.get(canonicalizeUrl(String(item.sourceUrl || ""))) || candidates[i];
     if (!candidate || seen.has(candidate.duplicateKey)) continue;
     seen.add(candidate.duplicateKey);
     const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
@@ -1488,14 +1462,17 @@ ${JSON.stringify(
         imageUrl = generateEditorialSvgCard(candidate.title, category);
         provenance = "editorial-card";
       }
+      const cleanedTitle = cleanHeadline(candidate.title);
       const brief = clampEditorialBrief(
-        `Major technological developments were announced today regarding ${candidate.title}. Published by ${candidate.publisher}, the report highlights significant architectural, infrastructure, and strategic advancements across the computing ecosystem. Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and long-term capability planning.
+        `${cleanedTitle}. Verified reporting published by ${candidate.publisher} details significant architectural, strategic, and infrastructure developments across the ${category.toLowerCase()} ecosystem.
 
-Key technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments. As organizations scale next-generation computing infrastructure, developments in this domain will shape operational roadmaps and competitive positioning throughout the industry.`,
+Engineering teams and technology leaders are evaluating the practical implications of these advancements on current deployment models, developer workflows, and system reliability.
+
+As computing infrastructure scales to meet modern operational demands, technical shifts in this domain will define upcoming industry benchmarks, API standards, and capability roadmaps.`,
         candidate
       );
       curatedBytes.push({
-        headline: candidate.title.slice(0, 120),
+        headline: cleanedTitle.slice(0, 120),
         body: brief,
         category,
         imageUrl,
@@ -2946,7 +2923,7 @@ var appRouter = router({
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:create");
       const { runNightlyCuration: runNightlyCuration2 } = await Promise.resolve().then(() => (init_aiCurator(), aiCurator_exports));
-      const count = await runNightlyCuration2("draft");
+      const count = await runNightlyCuration2("published");
       return { success: true, count };
     }),
     ingestPdf: publicProcedure.input(z2.object({ pdfContent: z2.string().min(1) })).mutation(async ({ input, ctx }) => {

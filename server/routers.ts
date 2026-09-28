@@ -217,7 +217,7 @@ export const appRouter = router({
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:create");
       const { runNightlyCuration } = await import("./_core/aiCurator.js");
-      const count = await runNightlyCuration("draft");
+      const count = await runNightlyCuration("published");
       return { success: true, count };
     }),
     ingestPdf: publicProcedure

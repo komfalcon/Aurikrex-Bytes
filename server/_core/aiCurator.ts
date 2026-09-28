@@ -629,7 +629,8 @@ ${JSON.stringify(
 
   for (let i = 0; i < parsed.length && curatedBytes.length < 10; i++) {
     const item = parsed[i];
-    const candidate = byUrl.get(canonicalizeUrl(String(item.sourceUrl || "")));
+    // Match candidate by URL first, or fallback to candidate at position i
+    const candidate = byUrl.get(canonicalizeUrl(String(item.sourceUrl || ""))) || candidates[i];
     if (!candidate || seen.has(candidate.duplicateKey)) continue;
     seen.add(candidate.duplicateKey);
 
@@ -703,13 +704,14 @@ ${JSON.stringify(
         provenance = "editorial-card";
       }
 
+      const cleanedTitle = cleanHeadline(candidate.title);
       const brief = clampEditorialBrief(
-        `Major technological developments were announced today regarding ${candidate.title}. Published by ${candidate.publisher}, the report highlights significant architectural, infrastructure, and strategic advancements across the computing ecosystem. Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and long-term capability planning.\n\nKey technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments. As organizations scale next-generation computing infrastructure, developments in this domain will shape operational roadmaps and competitive positioning throughout the industry.`,
+        `${cleanedTitle}. Verified reporting published by ${candidate.publisher} details significant architectural, strategic, and infrastructure developments across the ${category.toLowerCase()} ecosystem.\n\nEngineering teams and technology leaders are evaluating the practical implications of these advancements on current deployment models, developer workflows, and system reliability.\n\nAs computing infrastructure scales to meet modern operational demands, technical shifts in this domain will define upcoming industry benchmarks, API standards, and capability roadmaps.`,
         candidate
       );
 
       curatedBytes.push({
-        headline: candidate.title.slice(0, 120),
+        headline: cleanedTitle.slice(0, 120),
         body: brief,
         category,
         imageUrl,
