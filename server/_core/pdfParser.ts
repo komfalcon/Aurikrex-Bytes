@@ -1,6 +1,7 @@
 import { CuratedByte, cleanHeadline, clampEditorialBrief } from "./aiCurator.js";
 import { cloudinaryConfigured } from "../services.js";
-import { getAiApiKeys } from "./aiKeys.js";
+import { getAiApiKeys, getNvidiaApiKey } from "./aiKeys.js";
+import { generateNvidiaFluxImage } from "./imageGeneration.js";
 
 /**
  * Extracts domain-specific theme and branding parameters for bespoke card generation.
@@ -217,7 +218,21 @@ async function uploadBase64ToCloudinary(base64DataUri: string): Promise<string |
  * Automatically tries all configured AI API keys in order as fallback.
  */
 async function generateAiRecreatedImage(prompt: string, apiKeys: string[]): Promise<string | null> {
-  if (!apiKeys.length || !prompt) return null;
+  if (!prompt) return null;
+
+  // Try NVIDIA FLUX 1.0 schnell first if configured
+  if (getNvidiaApiKey()) {
+    try {
+      const fluxUrl = await generateNvidiaFluxImage(prompt);
+      if (fluxUrl) {
+        return fluxUrl;
+      }
+    } catch (err) {
+      console.warn("[PDFParser] NVIDIA FLUX generation failed, trying Imagen fallback:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  if (!apiKeys.length) return null;
 
   for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
     const apiKey = apiKeys[keyIdx];

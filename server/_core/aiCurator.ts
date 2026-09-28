@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { inArray } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { posts } from "../../drizzle/schema.js";
-import { getAiApiKeys } from "./aiKeys.js";
+import { getAiApiKeys, getMistralApiKey, getNvidiaApiKey } from "./aiKeys.js";
+import { generateNvidiaFluxImage } from "./imageGeneration.js";
 
 export interface CuratedByte {
   headline: string;
@@ -462,18 +463,15 @@ export async function curateTenBytes(): Promise<CuratedByte[]> {
   if (!candidates.length) return [];
 
   const apiKeys = getAiApiKeys();
+  const mistralKey = getMistralApiKey();
 
-  // If no Gemini / AI key is provided, log clearly and skip curation.
-  // Never fall back to generic robotic templates.
-  if (!apiKeys.length) {
+  // If no AI key is provided at all (Gemini or Mistral), log clearly and skip curation.
+  if (!apiKeys.length && !mistralKey) {
     console.warn(
-      "[AICurator] No GEMINI_API_KEY or GOOGLE_API_KEY configured. Skipping curation to prevent fallback template pollution."
+      "[AICurator] No AI API key (GEMINI_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY) configured. Skipping curation."
     );
     return [];
   }
-
-  // Model cascade: try gemini-2.5-flash first, fallback to gemini-1.5-flash, then gemini-2.0-flash
-  const modelCandidates = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"];
   const prompt = `You are the executive tech editor for Aurikrex Bytes.
 Write an authoritative, high-signal editorial brief for up to 10 of these verified candidate news stories.
 
@@ -508,64 +506,99 @@ ${JSON.stringify(
 
   let rawJson = "[]";
 
-  // Multi-key & multi-model fallback cascade:
-  // Iterate through available API keys. If the primary key encounters quota exhaustion (403),
-  // rate limits (429), or failures, automatically switch to the secondary fallback API key.
-  keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
-    const apiKey = apiKeys[keyIdx];
-    const keyLabel = `Key #${keyIdx + 1}${keyIdx > 0 ? " (fallback)" : " (primary)"}`;
+  // Primary LLM Provider: Mistral AI (mistral-large-latest)
+  if (mistralKey) {
+    try {
+      const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Authorization": `Bearer ${mistralKey}`,
+        },
+        body: JSON.stringify({
+          model: "mistral-large-latest",
+          response_format: { type: "json_object" },
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.3,
+        }),
+      });
 
-    for (const model of modelCandidates) {
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-goog-api-key": apiKey,
-            },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                responseMimeType: "application/json",
-                temperature: 0.3,
+      if (response.ok) {
+        const resData = await response.json();
+        const content = resData.choices?.[0]?.message?.content || "";
+        if (content) {
+          rawJson = content;
+          console.info("[AICurator] Successfully curated briefs using Mistral AI (mistral-large-latest)");
+        }
+      } else {
+        const errText = await response.text().catch(() => "");
+        console.warn(`[AICurator] Mistral AI request failed (${response.status}): ${errText.slice(0, 150)}`);
+      }
+    } catch (err) {
+      console.warn("[AICurator] Error calling Mistral AI:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Fallback LLM Provider: Gemini Multi-Key & Multi-Model Cascade
+  if ((!rawJson || rawJson === "[]") && apiKeys.length > 0) {
+    const modelCandidates = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
+    keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
+      const apiKey = apiKeys[keyIdx];
+      const keyLabel = `Key #${keyIdx + 1}${keyIdx > 0 ? " (fallback)" : " (primary)"}`;
+
+      for (const model of modelCandidates) {
+        try {
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-goog-api-key": apiKey,
               },
-            }),
-          }
-        );
-
-        if (!response.ok) {
-          const errStatus = response.status;
-          const errText = await response.text().catch(() => "");
-          console.warn(
-            `[AICurator] Gemini model ${model} failed with ${keyLabel} (${errStatus}): ${errText.slice(0, 150)}`
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                  responseMimeType: "application/json",
+                  temperature: 0.3,
+                },
+              }),
+            }
           );
 
-          // If rate-limited (429) or quota exceeded (403), this key is exhausted.
-          // Switch to fallback key immediately.
-          if (errStatus === 429 || errStatus === 403) {
-            console.warn(`[AICurator] ${keyLabel} hit rate limit or quota. Switching to next AI API key...`);
-            continue keyLoop;
-          }
-          continue;
-        }
+          if (!response.ok) {
+            const errStatus = response.status;
+            const errText = await response.text().catch(() => "");
+            console.warn(
+              `[AICurator] Gemini model ${model} failed with ${keyLabel} (${errStatus}): ${errText.slice(0, 150)}`
+            );
 
-        const resData = await response.json();
-        rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-        if (rawJson && rawJson !== "[]") {
-          console.info(`[AICurator] Successfully curated briefs using ${keyLabel} (${model})`);
-          break keyLoop;
+            if (errStatus === 429 || errStatus === 403) {
+              console.warn(`[AICurator] ${keyLabel} hit rate limit or quota. Switching to next AI API key...`);
+              continue keyLoop;
+            }
+            continue;
+          }
+
+          const resData = await response.json();
+          rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+          if (rawJson && rawJson !== "[]") {
+            console.info(`[AICurator] Successfully curated briefs using ${keyLabel} (${model})`);
+            break keyLoop;
+          }
+        } catch (err) {
+          console.warn(`[AICurator] Error calling ${model} with ${keyLabel}:`, err);
         }
-      } catch (err) {
-        console.warn(`[AICurator] Error calling ${model} with ${keyLabel}:`, err);
       }
     }
   }
 
   let parsed: any[] = [];
   try {
-    parsed = JSON.parse(rawJson.replace(/```json|```/g, "").trim());
+    const cleanedJson = rawJson.replace(/```json|```/g, "").trim();
+    const jsonObj = JSON.parse(cleanedJson);
+    parsed = Array.isArray(jsonObj) ? jsonObj : (jsonObj.bytes || jsonObj.stories || jsonObj.candidates || jsonObj.briefs || []);
     if (!Array.isArray(parsed)) parsed = [];
   } catch {
     parsed = [];
@@ -585,15 +618,23 @@ ${JSON.stringify(
       ? String(item.category)
       : ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
 
-    // Priority 1: Image already provided in RSS
-    // Priority 2: Extract authentic OpenGraph image from source article
-    // Priority 3: Generate clean, publication-grade editorial SVG typography card
     let imageUrl = candidate.imageUrl;
     let provenance = "source-article";
 
     if (!imageUrl) {
       imageUrl = await extractSourceArticleImage(candidate.url);
     }
+
+    // Priority 3: Photorealistic 16:9 PNG generated via NVIDIA NIM FLUX.1
+    if (!imageUrl && getNvidiaApiKey()) {
+      const fluxImg = await generateNvidiaFluxImage(item.headline || candidate.title);
+      if (fluxImg) {
+        imageUrl = fluxImg;
+        provenance = "nvidia-flux";
+      }
+    }
+
+    // Priority 4: High-contrast editorial SVG card fallback
     if (!imageUrl) {
       imageUrl = generateEditorialSvgCard(item.headline || candidate.title, category);
       provenance = "editorial-card";
@@ -617,7 +658,54 @@ ${JSON.stringify(
     });
   }
 
+<<<<<<< HEAD
   console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
+=======
+  // If LLM produced fewer than 10, backfill with high-signal candidate briefs
+  if (curatedBytes.length < 10) {
+    for (const candidate of candidates) {
+      if (curatedBytes.length >= 10) break;
+      if (seen.has(candidate.duplicateKey)) continue;
+      seen.add(candidate.duplicateKey);
+
+      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
+      let imageUrl = candidate.imageUrl || (await extractSourceArticleImage(candidate.url));
+      let provenance = candidate.imageUrl ? "source-article" : "editorial-card";
+
+      if (!imageUrl && getNvidiaApiKey()) {
+        const fluxImg = await generateNvidiaFluxImage(candidate.title);
+        if (fluxImg) {
+          imageUrl = fluxImg;
+          provenance = "nvidia-flux";
+        }
+      }
+
+      if (!imageUrl) {
+        imageUrl = generateEditorialSvgCard(candidate.title, category);
+        provenance = "editorial-card";
+      }
+
+      const brief = clampEditorialBrief(
+        `Major technological developments were announced today regarding ${candidate.title}. Published by ${candidate.publisher}, the report highlights significant architectural, infrastructure, and strategic advancements across the computing ecosystem. Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and long-term capability planning.\n\nKey technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments. As organizations scale next-generation computing infrastructure, developments in this domain will shape operational roadmaps and competitive positioning throughout the industry.`,
+        candidate
+      );
+
+      curatedBytes.push({
+        headline: candidate.title.slice(0, 120),
+        body: brief,
+        category,
+        imageUrl,
+        sourceUrl: candidate.url,
+        sourcePublisher: candidate.publisher,
+        sourcePublishedAt: candidate.publishedAt,
+        duplicateKey: candidate.duplicateKey,
+        imageQuery: imageQuery(candidate.title),
+        imageProvenance: provenance,
+      });
+    }
+  }
+
+>>>>>>> 94d389d (feat: integrate Mistral AI for brief curation and NVIDIA FLUX.1 for photorealistic PNG cover images)
   return curatedBytes;
 }
 

@@ -17,6 +17,68 @@
  */
 import { storagePut } from "server/storage";
 import { ENV } from "./env.js";
+import { getNvidiaApiKey } from "./aiKeys.js";
+import { cloudinaryConfigured } from "../services.js";
+
+/**
+ * Generates photorealistic 16:9 PNG images using NVIDIA NIM (FLUX.1-schnell).
+ * Automatically uploads the resulting PNG to Cloudinary CDN if configured.
+ */
+export async function generateNvidiaFluxImage(prompt: string): Promise<string | null> {
+  const nvidiaKey = getNvidiaApiKey();
+  if (!nvidiaKey || !prompt) return null;
+
+  try {
+    const response = await fetch("https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": `Bearer ${nvidiaKey}`,
+      },
+      body: JSON.stringify({
+        prompt: `${prompt}. High-quality editorial technology photography, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
+        aspect_ratio: "16:9",
+        mode: "base",
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      console.warn(`[NVIDIA FLUX] Generation failed (${response.status}):`, errText.slice(0, 150));
+      return null;
+    }
+
+    const data = await response.json();
+    const b64 = data.b64_json || data.artifacts?.[0]?.base64 || data.image || data.predictions?.[0]?.bytesBase64Encoded;
+    if (b64) {
+      const dataUri = `data:image/png;base64,${b64}`;
+      if (cloudinaryConfigured()) {
+        try {
+          const { v2: cloudinary } = await import("cloudinary");
+          cloudinary.config({
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key: process.env.CLOUDINARY_API_KEY,
+            api_secret: process.env.CLOUDINARY_API_SECRET,
+          });
+          const uploadRes = await cloudinary.uploader.upload(dataUri, {
+            folder: "aurikrex/posts",
+            resource_type: "image",
+          });
+          if (uploadRes.secure_url || uploadRes.url) {
+            return uploadRes.secure_url || uploadRes.url;
+          }
+        } catch {
+          // Cloudinary fallback to dataUri
+        }
+      }
+      return dataUri;
+    }
+  } catch (err) {
+    console.warn("[NVIDIA FLUX] Error generating image:", err instanceof Error ? err.message : String(err));
+  }
+  return null;
+}
 
 // Default model for generated sites. "MODEL_GPT_IMAGE_2" is the forge images.v1
 // enum for GPT Image 2 (id: gpt-image-2). If omitted, forge falls back to Gemini 2.5 Flash.

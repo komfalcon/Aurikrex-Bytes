@@ -44,5 +44,13 @@ export function getPrimaryAiApiKey(): string {
 }
 
 export function hasAiApiKey(): boolean {
-  return getAiApiKeys().length > 0;
+  return getAiApiKeys().length > 0 || Boolean(getMistralApiKey());
+}
+
+export function getMistralApiKey(): string {
+  return (process.env.MISTRAL_API_KEY || process.env.MISTRAL_KEY || "").trim();
+}
+
+export function getNvidiaApiKey(): string {
+  return (process.env.NVIDIA_API_KEY || process.env.NVIDIA_KEY || "").trim();
 }
