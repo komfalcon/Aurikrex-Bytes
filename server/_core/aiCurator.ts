@@ -578,6 +578,7 @@ ${JSON.stringify(
               { role: "user", content: prompt },
             ],
             temperature: 0.3,
+            max_tokens: 3500,
           }),
         });
 
@@ -621,6 +622,7 @@ ${JSON.stringify(
                 generationConfig: {
                   responseMimeType: "application/json",
                   temperature: 0.3,
+                  maxOutputTokens: 3500,
                 },
               }),
             }
