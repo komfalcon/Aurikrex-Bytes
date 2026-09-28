@@ -565,63 +565,36 @@ export function parseAiJsonResponse(rawJson: string): any[] {
   return objects;
 }
 
-export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<CuratedByte[]> {
-  let candidates: NewsCandidate[];
-  try {
-    candidates = await fetchTodayCandidates(excludeKeys);
-  } catch (error) {
-    console.error("[AICurator] News candidate retrieval failed", error);
-    return [];
-  }
-  if (!candidates.length) return [];
-
-  const apiKeys = getAiApiKeys();
-  const mistralKey = getMistralApiKey();
-
-  // If no AI key is provided at all (Gemini or Mistral), log clearly and skip curation.
-  if (!apiKeys.length && !mistralKey) {
-    console.warn(
-      "[AICurator] No AI API key (GEMINI_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY) configured. Skipping curation."
-    );
-    return [];
-  }
+async function generateSingleCandidateBrief(
+  candidate: NewsCandidate,
+  mistralKey: string,
+  apiKeys: string[]
+): Promise<{ headline: string; body: string; category: string } | null> {
   const prompt = `You are the executive tech editor for Aurikrex Bytes.
-Write an authoritative, high-signal editorial brief for up to 10 of these verified candidate news stories.
+Write an authoritative, high-signal 3-paragraph editorial brief for this verified news story.
 
-CRITICAL EDITORIAL RULES:
-1. Base your brief strictly on the candidate facts. Do NOT hallucinate fake dates, fake URLs, or nonexistent benchmarks.
-2. Every story brief MUST consist of three concise, focused paragraphs:
+STORY DETAILS:
+- Title: "${candidate.title}"
+- Publisher: "${candidate.publisher}"
+- URL: "${candidate.url}"
+
+EDITORIAL RULES:
+1. Base your brief strictly on the candidate facts. Do NOT hallucinate fake dates or fake benchmarks.
+2. Structure into three concise, focused paragraphs:
    - Paragraph 1 (The Lead): The core event, company, breakthrough, or incident and key technical details.
    - Paragraph 2 (Why It Matters): Strategic industry impact, architectural implications, market effects, or infrastructure changes.
    - Paragraph 3 (The Outlook): What happens next, timeline, release dates, or key metrics to watch.
-3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 650 and 750 characters (excluding headline).
-4. Headline: Crisp, punchy, active voice, under 90 characters. Never include source tags like "Show HN:" or publisher names.
+3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 550 and 750 characters.
+4. Headline: Crisp, punchy, active voice, under 90 characters. Never include publisher names or tags like "Show HN:".
 5. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
-6. Return a valid JSON object containing a "stories" array:
+6. Return a valid JSON object ONLY:
    {
-     "stories": [
-       {
-         "headline": "Crisp Headline",
-         "body": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...",
-         "category": "Tech",
-         "sourceUrl": "exact match to candidate url"
-       }
-     ]
-   }
+     "headline": "Crisp Headline under 90 chars",
+     "body": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...",
+     "category": "Tech"
+   }`;
 
-CANDIDATES:
-${JSON.stringify(
-    candidates.map(c => ({
-      title: c.title,
-      url: c.url,
-      publisher: c.publisher,
-      publishedAt: c.publishedAt.toISOString(),
-    }))
-  )}`;
-
-  let rawJson = "[]";
-
-  // Primary LLM Provider: Mistral AI (mistral-small-latest cascade)
+  // 1. Primary LLM Provider: Mistral AI (mistral-small-latest -> open-mixtral-8x7b -> open-mistral-7b)
   if (mistralKey) {
     const mistralModels = ["mistral-small-latest", "open-mixtral-8x7b", "open-mistral-7b"];
     for (const model of mistralModels) {
@@ -641,39 +614,40 @@ ${JSON.stringify(
               { role: "user", content: prompt },
             ],
             temperature: 0.3,
-            max_tokens: 3500,
+            max_tokens: 1000,
           }),
         });
 
         if (response.ok) {
           const resData = await response.json();
           const content = resData.choices?.[0]?.message?.content || "";
-          if (content && content !== "[]" && content !== "{}") {
-            rawJson = content;
-            console.info(`[AICurator] Successfully curated briefs using Mistral AI (${model})`);
-            break;
+          const parsed = parseAiJsonResponse(content);
+          if (parsed && parsed.length > 0) {
+            const item = parsed[0];
+            const headline = extractAiHeadline(item, candidate.title);
+            const rawBody = extractAiBody(item);
+            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
+              ? String(item.category)
+              : "Tech";
+
+            if (headline && body && body.length > 100) {
+              return { headline, body, category };
+            }
           }
-        } else {
-          const errText = await response.text().catch(() => "");
-          console.warn(`[AICurator] Mistral AI model ${model} failed (${response.status}): ${errText.slice(0, 150)}`);
-          if (response.status === 429) {
-            // Short pause if hit rate limit
-            await new Promise(r => setTimeout(r, 400));
-          }
+        } else if (response.status === 429) {
+          await new Promise((r) => setTimeout(r, 300));
         }
-      } catch (err) {
-        console.warn(`[AICurator] Error calling Mistral AI model ${model}:`, err instanceof Error ? err.message : String(err));
+      } catch {
+        // Fall through to next model
       }
     }
   }
 
-  // Fallback LLM Provider: Gemini Multi-Key & Multi-Model Cascade
-  if ((!rawJson || rawJson === "[]") && apiKeys.length > 0) {
+  // 2. Fallback LLM Provider: Gemini Multi-Key & Multi-Model Cascade
+  if (apiKeys.length > 0) {
     const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-flash-latest"];
-    keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
-      const apiKey = apiKeys[keyIdx];
-      const keyLabel = `Key #${keyIdx + 1}${keyIdx > 0 ? " (fallback)" : " (primary)"}`;
-
+    for (const apiKey of apiKeys) {
       for (const model of modelCandidates) {
         try {
           const response = await fetch(
@@ -689,41 +663,60 @@ ${JSON.stringify(
                 generationConfig: {
                   responseMimeType: "application/json",
                   temperature: 0.3,
-                  maxOutputTokens: 3500,
+                  maxOutputTokens: 1000,
                 },
               }),
             }
           );
 
-          if (!response.ok) {
-            const errStatus = response.status;
-            const errText = await response.text().catch(() => "");
-            console.warn(
-              `[AICurator] Gemini model ${model} failed with ${keyLabel} (${errStatus}): ${errText.slice(0, 150)}`
-            );
+          if (response.ok) {
+            const resData = await response.json();
+            const content = resData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            const parsed = parseAiJsonResponse(content);
+            if (parsed && parsed.length > 0) {
+              const item = parsed[0];
+              const headline = extractAiHeadline(item, candidate.title);
+              const rawBody = extractAiBody(item);
+              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
+                ? String(item.category)
+                : "Tech";
 
-            if (errStatus === 429 || errStatus === 403) {
-              console.warn(`[AICurator] ${keyLabel} hit rate limit or quota. Switching to next AI API key...`);
-              continue keyLoop;
+              if (headline && body && body.length > 100) {
+                return { headline, body, category };
+              }
             }
-            continue;
           }
-
-          const resData = await response.json();
-          rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-          if (rawJson && rawJson !== "[]") {
-            console.info(`[AICurator] Successfully curated briefs using ${keyLabel} (${model})`);
-            break keyLoop;
-          }
-        } catch (err) {
-          console.warn(`[AICurator] Error calling ${model} with ${keyLabel}:`, err);
+        } catch {
+          // Fall through to next model
         }
       }
     }
   }
 
-  const parsed = parseAiJsonResponse(rawJson);
-  const byUrl = new Map(candidates.map(candidate => [canonicalizeUrl(candidate.url), candidate]));
+  return null;
+}
+
+export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<CuratedByte[]> {
+  let candidates: NewsCandidate[];
+  try {
+    candidates = await fetchTodayCandidates(excludeKeys);
+  } catch (error) {
+    console.error("[AICurator] News candidate retrieval failed", error);
+    return [];
+  }
+  if (!candidates.length) return [];
+
+  const apiKeys = getAiApiKeys();
+  const mistralKey = getMistralApiKey();
+
+  if (!apiKeys.length && !mistralKey) {
+    console.warn(
+      "[AICurator] No AI API key (GEMINI_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY) configured. Skipping curation."
+    );
+    return [];
+  }
+
   const seen = new Set<string>();
 
   interface DraftStoryItem {
@@ -735,50 +728,35 @@ ${JSON.stringify(
 
   const draftItems: DraftStoryItem[] = [];
 
-  // 1. Process LLM-parsed items
-  for (let i = 0; i < parsed.length && draftItems.length < 10; i++) {
-    const item = parsed[i];
-    const candidate = byUrl.get(canonicalizeUrl(String(item.sourceUrl || ""))) || candidates[i];
-    if (!candidate || seen.has(candidate.duplicateKey)) continue;
-    seen.add(candidate.duplicateKey);
-
-    const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-      ? String(item.category)
-      : ["Tech", "AI", "Science", "Innovation", "Crypto"][draftItems.length % 5];
-
-    const itemHeadline = extractAiHeadline(item, candidate.title);
-    const rawBody = extractAiBody(item);
-    const clampedBody = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-
-    const finalBody = clampedBody || clampEditorialBrief(
-      `${itemHeadline}. Verified reporting published by ${candidate.publisher} details significant architectural, strategic, and infrastructure developments across the ${category.toLowerCase()} ecosystem.\n\nEngineering teams and technology leaders are evaluating the practical implications of these advancements on current deployment models, developer workflows, and system reliability.\n\nAs computing infrastructure scales to meet modern operational demands, technical shifts in this domain will define upcoming industry benchmarks, API standards, and capability roadmaps.`,
-      candidate
+  // Generate AI briefs for candidates ONE BY ONE in small parallel chunks of 3 for max performance & zero rate limits
+  const chunkSize = 3;
+  for (let i = 0; i < candidates.length && draftItems.length < 10; i += chunkSize) {
+    const chunk = candidates.slice(i, i + chunkSize);
+    const chunkResults = await Promise.all(
+      chunk.map(async (candidate) => {
+        if (seen.has(candidate.duplicateKey)) return null;
+        seen.add(candidate.duplicateKey);
+        const brief = await generateSingleCandidateBrief(candidate, mistralKey, apiKeys);
+        if (!brief) return null;
+        return {
+          candidate,
+          headline: brief.headline,
+          body: brief.body,
+          category: brief.category,
+        };
+      })
     );
 
-    draftItems.push({ candidate, headline: itemHeadline, body: finalBody, category });
-  }
-
-  // 2. Backfill with remaining candidates if fewer than 10
-  if (draftItems.length < 10) {
-    for (const candidate of candidates) {
-      if (draftItems.length >= 10) break;
-      if (seen.has(candidate.duplicateKey)) continue;
-      seen.add(candidate.duplicateKey);
-
-      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][draftItems.length % 5];
-      const cleanedTitle = cleanHeadline(candidate.title);
-      const brief = clampEditorialBrief(
-        `${cleanedTitle}. Verified reporting published by ${candidate.publisher} details significant architectural, strategic, and infrastructure developments across the ${category.toLowerCase()} ecosystem.\n\nEngineering teams and technology leaders are evaluating the practical implications of these advancements on current deployment models, developer workflows, and system reliability.\n\nAs computing infrastructure scales to meet modern operational demands, technical shifts in this domain will define upcoming industry benchmarks, API standards, and capability roadmaps.`,
-        candidate
-      );
-
-      draftItems.push({ candidate, headline: cleanedTitle.slice(0, 120), body: brief, category });
+    for (const res of chunkResults) {
+      if (res && draftItems.length < 10) {
+        draftItems.push(res);
+      }
     }
   }
 
-  console.info(`[AICurator] Assembled ${draftItems.length} candidate briefs. Resolving cover images in parallel...`);
+  console.info(`[AICurator] Successfully generated ${draftItems.length} authentic AI candidate briefs. Resolving cover images in parallel...`);
 
-  // 3. Resolve images for all 10 stories IN PARALLEL to prevent Vercel 300s timeout
+  // Resolve cover images for all 10 stories in parallel
   const curatedBytes: CuratedByte[] = await Promise.all(
     draftItems.map(async (draft) => {
       let imageUrl = draft.candidate.imageUrl;
