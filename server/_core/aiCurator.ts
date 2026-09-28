@@ -658,9 +658,8 @@ ${JSON.stringify(
     });
   }
 
-<<<<<<< HEAD
   console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
-=======
+
   // If LLM produced fewer than 10, backfill with high-signal candidate briefs
   if (curatedBytes.length < 10) {
     for (const candidate of candidates) {
@@ -705,7 +704,6 @@ ${JSON.stringify(
     }
   }
 
->>>>>>> 94d389d (feat: integrate Mistral AI for brief curation and NVIDIA FLUX.1 for photorealistic PNG cover images)
   return curatedBytes;
 }
 
