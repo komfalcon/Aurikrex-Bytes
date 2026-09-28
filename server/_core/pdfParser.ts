@@ -280,15 +280,38 @@ async function generateAiRecreatedImage(prompt: string, apiKeys: string[]): Prom
 
 export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedByte[]> {
   let isBase64Pdf = false;
+  let mimeType = "application/pdf";
   let rawBase64 = "";
   let plainText = "";
 
-  if (
+  if (pdfBase64OrText.startsWith("data:")) {
+    isBase64Pdf = true;
+    const match = pdfBase64OrText.match(/^data:([^;]+);base64,(.*)$/s);
+    if (match) {
+      mimeType = match[1] || "application/pdf";
+      rawBase64 = match[2].trim().replace(/\s+/g, "");
+    } else {
+      rawBase64 = pdfBase64OrText.replace(/^data:[^;]+;base64,/, "").trim().replace(/\s+/g, "");
+    }
+  } else if (
     pdfBase64OrText.includes("data:application/pdf;base64,") ||
+    pdfBase64OrText.includes("data:image/") ||
     (pdfBase64OrText.length > 500 && !pdfBase64OrText.includes(" "))
   ) {
     isBase64Pdf = true;
-    rawBase64 = pdfBase64OrText.replace(/^data:application\/pdf;base64,/, "").trim();
+    if (pdfBase64OrText.includes("data:image/png;base64,")) {
+      mimeType = "image/png";
+      rawBase64 = pdfBase64OrText.replace(/^data:image\/png;base64,/, "").trim().replace(/\s+/g, "");
+    } else if (pdfBase64OrText.includes("data:image/jpeg;base64,")) {
+      mimeType = "image/jpeg";
+      rawBase64 = pdfBase64OrText.replace(/^data:image\/jpeg;base64,/, "").trim().replace(/\s+/g, "");
+    } else if (pdfBase64OrText.includes("data:image/webp;base64,")) {
+      mimeType = "image/webp";
+      rawBase64 = pdfBase64OrText.replace(/^data:image\/webp;base64,/, "").trim().replace(/\s+/g, "");
+    } else {
+      mimeType = "application/pdf";
+      rawBase64 = pdfBase64OrText.replace(/^data:application\/pdf;base64,/, "").trim().replace(/\s+/g, "");
+    }
   } else {
     plainText = pdfBase64OrText;
   }
@@ -330,7 +353,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
   if (isBase64Pdf && rawBase64) {
     requestParts.push({
       inlineData: {
-        mimeType: "application/pdf",
+        mimeType: mimeType,
         data: rawBase64,
       },
     });
@@ -340,7 +363,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
     text: isBase64Pdf ? promptText : `${promptText}\n\nDOCUMENT TEXT:\n${plainText.slice(0, 50000)}`,
   });
 
-  const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
+  const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-flash-latest"];
   let rawJson = "[]";
 
   keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {

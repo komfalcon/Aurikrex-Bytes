@@ -210,9 +210,9 @@ export function NewPostPage() {
 
       {mode === "pdf" && !editId && (
         <section className="table-card image-upload-card" style={{ padding: "2rem" }}>
-          <h3>📄 Upload Multi-Story PDF Document</h3>
+          <h3>📄 Upload Multi-Story PDF or Image Document</h3>
           <p className="muted" style={{ marginBottom: "1.5rem" }}>
-            Falke AI will scan your document, extract up to 20+ distinct news stories, attach high-resolution cover imagery, and bulk-save them as drafts in your newsroom inbox.
+            Falke AI will scan your PDF document or image card screenshot, extract up to 20+ distinct news stories, attach high-resolution cover imagery, and bulk-save them as drafts in your newsroom inbox.
           </p>
 
           {pdfSuccessCount !== null ? (
@@ -225,11 +225,11 @@ export function NewPostPage() {
             </div>
           ) : (
             <label className="upload-zone" style={{ cursor: pdfUploading ? "wait" : "pointer" }}>
-              <input type="file" accept=".pdf,application/pdf" onChange={handlePdfUpload} disabled={pdfUploading} />
+              <input type="file" accept=".pdf,application/pdf,image/*" onChange={handlePdfUpload} disabled={pdfUploading} />
               <span className="upload-prompt">
                 <UploadCloud size={36} style={{ marginBottom: "0.5rem", color: "var(--color-primary)" }} />
-                <strong>{pdfUploading ? "Falke AI is parsing PDF & extracting stories…" : "Choose a PDF file to upload"}</strong>
-                <small>Upload documents containing 20+ news items or reports</small>
+                <strong>{pdfUploading ? "Falke AI is parsing document & extracting stories…" : "Choose a PDF or Image file to upload"}</strong>
+                <small>Upload PDF documents or image card screenshots containing news items</small>
               </span>
             </label>
           )}
