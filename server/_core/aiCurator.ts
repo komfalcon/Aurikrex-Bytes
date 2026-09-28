@@ -267,11 +267,15 @@ export async function extractSourceArticleImage(url: string): Promise<string | n
   }
 }
 
-async function fetchRssCandidates(start: Date, end: Date): Promise<NewsCandidate[]> {
+async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
   const feeds = [
     { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
     { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" },
     { name: "TechCrunch", url: "https://techcrunch.com/feed/" },
+    { name: "Wired", url: "https://www.wired.com/feed/rss" },
+    { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
+    { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
+    { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" },
   ];
 
   const results: NewsCandidate[] = [];
@@ -288,10 +292,9 @@ async function fetchRssCandidates(start: Date, end: Date): Promise<NewsCandidate
       if (!res.ok) continue;
 
       const xml = await res.text();
-      // Match item or entry tags
       const items = xml.match(/<(?:item|entry)[\s\S]*?<\/(?:item|entry)>/gi) || [];
 
-      for (const itemXml of items.slice(0, 15)) {
+      for (const itemXml of items.slice(0, 20)) {
         const titleMatch = itemXml.match(/<title(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
         const linkMatch =
           itemXml.match(/<link[^>]+href=["']([^"']+)["']/i) ||
@@ -323,6 +326,8 @@ async function fetchRssCandidates(start: Date, end: Date): Promise<NewsCandidate
 
         const cleanedTitle = cleanHeadline(rawTitle);
         const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
+        if (excludeKeys.has(duplicateKey)) continue;
+
         const mediaUrl = mediaMatch ? mediaMatch[1].trim() : null;
 
         results.push({
@@ -342,12 +347,10 @@ async function fetchRssCandidates(start: Date, end: Date): Promise<NewsCandidate
   return results;
 }
 
-async function fetchTodayCandidates(): Promise<NewsCandidate[]> {
-  const { start, end } = getTodayWindow();
+async function fetchCandidatesForTimeframe(start: Date, end: Date, excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
   const startSec = Math.floor(start.getTime() / 1000);
   const endSec = Math.floor(end.getTime() / 1000);
 
-  // 1. Fetch from Hacker News Algolia API with server-side date & quality filters
   const hnQueries = [
     `tags=front_page&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=35`,
     `query=AI%20OR%20LLM&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
@@ -365,20 +368,19 @@ async function fetchTodayCandidates(): Promise<NewsCandidate[]> {
     }
   });
 
-  // 2. Concurrently fetch primary tech RSS feeds
   const [hnResults, rssCandidates] = await Promise.all([
     Promise.all(hnPromises),
-    fetchRssCandidates(start, end),
+    fetchRssCandidates(start, end, excludeKeys),
   ]);
 
   const candidates = new Map<string, NewsCandidate>();
 
-  // Add RSS candidates first (high journalistic credibility)
   for (const item of rssCandidates) {
-    candidates.set(item.duplicateKey, item);
+    if (!excludeKeys.has(item.duplicateKey)) {
+      candidates.set(item.duplicateKey, item);
+    }
   }
 
-  // Add HN candidates
   for (const result of hnResults) {
     for (const hit of result.hits || []) {
       const publishedAt = new Date(Number(hit.created_at_i) * 1000);
@@ -398,7 +400,7 @@ async function fetchTodayCandidates(): Promise<NewsCandidate[]> {
 
       const cleanedTitle = cleanHeadline(rawTitle);
       const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
-      if (!candidates.has(duplicateKey)) {
+      if (!excludeKeys.has(duplicateKey) && !candidates.has(duplicateKey)) {
         candidates.set(duplicateKey, {
           title: cleanedTitle,
           url,
@@ -414,6 +416,23 @@ async function fetchTodayCandidates(): Promise<NewsCandidate[]> {
   return Array.from(candidates.values())
     .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
     .slice(0, 30);
+}
+
+export async function fetchTodayCandidates(excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
+  const now = new Date();
+  const { start, end } = getTodayWindow(now);
+
+  // 1. Fetch uncurated candidates for today's window
+  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys);
+
+  // 2. If fewer than 15 uncurated candidates in today's window, expand search window to 72 hours
+  if (candidates.length < 15) {
+    const past72h = new Date(now.getTime() - 72 * 3600 * 1000);
+    console.info(`[AICurator] Found ${candidates.length} uncurated candidates today. Expanding search window to 72 hours...`);
+    candidates = await fetchCandidatesForTimeframe(past72h, now, excludeKeys);
+  }
+
+  return candidates;
 }
 
 function imageQuery(title: string): string {
@@ -452,12 +471,12 @@ export function clampEditorialBrief(
   return text;
 }
 
-export async function curateTenBytes(): Promise<CuratedByte[]> {
+export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<CuratedByte[]> {
   let candidates: NewsCandidate[];
   try {
-    candidates = await fetchTodayCandidates();
+    candidates = await fetchTodayCandidates(excludeKeys);
   } catch (error) {
-    console.error("[AICurator] Today-only news retrieval failed", error);
+    console.error("[AICurator] News candidate retrieval failed", error);
     return [];
   }
   if (!candidates.length) return [];
@@ -710,16 +729,18 @@ ${JSON.stringify(
 export async function runNightlyCuration(status: "draft" | "published" = "draft"): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
-  const bytes = await curateTenBytes();
+
+  // 1. Fetch all existing duplicate keys from database to exclude prior curated stories
+  const existingPosts = await db.select({ duplicateKey: posts.duplicateKey }).from(posts);
+  const excludeKeys = new Set(existingPosts.map(p => p.duplicateKey).filter((k): k is string => Boolean(k)));
+
+  // 2. Curate 10 uncurated Bytes
+  const bytes = await curateTenBytes(excludeKeys);
   if (!bytes.length) return 0;
-  const duplicateKeys = bytes.map(byte => byte.duplicateKey).filter((key): key is string => Boolean(key));
-  const existing = duplicateKeys.length
-    ? await db.select({ duplicateKey: posts.duplicateKey }).from(posts).where(inArray(posts.duplicateKey, duplicateKeys))
-    : [];
-  const used = new Set(existing.map(post => post.duplicateKey).filter(Boolean));
+
   let count = 0;
   for (const byte of bytes) {
-    if (!byte.duplicateKey || used.has(byte.duplicateKey)) continue;
+    if (!byte.duplicateKey || excludeKeys.has(byte.duplicateKey)) continue;
     try {
       await db.insert(posts).values({
         headline: byte.headline,
@@ -736,7 +757,7 @@ export async function runNightlyCuration(status: "draft" | "published" = "draft"
         imageQuery: byte.imageQuery,
         imageProvenance: byte.imageProvenance,
       });
-      used.add(byte.duplicateKey);
+      excludeKeys.add(byte.duplicateKey);
       count++;
     } catch (error) {
       console.error(`[AICurator] Skipping duplicate or failed insert for ${byte.sourceUrl}`, error);
