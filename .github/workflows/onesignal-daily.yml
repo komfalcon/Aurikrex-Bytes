@@ -6,7 +6,7 @@ on:
     # 06:50 UTC (07:50 AM WAT) -> synchronizes and fires at exact 08:00:00 AM WAT (07:00:00 UTC)
     - cron: "20 4 * * *"
     # 20:50 UTC (09:50 PM WAT) -> synchronizes and fires at exact 10:00:00 PM WAT (21:00:00 UTC)
-    - cron: "50 20 * * *"
+    - cron: "50 16 * * *"
   workflow_dispatch:
 
 permissions:
