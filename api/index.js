@@ -1293,15 +1293,17 @@ CRITICAL EDITORIAL RULES:
 3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 650 and 750 characters (excluding headline).
 4. Headline: Crisp, punchy, active voice, under 90 characters. Never include source tags like "Show HN:" or publisher names.
 5. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
-6. Return a valid JSON array of objects with:
-   [
-     {
-       "headline": "...",
-       "body": "...",
-       "category": "Tech",
-       "sourceUrl": "exact match to candidate url"
-     }
-   ]
+6. Return a valid JSON object containing a "stories" array:
+   {
+     "stories": [
+       {
+         "headline": "Crisp Headline",
+         "body": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...",
+         "category": "Tech",
+         "sourceUrl": "exact match to candidate url"
+       }
+     ]
+   }
 
 CANDIDATES:
 ${JSON.stringify(
@@ -1345,7 +1347,7 @@ ${JSON.stringify(
     }
   }
   if ((!rawJson || rawJson === "[]") && apiKeys.length > 0) {
-    const modelCandidates = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
+    const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-flash-latest"];
     keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
       const apiKey = apiKeys[keyIdx];
       const keyLabel = `Key #${keyIdx + 1}${keyIdx > 0 ? " (fallback)" : " (primary)"}`;
@@ -1396,9 +1398,16 @@ ${JSON.stringify(
   try {
     const cleanedJson = rawJson.replace(/```json|```/g, "").trim();
     const jsonObj = JSON.parse(cleanedJson);
-    parsed = Array.isArray(jsonObj) ? jsonObj : jsonObj.bytes || jsonObj.stories || jsonObj.candidates || jsonObj.briefs || [];
-    if (!Array.isArray(parsed)) parsed = [];
-  } catch {
+    if (Array.isArray(jsonObj)) {
+      parsed = jsonObj;
+    } else if (typeof jsonObj === "object" && jsonObj !== null) {
+      const arrayKey = Object.keys(jsonObj).find((k) => Array.isArray(jsonObj[k]));
+      if (arrayKey) {
+        parsed = jsonObj[arrayKey];
+      }
+    }
+  } catch (err) {
+    console.warn("[AICurator] Failed to parse JSON from AI response:", err);
     parsed = [];
   }
   const byUrl = new Map(candidates.map((candidate) => [canonicalizeUrl(candidate.url), candidate]));
@@ -2923,7 +2932,7 @@ var appRouter = router({
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:create");
       const { runNightlyCuration: runNightlyCuration2 } = await Promise.resolve().then(() => (init_aiCurator(), aiCurator_exports));
-      const count = await runNightlyCuration2("published");
+      const count = await runNightlyCuration2("draft");
       return { success: true, count };
     }),
     ingestPdf: publicProcedure.input(z2.object({ pdfContent: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
