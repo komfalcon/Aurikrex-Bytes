@@ -1406,7 +1406,15 @@ EDITORIAL RULES:
     }
   }
   if (apiKeys.length > 0) {
-    const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-flash-latest"];
+    const modelCandidates = [
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+      "gemini-2.0-flash-exp",
+      "gemini-2.0-flash-001",
+      "gemini-1.5-flash-latest",
+      "gemini-1.5-pro-latest",
+      "gemini-flash-latest"
+    ];
     for (const apiKey of apiKeys) {
       for (const model of modelCandidates) {
         try {
@@ -1876,7 +1884,15 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
 DOCUMENT TEXT:
 ${plainText.slice(0, 5e4)}`
   });
-  const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-flash-latest"];
+  const modelCandidates = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash-exp",
+    "gemini-2.0-flash-001",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro-latest",
+    "gemini-flash-latest"
+  ];
   let rawJson = "[]";
   keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
     const apiKey = apiKeys[keyIdx];
