@@ -4,6 +4,7 @@ import { Sparkles, FileText, UploadCloud, CheckCircle2, ArrowRight } from "lucid
 import { trpc } from "../lib/trpc";
 import NotFound from "../pages/NotFound";
 import { AdminFrame } from "./AdminPages";
+import { FormattedBody } from "@/components/FormattedBody";
 
 const HEADLINE_LIMIT = 120;
 const BODY_LIMIT = 1200;
@@ -175,7 +176,7 @@ export function NewPostPage() {
         <div>
           <p className="eyebrow">Editorial desk</p>
           <h1>{editId ? "Edit Post" : "New Post & AI Curation"}</h1>
-          <p className="muted">Create single news cards manually, upload a multi-story PDF, or trigger Gemini AI auto-curation.</p>
+          <p className="muted">Create single news cards manually, upload a multi-story PDF, or trigger Falcon AI auto-curation.</p>
         </div>
       </header>
 
@@ -201,7 +202,7 @@ export function NewPostPage() {
               className={`button ${mode === "ai" ? "" : "button-outline"}`}
               onClick={() => setMode("ai")}
             >
-              <Sparkles size={16} /> Curate 10 Bytes Now (Gemini AI)
+              <Sparkles size={16} /> Curate 10 Bytes Now (Falcon AI)
             </button>
           </div>
         </section>
@@ -211,7 +212,7 @@ export function NewPostPage() {
         <section className="table-card image-upload-card" style={{ padding: "2rem" }}>
           <h3>📄 Upload Multi-Story PDF Document</h3>
           <p className="muted" style={{ marginBottom: "1.5rem" }}>
-            Gemini AI will scan your document, extract up to 20+ distinct news stories, attach high-resolution cover imagery, and bulk-save them as drafts in your newsroom inbox.
+            Falcon AI will scan your document, extract up to 20+ distinct news stories, attach high-resolution cover imagery, and bulk-save them as drafts in your newsroom inbox.
           </p>
 
           {pdfSuccessCount !== null ? (
@@ -227,7 +228,7 @@ export function NewPostPage() {
               <input type="file" accept=".pdf,application/pdf" onChange={handlePdfUpload} disabled={pdfUploading} />
               <span className="upload-prompt">
                 <UploadCloud size={36} style={{ marginBottom: "0.5rem", color: "var(--color-primary)" }} />
-                <strong>{pdfUploading ? "Gemini AI is parsing PDF & extracting stories…" : "Choose a PDF file to upload"}</strong>
+                <strong>{pdfUploading ? "Falcon AI is parsing PDF & extracting stories…" : "Choose a PDF file to upload"}</strong>
                 <small>Upload documents containing 20+ news items or reports</small>
               </span>
             </label>
@@ -239,9 +240,9 @@ export function NewPostPage() {
 
       {mode === "ai" && !editId && (
         <section className="table-card" style={{ padding: "2rem" }}>
-          <h3>✦ Gemini AI 10-Byte Daily Curation Drop</h3>
+          <h3>✦ Falcon AI 10-Byte Daily Curation Drop</h3>
           <p className="muted" style={{ marginBottom: "1.5rem" }}>
-            Click below to immediately trigger Gemini AI. It will analyze current technology, AI, science, and world developments to generate 10 fresh Bytes with high-resolution Unsplash photos.
+            Click below to immediately trigger Falcon AI. It will analyze current technology, AI, science, and world developments to generate 10 fresh Bytes with high-resolution photos.
           </p>
 
           {aiSuccessCount !== null ? (
@@ -260,7 +261,7 @@ export function NewPostPage() {
               disabled={aiRunning}
               style={{ padding: "1rem", fontSize: "1.05rem" }}
             >
-              <Sparkles size={18} /> {aiRunning ? "Gemini AI is curating 10 Bytes..." : "Run 10-Byte Gemini AI Curation Drop Now"}
+              <Sparkles size={18} /> {aiRunning ? "Falcon AI is curating 10 Bytes..." : "Run 10-Byte Falcon AI Curation Drop Now"}
             </button>
           )}
 
@@ -412,7 +413,7 @@ export function PreviewPage() {
         <div className="wysiwyg-copy">
           <p className="eyebrow">Aurikrex Bytes</p>
           <h2>{item.headline}</h2>
-          <p>{item.body}</p>
+          <FormattedBody body={item.body} />
         </div>
       </div>
       <div className="preview-controls">

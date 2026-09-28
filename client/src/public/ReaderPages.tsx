@@ -37,6 +37,7 @@ import { PushSubscribeButton } from "@/components/PushSubscribeButton";
 import { useTheme } from "@/contexts/ThemeContext";
 import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
 import Seo from "@/components/Seo";
+import { FormattedBody, FormattedInlineText } from "@/components/FormattedBody";
 
 const getInitial = (nameOrEmail?: string | null) => {
   if (!nameOrEmail) return "U";
@@ -872,7 +873,7 @@ function PostCard({
             )}
           </div>
           <h2>{post.headline}</h2>
-          <p>{excerpt(post.body)}</p>
+          <p><FormattedInlineText text={excerpt(post.body)} /></p>
           <span className="read-more">
             {isRead ? "Read again" : "Read story"} <ArrowRight size={15} />
           </span>
@@ -1512,13 +1513,7 @@ export function PostDetail() {
                 fetchPriority="high"
               />
             )}
-            <div className="detail-body">
-              {post.data.body
-                .split(/\n+/)
-                .map((paragraph: string, i: number) => (
-                  <p key={i}>{paragraph}</p>
-                ))}
-            </div>
+            <FormattedBody body={post.data.body} className="detail-body" />
             <div className="detail-actions"><EngagementActions post={detailPost || post.data} /></div>
           </article>
         ) : (

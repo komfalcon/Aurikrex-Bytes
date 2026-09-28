@@ -5,6 +5,7 @@ import { trpc } from "../lib/trpc";
 import { Logo } from "../public/ReaderPages";
 import { useTheme } from "../contexts/ThemeContext";
 import NotFound from "../pages/NotFound";
+import { FormattedInlineText } from "@/components/FormattedBody";
 
 function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
@@ -583,7 +584,7 @@ export function AdminDashboard() {
                     <Link href={`/admin/preview/${post.id}`}>
                       <strong>{post.headline}</strong>
                     </Link>
-                    <small>{post.body.slice(0, 90)}{post.body.length > 90 ? "…" : ""}</small>
+                    <small><FormattedInlineText text={post.body.slice(0, 90) + (post.body.length > 90 ? "…" : "")} /></small>
                   </div>
                 </div>
 
