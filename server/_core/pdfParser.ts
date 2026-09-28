@@ -1,4 +1,4 @@
-import { CuratedByte, cleanHeadline, clampEditorialBrief } from "./aiCurator.js";
+import { CuratedByte, cleanHeadline, clampEditorialBrief, parseAiJsonResponse } from "./aiCurator.js";
 import { cloudinaryConfigured } from "../services.js";
 import { getAiApiKeys, getNvidiaApiKey } from "./aiKeys.js";
 import { generateNvidiaFluxImage } from "./imageGeneration.js";
@@ -404,55 +404,57 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
     }
   }
 
-  let parsed: any[] = [];
-  try {
-    const cleanJson = rawJson.replace(/```json|```/g, "").trim();
-    parsed = JSON.parse(cleanJson);
-    if (!Array.isArray(parsed)) parsed = [];
-  } catch {
-    parsed = [];
-  }
+  const parsed = parseAiJsonResponse(rawJson);
 
   if (!parsed.length) {
-    throw new Error("Gemini was unable to extract news stories from this document. Please ensure the PDF contains readable text or news cards.");
+    throw new Error("Falcon AI was unable to extract news stories from this document. Please ensure the PDF contains readable text or news cards.");
   }
 
-  const results: CuratedByte[] = [];
-
-  for (let idx = 0; idx < parsed.length; idx++) {
-    const item = parsed[idx];
+  const draftItems = parsed.map((item: any, idx: number) => {
     let bodyText = String(item.body || "").trim();
 
     // Remove any accidental raw PDF binary tokens
     if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) {
-      bodyText = "This article details major technological updates extracted from the source publication, covering market implications, operational frameworks, and strategic developments across industry sectors.";
+      bodyText = "";
     }
 
     const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${idx + 1}`)).slice(0, 120);
     const category = String(item.category || "Tech");
 
-    // Strictly enforce 600-800 character boundary without duplication
-    bodyText = clampEditorialBrief(bodyText, {
+    const finalBody = clampEditorialBrief(bodyText || cleanTitle, {
       publisher: item.source || "Tech Wire",
       publishedAt: new Date(),
     });
 
-    // Recreate image: Tier 1 via Imagen, Tier 2 via dynamic topic card
-    let imageUrl: string | null = null;
-    if (item.imagePrompt) {
-      imageUrl = await generateAiRecreatedImage(item.imagePrompt, apiKeys);
-    }
-    if (!imageUrl) {
-      imageUrl = generateDynamicByteCard(cleanTitle, category, item.source);
-    }
-
-    results.push({
-      headline: cleanTitle,
-      body: bodyText,
+    return {
+      cleanTitle,
+      finalBody,
       category,
-      imageUrl,
-    });
-  }
+      source: item.source,
+      imagePrompt: item.imagePrompt,
+    };
+  });
+
+  console.info(`[PDFParser] Extracted ${draftItems.length} stories. Resolving cover images in parallel...`);
+
+  const results: CuratedByte[] = await Promise.all(
+    draftItems.map(async (draft) => {
+      let imageUrl: string | null = null;
+      if (draft.imagePrompt) {
+        imageUrl = await generateAiRecreatedImage(draft.imagePrompt, apiKeys);
+      }
+      if (!imageUrl) {
+        imageUrl = generateDynamicByteCard(draft.cleanTitle, draft.category, draft.source);
+      }
+
+      return {
+        headline: draft.cleanTitle,
+        body: draft.finalBody,
+        category: draft.category,
+        imageUrl,
+      };
+    })
+  );
 
   return results;
 }

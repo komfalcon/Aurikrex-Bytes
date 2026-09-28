@@ -1913,44 +1913,47 @@ ${plainText.slice(0, 5e4)}`
       }
     }
   }
-  let parsed = [];
-  try {
-    const cleanJson = rawJson.replace(/```json|```/g, "").trim();
-    parsed = JSON.parse(cleanJson);
-    if (!Array.isArray(parsed)) parsed = [];
-  } catch {
-    parsed = [];
-  }
+  const parsed = parseAiJsonResponse(rawJson);
   if (!parsed.length) {
-    throw new Error("Gemini was unable to extract news stories from this document. Please ensure the PDF contains readable text or news cards.");
+    throw new Error("Falcon AI was unable to extract news stories from this document. Please ensure the PDF contains readable text or news cards.");
   }
-  const results = [];
-  for (let idx = 0; idx < parsed.length; idx++) {
-    const item = parsed[idx];
+  const draftItems = parsed.map((item, idx) => {
     let bodyText = String(item.body || "").trim();
     if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) {
-      bodyText = "This article details major technological updates extracted from the source publication, covering market implications, operational frameworks, and strategic developments across industry sectors.";
+      bodyText = "";
     }
     const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${idx + 1}`)).slice(0, 120);
     const category = String(item.category || "Tech");
-    bodyText = clampEditorialBrief(bodyText, {
+    const finalBody = clampEditorialBrief(bodyText || cleanTitle, {
       publisher: item.source || "Tech Wire",
       publishedAt: /* @__PURE__ */ new Date()
     });
-    let imageUrl = null;
-    if (item.imagePrompt) {
-      imageUrl = await generateAiRecreatedImage(item.imagePrompt, apiKeys);
-    }
-    if (!imageUrl) {
-      imageUrl = generateDynamicByteCard(cleanTitle, category, item.source);
-    }
-    results.push({
-      headline: cleanTitle,
-      body: bodyText,
+    return {
+      cleanTitle,
+      finalBody,
       category,
-      imageUrl
-    });
-  }
+      source: item.source,
+      imagePrompt: item.imagePrompt
+    };
+  });
+  console.info(`[PDFParser] Extracted ${draftItems.length} stories. Resolving cover images in parallel...`);
+  const results = await Promise.all(
+    draftItems.map(async (draft) => {
+      let imageUrl = null;
+      if (draft.imagePrompt) {
+        imageUrl = await generateAiRecreatedImage(draft.imagePrompt, apiKeys);
+      }
+      if (!imageUrl) {
+        imageUrl = generateDynamicByteCard(draft.cleanTitle, draft.category, draft.source);
+      }
+      return {
+        headline: draft.cleanTitle,
+        body: draft.finalBody,
+        category: draft.category,
+        imageUrl
+      };
+    })
+  );
   return results;
 }
 var init_pdfParser = __esm({
