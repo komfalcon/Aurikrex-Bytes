@@ -139,14 +139,15 @@ export function NewPostPage() {
           void utils.admin.posts.invalidate();
           setTimeout(() => navigate("/admin"), 1500);
         } catch (err) {
-          setPdfError(err instanceof Error ? err.message : "Failed to parse PDF with Gemini AI");
+          const msg = err instanceof Error ? err.message : "Failed to parse document with Falke AI";
+          setPdfError(msg.startsWith("Unexpected token") ? "Falke AI ingestion service returned an error. Please try again or check API keys." : msg);
         } finally {
           setPdfUploading(false);
         }
       };
       reader.readAsDataURL(file);
     } catch (err) {
-      setPdfError("Error reading PDF file");
+      setPdfError("Error reading file");
       setPdfUploading(false);
     }
   }
