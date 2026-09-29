@@ -233,6 +233,31 @@ async function generateAiRecreatedImage(prompt: string): Promise<string | null> 
   return null;
 }
 
+function extractPdfText(rawBase64: string): string {
+  try {
+    const buf = Buffer.from(rawBase64, "base64");
+    const str = buf.toString("latin1");
+    const matches: string[] = [];
+    const textBlocks = str.match(/\((?:[^()\\]|\\.)*\)/g) || [];
+    for (const match of textBlocks) {
+      const cleaned = match
+        .slice(1, -1)
+        .replace(/\\([()])/g, "$1")
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .trim();
+      if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
+        matches.push(cleaned);
+      }
+    }
+    const extracted = matches.join(" ");
+    if (extracted.length > 30) return extracted;
+  } catch {
+    // ignore
+  }
+  return "";
+}
+
 export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedByte[]> {
   let isBase64Pdf = false;
   let mimeType = "application/pdf";
@@ -286,6 +311,12 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
     ];
   }
 
+  const isImage = isBase64Pdf && mimeType.startsWith("image/");
+  let documentText = plainText;
+  if (isBase64Pdf && !isImage && rawBase64) {
+    documentText = extractPdfText(rawBase64) || plainText;
+  }
+
   const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.tech).
 You are analyzing an uploaded multi-story document / PDF (each page contains a distinct mobile news card with an image at the top, a headline, a summary, and a publisher source at the bottom).
 
@@ -306,29 +337,20 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
 
   let rawJson = "[]";
 
-  // 1. Primary Multimodal Provider: Mistral AI (Pixtral / Mistral Large)
+  // 1. Primary Provider: Mistral AI
   if (mistralKey) {
-    const mistralModels = ["pixtral-large-latest", "pixtral-12b-2409", "mistral-large-latest", "mistral-small-latest"];
+    const mistralModels = isImage
+      ? ["pixtral-large-latest", "pixtral-12b-2409"]
+      : ["mistral-large-latest", "mistral-small-latest", "open-mixtral-8x7b"];
+
     for (const model of mistralModels) {
       try {
-        const messages: any[] = [
-          { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
-        ];
-
-        if (isBase64Pdf && rawBase64) {
-          messages.push({
-            role: "user",
-            content: [
+        const userContent = isImage
+          ? [
               { type: "text", text: promptText },
               { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` },
-            ],
-          });
-        } else {
-          messages.push({
-            role: "user",
-            content: `${promptText}\n\nDOCUMENT TEXT:\n${plainText.slice(0, 50000)}`,
-          });
-        }
+            ]
+          : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
 
         const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
@@ -340,7 +362,10 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
           body: JSON.stringify({
             model,
             response_format: { type: "json_object" },
-            messages,
+            messages: [
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              { role: "user", content: userContent },
+            ],
             temperature: 0.3,
             max_tokens: 3500,
           }),
@@ -363,32 +388,20 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
     }
   }
 
-  // 2. Secondary Multimodal Provider: NVIDIA AI NIM (Llama 3.2 90b Vision / Llama 3.3 70b)
+  // 2. Secondary Provider: NVIDIA AI NIM
   if ((!rawJson || rawJson === "[]") && nvidiaKey) {
-    const nvidiaModels = isBase64Pdf
+    const nvidiaModels = isImage
       ? ["meta/llama-3.2-90b-vision-instruct"]
       : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct"];
 
     for (const model of nvidiaModels) {
       try {
-        const messages: any[] = [
-          { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
-        ];
-
-        if (isBase64Pdf && rawBase64) {
-          messages.push({
-            role: "user",
-            content: [
+        const userContent = isImage
+          ? [
               { type: "text", text: promptText },
               { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } },
-            ],
-          });
-        } else {
-          messages.push({
-            role: "user",
-            content: `${promptText}\n\nDOCUMENT TEXT:\n${plainText.slice(0, 50000)}`,
-          });
-        }
+            ]
+          : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
 
         const response = await fetch("https://ai.api.nvidia.com/v1/chat/completions", {
           method: "POST",
@@ -399,7 +412,10 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
           },
           body: JSON.stringify({
             model,
-            messages,
+            messages: [
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              { role: "user", content: userContent },
+            ],
             temperature: 0.3,
             max_tokens: 3500,
           }),

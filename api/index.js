@@ -1712,6 +1712,24 @@ async function generateAiRecreatedImage(prompt) {
   }
   return null;
 }
+function extractPdfText(rawBase64) {
+  try {
+    const buf = Buffer.from(rawBase64, "base64");
+    const str = buf.toString("latin1");
+    const matches = [];
+    const textBlocks = str.match(/\((?:[^()\\]|\\.)*\)/g) || [];
+    for (const match of textBlocks) {
+      const cleaned = match.slice(1, -1).replace(/\\([()])/g, "$1").replace(/\\n/g, "\n").replace(/\\r/g, "\r").trim();
+      if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
+        matches.push(cleaned);
+      }
+    }
+    const extracted = matches.join(" ");
+    if (extracted.length > 30) return extracted;
+  } catch {
+  }
+  return "";
+}
 async function parsePdfToBytes(pdfBase64OrText) {
   let isBase64Pdf = false;
   let mimeType = "application/pdf";
@@ -1757,6 +1775,11 @@ async function parsePdfToBytes(pdfBase64OrText) {
       }
     ];
   }
+  const isImage = isBase64Pdf && mimeType.startsWith("image/");
+  let documentText = plainText;
+  if (isBase64Pdf && !isImage && rawBase64) {
+    documentText = extractPdfText(rawBase64) || plainText;
+  }
   const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.tech).
 You are analyzing an uploaded multi-story document / PDF (each page contains a distinct mobile news card with an image at the top, a headline, a summary, and a publisher source at the bottom).
 
@@ -1776,29 +1799,16 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
 7. "source": Extract the publisher / source name indicated at the bottom of the card (e.g., "Electrek", "The New York Times", "Nikkei Asia", "GitHub", "NewsBytes").`;
   let rawJson = "[]";
   if (mistralKey) {
-    const mistralModels = ["pixtral-large-latest", "pixtral-12b-2409", "mistral-large-latest", "mistral-small-latest"];
+    const mistralModels = isImage ? ["pixtral-large-latest", "pixtral-12b-2409"] : ["mistral-large-latest", "mistral-small-latest", "open-mixtral-8x7b"];
     for (const model of mistralModels) {
       try {
-        const messages = [
-          { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." }
-        ];
-        if (isBase64Pdf && rawBase64) {
-          messages.push({
-            role: "user",
-            content: [
-              { type: "text", text: promptText },
-              { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }
-            ]
-          });
-        } else {
-          messages.push({
-            role: "user",
-            content: `${promptText}
+        const userContent = isImage ? [
+          { type: "text", text: promptText },
+          { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }
+        ] : `${promptText}
 
 DOCUMENT TEXT:
-${plainText.slice(0, 5e4)}`
-          });
-        }
+${documentText.slice(0, 5e4)}`;
         const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -1809,7 +1819,10 @@ ${plainText.slice(0, 5e4)}`
           body: JSON.stringify({
             model,
             response_format: { type: "json_object" },
-            messages,
+            messages: [
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              { role: "user", content: userContent }
+            ],
             temperature: 0.3,
             max_tokens: 3500
           })
@@ -1831,29 +1844,16 @@ ${plainText.slice(0, 5e4)}`
     }
   }
   if ((!rawJson || rawJson === "[]") && nvidiaKey) {
-    const nvidiaModels = isBase64Pdf ? ["meta/llama-3.2-90b-vision-instruct"] : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct"];
+    const nvidiaModels = isImage ? ["meta/llama-3.2-90b-vision-instruct"] : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct"];
     for (const model of nvidiaModels) {
       try {
-        const messages = [
-          { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." }
-        ];
-        if (isBase64Pdf && rawBase64) {
-          messages.push({
-            role: "user",
-            content: [
-              { type: "text", text: promptText },
-              { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } }
-            ]
-          });
-        } else {
-          messages.push({
-            role: "user",
-            content: `${promptText}
+        const userContent = isImage ? [
+          { type: "text", text: promptText },
+          { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } }
+        ] : `${promptText}
 
 DOCUMENT TEXT:
-${plainText.slice(0, 5e4)}`
-          });
-        }
+${documentText.slice(0, 5e4)}`;
         const response = await fetch("https://ai.api.nvidia.com/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -1863,7 +1863,10 @@ ${plainText.slice(0, 5e4)}`
           },
           body: JSON.stringify({
             model,
-            messages,
+            messages: [
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              { role: "user", content: userContent }
+            ],
             temperature: 0.3,
             max_tokens: 3500
           })
