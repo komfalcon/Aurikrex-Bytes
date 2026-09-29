@@ -568,7 +568,7 @@ export function parseAiJsonResponse(rawJson: string): any[] {
 async function generateSingleCandidateBrief(
   candidate: NewsCandidate,
   mistralKey: string,
-  apiKeys: string[]
+  nvidiaKey: string
 ): Promise<{ headline: string; body: string; category: string } | null> {
   const prompt = `You are the executive tech editor for Aurikrex Bytes.
 Write an authoritative, high-signal 3-paragraph editorial brief for this verified news story.
@@ -644,60 +644,49 @@ EDITORIAL RULES:
     }
   }
 
-  // 2. Fallback LLM Provider: Gemini Multi-Key & Multi-Model Cascade
-  if (apiKeys.length > 0) {
-    const modelCandidates = [
-      "gemini-2.5-flash",
-      "gemini-2.5-pro",
-      "gemini-2.0-flash-exp",
-      "gemini-2.0-flash-001",
-      "gemini-1.5-flash-latest",
-      "gemini-1.5-pro-latest",
-      "gemini-flash-latest",
-    ];
-    for (const apiKey of apiKeys) {
-      for (const model of modelCandidates) {
-        try {
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-goog-api-key": apiKey,
-              },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                  responseMimeType: "application/json",
-                  temperature: 0.3,
-                  maxOutputTokens: 1000,
-                },
-              }),
-            }
-          );
+  // 2. Fallback LLM Provider: NVIDIA AI NIM (Llama 3.3 70b)
+  if (nvidiaKey) {
+    const nvidiaModels = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct"];
+    for (const model of nvidiaModels) {
+      try {
+        const response = await fetch("https://ai.api.nvidia.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${nvidiaKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+              { role: "user", content: prompt },
+            ],
+            temperature: 0.3,
+            max_tokens: 1000,
+          }),
+        });
 
-          if (response.ok) {
-            const resData = await response.json();
-            const content = resData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-            const parsed = parseAiJsonResponse(content);
-            if (parsed && parsed.length > 0) {
-              const item = parsed[0];
-              const headline = extractAiHeadline(item, candidate.title);
-              const rawBody = extractAiBody(item);
-              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-                ? String(item.category)
-                : "Tech";
+        if (response.ok) {
+          const resData = await response.json();
+          const content = resData.choices?.[0]?.message?.content || "";
+          const parsed = parseAiJsonResponse(content);
+          if (parsed && parsed.length > 0) {
+            const item = parsed[0];
+            const headline = extractAiHeadline(item, candidate.title);
+            const rawBody = extractAiBody(item);
+            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
+              ? String(item.category)
+              : "Tech";
 
-              if (headline && body && body.length > 100) {
-                return { headline, body, category };
-              }
+            if (headline && body && body.length > 100) {
+              return { headline, body, category };
             }
           }
-        } catch {
-          // Fall through to next model
         }
+      } catch {
+        // Fall through to next model
       }
     }
   }
@@ -715,12 +704,12 @@ export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<C
   }
   if (!candidates.length) return [];
 
-  const apiKeys = getAiApiKeys();
   const mistralKey = getMistralApiKey();
+  const nvidiaKey = getNvidiaApiKey();
 
-  if (!apiKeys.length && !mistralKey) {
+  if (!mistralKey && !nvidiaKey) {
     console.warn(
-      "[AICurator] No AI API key (GEMINI_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY) configured. Skipping curation."
+      "[AICurator] No AI API key (MISTRAL_API_KEY, NVIDIA_API_KEY) configured. Skipping curation."
     );
     return [];
   }
@@ -744,7 +733,7 @@ export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<C
       chunk.map(async (candidate) => {
         if (seen.has(candidate.duplicateKey)) return null;
         seen.add(candidate.duplicateKey);
-        const brief = await generateSingleCandidateBrief(candidate, mistralKey, apiKeys);
+        const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey);
         if (!brief) return null;
         return {
           candidate,

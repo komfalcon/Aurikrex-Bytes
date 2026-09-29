@@ -32,17 +32,12 @@ describe("Multi-Story PDF AI Engine", () => {
     expect(decoded).toContain("VIA ELECTREK");
   });
 
-  it("provides graceful fallback response when API key is not configured", async () => {
+  it("provides graceful fallback response when AI key is not configured", async () => {
     const origKeys: Record<string, string | undefined> = {
-      GEMINI_API_KEY: process.env.GEMINI_API_KEY,
-      GEMINI_API_KEY_2: process.env.GEMINI_API_KEY_2,
-      GEMINI_API_KEY_SECONDARY: process.env.GEMINI_API_KEY_SECONDARY,
-      GEMINI_API_KEY_BACKUP: process.env.GEMINI_API_KEY_BACKUP,
-      GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
-      GOOGLE_API_KEY_2: process.env.GOOGLE_API_KEY_2,
-      GOOGLE_API_KEY_SECONDARY: process.env.GOOGLE_API_KEY_SECONDARY,
-      BUILT_IN_FORGE_API_KEY: process.env.BUILT_IN_FORGE_API_KEY,
-      FORGE_API_KEY: process.env.FORGE_API_KEY,
+      MISTRAL_API_KEY: process.env.MISTRAL_API_KEY,
+      MISTRAL_KEY: process.env.MISTRAL_KEY,
+      NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+      NVIDIA_KEY: process.env.NVIDIA_KEY,
     };
 
     try {
@@ -52,7 +47,7 @@ describe("Multi-Story PDF AI Engine", () => {
 
       const results = await parsePdfToBytes("test plain text");
       expect(results.length).toBe(1);
-      expect(results[0].headline).toBe("Gemini API Key Required for PDF Ingestion");
+      expect(results[0].headline).toBe("Falke AI Key Required for Document Ingestion");
       expect(results[0].imageUrl).toContain("data:image/svg+xml;base64,");
     } finally {
       for (const [k, v] of Object.entries(origKeys)) {

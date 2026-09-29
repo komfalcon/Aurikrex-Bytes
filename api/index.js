@@ -827,31 +827,6 @@ var init_services = __esm({
 });
 
 // server/_core/aiKeys.ts
-function getAiApiKeys() {
-  const keys = [];
-  const candidateSources = [
-    process.env.GEMINI_API_KEY,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_SECONDARY,
-    process.env.GEMINI_API_KEY_BACKUP,
-    process.env.GOOGLE_API_KEY,
-    process.env.GOOGLE_API_KEY_2,
-    process.env.GOOGLE_API_KEY_SECONDARY,
-    process.env.BUILT_IN_FORGE_API_KEY,
-    process.env.FORGE_API_KEY
-  ];
-  for (const source of candidateSources) {
-    if (!source || typeof source !== "string") continue;
-    const parts = source.split(/[,;]/);
-    for (const part of parts) {
-      const trimmed = part.trim();
-      if (trimmed && !keys.includes(trimmed)) {
-        keys.push(trimmed);
-      }
-    }
-  }
-  return keys;
-}
 function getMistralApiKey() {
   return (process.env.MISTRAL_API_KEY || process.env.MISTRAL_KEY || "").trim();
 }
@@ -1338,7 +1313,7 @@ function parseAiJsonResponse(rawJson) {
   }
   return objects;
 }
-async function generateSingleCandidateBrief(candidate, mistralKey, apiKeys) {
+async function generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey) {
   const prompt = `You are the executive tech editor for Aurikrex Bytes.
 Write an authoritative, high-signal 3-paragraph editorial brief for this verified news story.
 
@@ -1405,54 +1380,43 @@ EDITORIAL RULES:
       }
     }
   }
-  if (apiKeys.length > 0) {
-    const modelCandidates = [
-      "gemini-2.5-flash",
-      "gemini-2.5-pro",
-      "gemini-2.0-flash-exp",
-      "gemini-2.0-flash-001",
-      "gemini-1.5-flash-latest",
-      "gemini-1.5-pro-latest",
-      "gemini-flash-latest"
-    ];
-    for (const apiKey of apiKeys) {
-      for (const model of modelCandidates) {
-        try {
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-goog-api-key": apiKey
-              },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                  responseMimeType: "application/json",
-                  temperature: 0.3,
-                  maxOutputTokens: 1e3
-                }
-              })
-            }
-          );
-          if (response.ok) {
-            const resData = await response.json();
-            const content = resData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-            const parsed = parseAiJsonResponse(content);
-            if (parsed && parsed.length > 0) {
-              const item = parsed[0];
-              const headline = extractAiHeadline(item, candidate.title);
-              const rawBody = extractAiBody(item);
-              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
-              if (headline && body && body.length > 100) {
-                return { headline, body, category };
-              }
+  if (nvidiaKey) {
+    const nvidiaModels = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct"];
+    for (const model of nvidiaModels) {
+      try {
+        const response = await fetch("https://ai.api.nvidia.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${nvidiaKey}`
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+              { role: "user", content: prompt }
+            ],
+            temperature: 0.3,
+            max_tokens: 1e3
+          })
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          const content = resData.choices?.[0]?.message?.content || "";
+          const parsed = parseAiJsonResponse(content);
+          if (parsed && parsed.length > 0) {
+            const item = parsed[0];
+            const headline = extractAiHeadline(item, candidate.title);
+            const rawBody = extractAiBody(item);
+            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
+            if (headline && body && body.length > 100) {
+              return { headline, body, category };
             }
           }
-        } catch {
         }
+      } catch {
       }
     }
   }
@@ -1467,11 +1431,11 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
     return [];
   }
   if (!candidates.length) return [];
-  const apiKeys = getAiApiKeys();
   const mistralKey = getMistralApiKey();
-  if (!apiKeys.length && !mistralKey) {
+  const nvidiaKey = getNvidiaApiKey();
+  if (!mistralKey && !nvidiaKey) {
     console.warn(
-      "[AICurator] No AI API key (GEMINI_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY) configured. Skipping curation."
+      "[AICurator] No AI API key (MISTRAL_API_KEY, NVIDIA_API_KEY) configured. Skipping curation."
     );
     return [];
   }
@@ -1484,7 +1448,7 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
       chunk.map(async (candidate) => {
         if (seen.has(candidate.duplicateKey)) return null;
         seen.add(candidate.duplicateKey);
-        const brief = await generateSingleCandidateBrief(candidate, mistralKey, apiKeys);
+        const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey);
         if (!brief) return null;
         return {
           candidate,
@@ -1734,26 +1698,7 @@ function generateDynamicByteCard(headline, category = "Tech", source) {
 </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
-async function uploadBase64ToCloudinary(base64DataUri) {
-  if (!cloudinaryConfigured()) return null;
-  try {
-    const { v2: cloudinary2 } = await import("cloudinary");
-    cloudinary2.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET
-    });
-    const result = await cloudinary2.uploader.upload(base64DataUri, {
-      folder: "aurikrex/posts",
-      resource_type: "image"
-    });
-    return result.secure_url || result.url || null;
-  } catch (err) {
-    console.warn("[PDFParser] Cloudinary upload skipped, using data URI fallback:", err instanceof Error ? err.message : String(err));
-    return null;
-  }
-}
-async function generateAiRecreatedImage(prompt, apiKeys) {
+async function generateAiRecreatedImage(prompt) {
   if (!prompt) return null;
   if (getNvidiaApiKey()) {
     try {
@@ -1762,48 +1707,7 @@ async function generateAiRecreatedImage(prompt, apiKeys) {
         return fluxUrl;
       }
     } catch (err) {
-      console.warn("[PDFParser] NVIDIA FLUX generation failed, trying Imagen fallback:", err instanceof Error ? err.message : String(err));
-    }
-  }
-  if (!apiKeys.length) return null;
-  for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
-    const apiKey = apiKeys[keyIdx];
-    try {
-      const response = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-goog-api-key": apiKey
-          },
-          body: JSON.stringify({
-            instances: [
-              {
-                prompt: `${prompt}. High-quality editorial technology photography, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`
-              }
-            ],
-            parameters: {
-              sampleCount: 1,
-              aspectRatio: "16:9"
-            }
-          })
-        }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
-        if (base64Bytes) {
-          const dataUri = `data:image/jpeg;base64,${base64Bytes}`;
-          const cdnUrl = await uploadBase64ToCloudinary(dataUri);
-          return cdnUrl || dataUri;
-        }
-      } else {
-        const errText = await response.text().catch(() => "");
-        console.warn(`[PDFParser] Imagen generation with API key #${keyIdx + 1} returned ${response.status}:`, errText.slice(0, 100));
-      }
-    } catch (err) {
-      console.warn(`[PDFParser] Error generating image via Imagen with API key #${keyIdx + 1}:`, err instanceof Error ? err.message : String(err));
+      console.warn("[PDFParser] NVIDIA FLUX image generation failed:", err instanceof Error ? err.message : String(err));
     }
   }
   return null;
@@ -1840,15 +1744,16 @@ async function parsePdfToBytes(pdfBase64OrText) {
   } else {
     plainText = pdfBase64OrText;
   }
-  const apiKeys = getAiApiKeys();
-  if (!apiKeys.length) {
-    console.warn("[PDFParser] No GEMINI_API_KEY found. Unable to parse PDF document natively.");
+  const mistralKey = getMistralApiKey();
+  const nvidiaKey = getNvidiaApiKey();
+  if (!mistralKey && !nvidiaKey) {
+    console.warn("[PDFParser] Neither MISTRAL_API_KEY nor NVIDIA_API_KEY is configured.");
     return [
       {
-        headline: "Gemini API Key Required for PDF Ingestion",
-        body: "Please ensure GEMINI_API_KEY or GOOGLE_API_KEY is configured in your environment variables on Vercel to enable native multimodal PDF parsing.",
+        headline: "Falke AI Key Required for Document Ingestion",
+        body: "Please ensure MISTRAL_API_KEY or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable native document parsing.",
         category: "Tech",
-        imageUrl: generateDynamicByteCard("Gemini API Key Required", "Tech")
+        imageUrl: generateDynamicByteCard("Falke AI Key Required", "Tech")
       }
     ];
   }
@@ -1869,91 +1774,119 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
 5. "category": Select the most accurate from: "Tech", "AI", "Science", "Innovation", "Crypto".
 6. "imagePrompt": Look carefully at the image or graphic at the top of the news card on that page. Describe that exact visual scene in a detailed, photorealistic prompt suitable for image generation (e.g., "A studio photograph of...", "Close-up of..."). Focus on high-end tech photography realism.
 7. "source": Extract the publisher / source name indicated at the bottom of the card (e.g., "Electrek", "The New York Times", "Nikkei Asia", "GitHub", "NewsBytes").`;
-  const requestParts = [];
-  if (isBase64Pdf && rawBase64) {
-    requestParts.push({
-      inlineData: {
-        mimeType,
-        data: rawBase64
-      }
-    });
-  }
-  requestParts.push({
-    text: isBase64Pdf ? promptText : `${promptText}
+  let rawJson = "[]";
+  if (mistralKey) {
+    const mistralModels = ["pixtral-large-latest", "pixtral-12b-2409", "mistral-large-latest", "mistral-small-latest"];
+    for (const model of mistralModels) {
+      try {
+        const messages = [
+          { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." }
+        ];
+        if (isBase64Pdf && rawBase64) {
+          messages.push({
+            role: "user",
+            content: [
+              { type: "text", text: promptText },
+              { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }
+            ]
+          });
+        } else {
+          messages.push({
+            role: "user",
+            content: `${promptText}
 
 DOCUMENT TEXT:
 ${plainText.slice(0, 5e4)}`
-  });
-  const modelCandidates = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash-exp",
-    "gemini-2.0-flash-001",
-    "gemini-1.5-flash-latest",
-    "gemini-1.5-pro-latest",
-    "gemini-flash-latest"
-  ];
-  let rawJson = "[]";
-  keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
-    const apiKey = apiKeys[keyIdx];
-    const keyLabel = `Key #${keyIdx + 1}${keyIdx > 0 ? " (fallback)" : " (primary)"}`;
-    for (const model of modelCandidates) {
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-goog-api-key": apiKey
-            },
-            body: JSON.stringify({
-              contents: [{ parts: requestParts }],
-              generationConfig: {
-                responseMimeType: "application/json",
-                temperature: 0.3,
-                responseSchema: {
-                  type: "ARRAY",
-                  items: {
-                    type: "OBJECT",
-                    properties: {
-                      headline: { type: "STRING" },
-                      body: { type: "STRING" },
-                      category: { type: "STRING", enum: ["Tech", "AI", "Science", "Innovation", "Crypto"] },
-                      imagePrompt: { type: "STRING" },
-                      source: { type: "STRING" }
-                    },
-                    required: ["headline", "body", "category"]
-                  }
-                }
-              }
-            })
-          }
-        );
-        if (!response.ok) {
-          const errStatus = response.status;
-          const errText = await response.text().catch(() => "");
-          console.warn(`[PDFParser] ${keyLabel} with model ${model} returned ${errStatus}:`, errText.slice(0, 150));
-          if (errStatus === 429 || errStatus === 403) {
-            console.warn(`[PDFParser] ${keyLabel} hit rate limit or quota. Switching to next AI API key...`);
-            continue keyLoop;
-          }
-          continue;
+          });
         }
-        const resData = await response.json();
-        rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-        if (rawJson && rawJson !== "[]") {
-          console.info(`[PDFParser] Successfully parsed document using ${keyLabel} (${model})`);
-          break keyLoop;
+        const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${mistralKey}`
+          },
+          body: JSON.stringify({
+            model,
+            response_format: { type: "json_object" },
+            messages,
+            temperature: 0.3,
+            max_tokens: 3500
+          })
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          rawJson = resData.choices?.[0]?.message?.content || "[]";
+          if (rawJson && rawJson !== "[]") {
+            console.info(`[PDFParser] Successfully parsed document using Mistral AI (${model})`);
+            break;
+          }
+        } else {
+          const errText = await response.text().catch(() => "");
+          console.warn(`[PDFParser] Mistral AI model ${model} returned status ${response.status}:`, errText.slice(0, 150));
         }
       } catch (err) {
-        console.warn(`[PDFParser] Error calling model ${model} with ${keyLabel}:`, err instanceof Error ? err.message : String(err));
+        console.warn(`[PDFParser] Error calling Mistral AI model ${model}:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+  if ((!rawJson || rawJson === "[]") && nvidiaKey) {
+    const nvidiaModels = isBase64Pdf ? ["meta/llama-3.2-90b-vision-instruct"] : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct"];
+    for (const model of nvidiaModels) {
+      try {
+        const messages = [
+          { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." }
+        ];
+        if (isBase64Pdf && rawBase64) {
+          messages.push({
+            role: "user",
+            content: [
+              { type: "text", text: promptText },
+              { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } }
+            ]
+          });
+        } else {
+          messages.push({
+            role: "user",
+            content: `${promptText}
+
+DOCUMENT TEXT:
+${plainText.slice(0, 5e4)}`
+          });
+        }
+        const response = await fetch("https://ai.api.nvidia.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${nvidiaKey}`
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            temperature: 0.3,
+            max_tokens: 3500
+          })
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          rawJson = resData.choices?.[0]?.message?.content || "[]";
+          if (rawJson && rawJson !== "[]") {
+            console.info(`[PDFParser] Successfully parsed document using NVIDIA AI (${model})`);
+            break;
+          }
+        } else {
+          const errText = await response.text().catch(() => "");
+          console.warn(`[PDFParser] NVIDIA AI model ${model} returned status ${response.status}:`, errText.slice(0, 150));
+        }
+      } catch (err) {
+        console.warn(`[PDFParser] Error calling NVIDIA AI model ${model}:`, err instanceof Error ? err.message : String(err));
       }
     }
   }
   const parsed = parseAiJsonResponse(rawJson);
   if (!parsed.length) {
-    throw new Error("Falcon AI was unable to extract news stories from this document. Please ensure the PDF contains readable text or news cards.");
+    throw new Error("Falke AI was unable to extract news stories from this document. Please ensure the document contains readable text or news cards.");
   }
   const draftItems = parsed.map((item, idx) => {
     let bodyText = String(item.body || "").trim();
@@ -1974,12 +1907,12 @@ ${plainText.slice(0, 5e4)}`
       imagePrompt: item.imagePrompt
     };
   });
-  console.info(`[PDFParser] Extracted ${draftItems.length} stories. Resolving cover images in parallel...`);
+  console.info(`[PDFParser] Extracted ${draftItems.length} stories. Resolving cover images via NVIDIA FLUX...`);
   const results = await Promise.all(
     draftItems.map(async (draft) => {
       let imageUrl = null;
       if (draft.imagePrompt) {
-        imageUrl = await generateAiRecreatedImage(draft.imagePrompt, apiKeys);
+        imageUrl = await generateAiRecreatedImage(draft.imagePrompt);
       }
       if (!imageUrl) {
         imageUrl = generateDynamicByteCard(draft.cleanTitle, draft.category, draft.source);
@@ -1988,7 +1921,9 @@ ${plainText.slice(0, 5e4)}`
         headline: draft.cleanTitle,
         body: draft.finalBody,
         category: draft.category,
-        imageUrl
+        imageUrl,
+        sourcePublisher: draft.source || "NewsBytes",
+        sourcePublishedAt: /* @__PURE__ */ new Date()
       };
     })
   );
