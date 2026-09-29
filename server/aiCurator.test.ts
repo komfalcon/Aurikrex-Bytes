@@ -48,6 +48,29 @@ Paragraph 2 line two.",
     expect(result).toHaveLength(1);
     expect(result[0].headline).toBe("Unescaped Newline Test");
   });
+
+  it("recovers completed story objects from truncated JSON outputs hit mid-stream", () => {
+    const truncatedOutput = `[
+      {
+        "headline": "First Complete Story",
+        "body": "This story was fully generated.",
+        "category": "Tech"
+      },
+      {
+        "headline": "Second Complete Story",
+        "body": "This story was also fully generated.",
+        "category": "AI"
+      },
+      {
+        "headline": "Incomplete Cutoff Story",
+        "body": "This story was cut off before closing quote`;
+
+    const result = parseAiJsonResponse(truncatedOutput);
+    expect(result).toHaveLength(2);
+    expect(result[0].headline).toBe("First Complete Story");
+    expect(result[1].headline).toBe("Second Complete Story");
+  });
+
   it("canonicalizes tracking parameters and trailing slashes", () => {
     expect(canonicalizeUrl("https://WWW.Example.com/story/?utm_source=x&ref=home#comments")).toBe(
       "https://example.com/story"

@@ -517,11 +517,10 @@ export function parseAiJsonResponse(rawJson: string): any[] {
   // Step 1: Strip markdown code block fences and whitespace
   let cleaned = rawJson.replace(/```json/gi, "").replace(/```/g, "").trim();
 
-  // Step 2: Slice from first '{' or '[' to last '}' or ']'
+  // Step 2: Slice from first '{' or '['
   const firstBracket = cleaned.search(/[\[\{]/);
-  const lastBracket = Math.max(cleaned.lastIndexOf("]"), cleaned.lastIndexOf("}"));
-  if (firstBracket !== -1 && lastBracket > firstBracket) {
-    cleaned = cleaned.slice(firstBracket, lastBracket + 1);
+  if (firstBracket !== -1) {
+    cleaned = cleaned.slice(firstBracket);
   }
 
   // Step 3: Try standard JSON.parse first
@@ -529,8 +528,8 @@ export function parseAiJsonResponse(rawJson: string): any[] {
     const parsed = JSON.parse(cleaned);
     const arr = extractArrayFromObject(parsed);
     if (arr.length > 0) return arr;
-  } catch (err1) {
-    console.warn("[AICurator] Standard JSON.parse failed, attempting repair:", err1 instanceof Error ? err1.message : String(err1));
+  } catch {
+    // Continue to repair attempts
   }
 
   // Step 4: Repair unescaped literal control characters (\r \n \t) inside double-quoted string values
@@ -541,25 +540,47 @@ export function parseAiJsonResponse(rawJson: string): any[] {
     const parsed = JSON.parse(sanitized);
     const arr = extractArrayFromObject(parsed);
     if (arr.length > 0) return arr;
-  } catch (err2) {
-    console.warn("[AICurator] Sanitized JSON.parse failed, attempting regex object extraction:", err2 instanceof Error ? err2.message : String(err2));
+  } catch {
+    // Continue to truncated recovery
   }
 
-  // Step 5: Fallback regex block parsing to extract story objects containing headline/title/body
+  // Step 5: Handle truncated JSON arrays (when response hit max_tokens mid-stream)
+  try {
+    const lastClosingBrace = cleaned.lastIndexOf("}");
+    if (lastClosingBrace > 0) {
+      const truncatedCandidate = cleaned.slice(0, lastClosingBrace + 1);
+      const autoClosed = truncatedCandidate.endsWith("]") ? truncatedCandidate : truncatedCandidate + "]";
+      const sanitized = autoClosed.replace(/("(?:[^"\\]|\\.)*")/g, (match) => {
+        return match.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t");
+      });
+      const parsed = JSON.parse(sanitized);
+      const arr = extractArrayFromObject(parsed);
+      if (arr.length > 0) {
+        console.info(`[AICurator] Recovered ${arr.length} complete story objects from truncated JSON output.`);
+        return arr;
+      }
+    }
+  } catch {
+    // Continue to regex block extraction
+  }
+
+  // Step 6: Fallback multiline object extraction for any valid story block
   const objects: any[] = [];
-  const objectMatches = cleaned.match(/\{[^{}]*(?:"headline"|"title"|"body"|"summary"|"text")[^{}]*\}/gi) || [];
+  const objectMatches = cleaned.match(/\{[\s\S]*?(?:"headline"|"title"|"body"|"summary"|"text")[\s\S]*?\}/gi) || [];
   for (const block of objectMatches) {
     try {
       const safeBlock = block.replace(/("(?:[^"\\]|\\.)*")/g, (m) => m.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t"));
       const obj = JSON.parse(safeBlock);
-      if (obj && typeof obj === "object") objects.push(obj);
+      if (obj && typeof obj === "object" && (obj.headline || obj.title || obj.body)) {
+        objects.push(obj);
+      }
     } catch {
-      // Ignore individual corrupted block
+      // Ignore individual corrupted snippet
     }
   }
 
   if (objects.length > 0) {
-    console.info(`[AICurator] Recovered ${objects.length} story objects via regex block parsing.`);
+    console.info(`[AICurator] Recovered ${objects.length} story objects via multiline regex block parsing.`);
   }
 
   return objects;

@@ -367,7 +367,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
               { role: "user", content: userContent },
             ],
             temperature: 0.3,
-            max_tokens: 3500,
+            max_tokens: 8192,
           }),
         });
 
@@ -426,7 +426,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
                 { role: "user", content: userContent },
               ],
               temperature: 0.3,
-              max_tokens: 3500,
+              max_tokens: 8192,
             }),
           });
 
