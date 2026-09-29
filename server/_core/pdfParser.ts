@@ -337,11 +337,11 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
 
   let rawJson = "[]";
 
-  // 1. Primary Provider: Mistral AI
+  // 1. Primary Provider: Mistral AI (Free Tier Compatible)
   if (mistralKey) {
     const mistralModels = isImage
-      ? ["pixtral-large-latest", "pixtral-12b-2409"]
-      : ["mistral-large-latest", "mistral-small-latest", "open-mixtral-8x7b"];
+      ? ["pixtral-12b-2409", "pixtral-large-latest"]
+      : ["mistral-small-latest", "open-mixtral-8x7b", "open-mistral-7b"];
 
     for (const model of mistralModels) {
       try {
@@ -381,6 +381,9 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
         } else {
           const errText = await response.text().catch(() => "");
           console.warn(`[PDFParser] Mistral AI model ${model} returned status ${response.status}:`, errText.slice(0, 150));
+          if (response.status === 429) {
+            await new Promise((r) => setTimeout(r, 600));
+          }
         }
       } catch (err) {
         console.warn(`[PDFParser] Error calling Mistral AI model ${model}:`, err instanceof Error ? err.message : String(err));
@@ -388,52 +391,59 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
     }
   }
 
-  // 2. Secondary Provider: NVIDIA AI NIM
+  // 2. Secondary Provider: NVIDIA AI NIM (Developer Credits Supported)
   if ((!rawJson || rawJson === "[]") && nvidiaKey) {
     const nvidiaModels = isImage
-      ? ["meta/llama-3.2-90b-vision-instruct"]
-      : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct"];
+      ? ["meta/llama-3.2-90b-vision-instruct", "nvidia/neva-22b"]
+      : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
 
-    for (const model of nvidiaModels) {
-      try {
-        const userContent = isImage
-          ? [
-              { type: "text", text: promptText },
-              { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } },
-            ]
-          : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
+    const nvidiaEndpoints = [
+      "https://integrate.api.nvidia.com/v1/chat/completions",
+      "https://ai.api.nvidia.com/v1/chat/completions",
+    ];
 
-        const response = await fetch("https://ai.api.nvidia.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": `Bearer ${nvidiaKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
-              { role: "user", content: userContent },
-            ],
-            temperature: 0.3,
-            max_tokens: 3500,
-          }),
-        });
+    nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
+      for (const model of nvidiaModels) {
+        try {
+          const userContent = isImage
+            ? [
+                { type: "text", text: promptText },
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } },
+              ]
+            : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
 
-        if (response.ok) {
-          const resData = await response.json();
-          rawJson = resData.choices?.[0]?.message?.content || "[]";
-          if (rawJson && rawJson !== "[]") {
-            console.info(`[PDFParser] Successfully parsed document using NVIDIA AI (${model})`);
-            break;
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${nvidiaKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                { role: "user", content: userContent },
+              ],
+              temperature: 0.3,
+              max_tokens: 3500,
+            }),
+          });
+
+          if (response.ok) {
+            const resData = await response.json();
+            rawJson = resData.choices?.[0]?.message?.content || "[]";
+            if (rawJson && rawJson !== "[]") {
+              console.info(`[PDFParser] Successfully parsed document using NVIDIA AI (${model})`);
+              break nvidiaLoop;
+            }
+          } else {
+            const errText = await response.text().catch(() => "");
+            console.warn(`[PDFParser] NVIDIA AI model ${model} at ${endpoint} returned status ${response.status}:`, errText.slice(0, 150));
           }
-        } else {
-          const errText = await response.text().catch(() => "");
-          console.warn(`[PDFParser] NVIDIA AI model ${model} returned status ${response.status}:`, errText.slice(0, 150));
+        } catch (err) {
+          console.warn(`[PDFParser] Error calling NVIDIA AI model ${model}:`, err instanceof Error ? err.message : String(err));
         }
-      } catch (err) {
-        console.warn(`[PDFParser] Error calling NVIDIA AI model ${model}:`, err instanceof Error ? err.message : String(err));
       }
     }
   }

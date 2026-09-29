@@ -644,49 +644,56 @@ EDITORIAL RULES:
     }
   }
 
-  // 2. Fallback LLM Provider: NVIDIA AI NIM (Llama 3.3 70b)
+  // 2. Fallback LLM Provider: NVIDIA AI NIM (Developer Credits)
   if (nvidiaKey) {
-    const nvidiaModels = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct"];
-    for (const model of nvidiaModels) {
-      try {
-        const response = await fetch("https://ai.api.nvidia.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": `Bearer ${nvidiaKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
-              { role: "user", content: prompt },
-            ],
-            temperature: 0.3,
-            max_tokens: 1000,
-          }),
-        });
+    const nvidiaModels = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
+    const nvidiaEndpoints = [
+      "https://integrate.api.nvidia.com/v1/chat/completions",
+      "https://ai.api.nvidia.com/v1/chat/completions",
+    ];
 
-        if (response.ok) {
-          const resData = await response.json();
-          const content = resData.choices?.[0]?.message?.content || "";
-          const parsed = parseAiJsonResponse(content);
-          if (parsed && parsed.length > 0) {
-            const item = parsed[0];
-            const headline = extractAiHeadline(item, candidate.title);
-            const rawBody = extractAiBody(item);
-            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-              ? String(item.category)
-              : "Tech";
+    for (const endpoint of nvidiaEndpoints) {
+      for (const model of nvidiaModels) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${nvidiaKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+                { role: "user", content: prompt },
+              ],
+              temperature: 0.3,
+              max_tokens: 1000,
+            }),
+          });
 
-            if (headline && body && body.length > 100) {
-              return { headline, body, category };
+          if (response.ok) {
+            const resData = await response.json();
+            const content = resData.choices?.[0]?.message?.content || "";
+            const parsed = parseAiJsonResponse(content);
+            if (parsed && parsed.length > 0) {
+              const item = parsed[0];
+              const headline = extractAiHeadline(item, candidate.title);
+              const rawBody = extractAiBody(item);
+              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
+                ? String(item.category)
+                : "Tech";
+
+              if (headline && body && body.length > 100) {
+                return { headline, body, category };
+              }
             }
           }
+        } catch {
+          // Fall through to next model
         }
-      } catch {
-        // Fall through to next model
       }
     }
   }
