@@ -1820,8 +1820,58 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
 6. "imagePrompt": Look carefully at the image or graphic at the top of the news card on that page. Describe that exact visual scene in a detailed, photorealistic prompt suitable for image generation (e.g., "A studio photograph of...", "Close-up of..."). Focus on high-end tech photography realism.
 7. "source": Extract the publisher / source name indicated at the bottom of the card (e.g., "Electrek", "The New York Times", "Nikkei Asia", "GitHub", "NewsBytes").`;
   let rawJson = "[]";
-  if (mistralKey) {
-    const mistralModels = isImage ? ["pixtral-12b-2409", "pixtral-large-latest"] : ["mistral-small-latest", "open-mixtral-8x7b", "open-mistral-7b"];
+  if (nvidiaKey) {
+    const nvidiaModels = isImage ? ["meta/llama-3.2-90b-vision-instruct", "nvidia/neva-22b"] : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
+    const nvidiaEndpoints = [
+      "https://integrate.api.nvidia.com/v1/chat/completions",
+      "https://ai.api.nvidia.com/v1/chat/completions"
+    ];
+    nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
+      for (const model of nvidiaModels) {
+        try {
+          const userContent = isImage ? [
+            { type: "text", text: promptText },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } }
+          ] : `${promptText}
+
+DOCUMENT TEXT:
+${documentText.slice(0, 5e4)}`;
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${nvidiaKey}`
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                { role: "user", content: userContent }
+              ],
+              temperature: 0.3,
+              max_tokens: 8192
+            })
+          });
+          if (response.ok) {
+            const resData = await response.json();
+            rawJson = resData.choices?.[0]?.message?.content || "[]";
+            if (rawJson && rawJson !== "[]") {
+              console.info(`[PDFParser] Successfully parsed document using NVIDIA AI NIM (${model})`);
+              break nvidiaLoop;
+            }
+          } else {
+            const errText = await response.text().catch(() => "");
+            console.warn(`[PDFParser] NVIDIA AI model ${model} at ${endpoint} returned status ${response.status}:`, errText.slice(0, 150));
+          }
+        } catch (err) {
+          console.warn(`[PDFParser] Error calling NVIDIA AI model ${model}:`, err instanceof Error ? err.message : String(err));
+        }
+      }
+    }
+  }
+  if ((!rawJson || rawJson === "[]") && mistralKey) {
+    const mistralModels = isImage ? ["pixtral-12b-2409", "pixtral-large-latest"] : ["open-mistral-7b", "mistral-small-latest", "open-mixtral-8x7b"];
     for (const model of mistralModels) {
       try {
         const userContent = isImage ? [
@@ -1865,56 +1915,6 @@ ${documentText.slice(0, 5e4)}`;
         }
       } catch (err) {
         console.warn(`[PDFParser] Error calling Mistral AI model ${model}:`, err instanceof Error ? err.message : String(err));
-      }
-    }
-  }
-  if ((!rawJson || rawJson === "[]") && nvidiaKey) {
-    const nvidiaModels = isImage ? ["meta/llama-3.2-90b-vision-instruct", "nvidia/neva-22b"] : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
-    const nvidiaEndpoints = [
-      "https://integrate.api.nvidia.com/v1/chat/completions",
-      "https://ai.api.nvidia.com/v1/chat/completions"
-    ];
-    nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
-      for (const model of nvidiaModels) {
-        try {
-          const userContent = isImage ? [
-            { type: "text", text: promptText },
-            { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } }
-          ] : `${promptText}
-
-DOCUMENT TEXT:
-${documentText.slice(0, 5e4)}`;
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Accept": "application/json",
-              "Authorization": `Bearer ${nvidiaKey}`
-            },
-            body: JSON.stringify({
-              model,
-              messages: [
-                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
-                { role: "user", content: userContent }
-              ],
-              temperature: 0.3,
-              max_tokens: 8192
-            })
-          });
-          if (response.ok) {
-            const resData = await response.json();
-            rawJson = resData.choices?.[0]?.message?.content || "[]";
-            if (rawJson && rawJson !== "[]") {
-              console.info(`[PDFParser] Successfully parsed document using NVIDIA AI (${model})`);
-              break nvidiaLoop;
-            }
-          } else {
-            const errText = await response.text().catch(() => "");
-            console.warn(`[PDFParser] NVIDIA AI model ${model} at ${endpoint} returned status ${response.status}:`, errText.slice(0, 150));
-          }
-        } catch (err) {
-          console.warn(`[PDFParser] Error calling NVIDIA AI model ${model}:`, err instanceof Error ? err.message : String(err));
-        }
       }
     }
   }
