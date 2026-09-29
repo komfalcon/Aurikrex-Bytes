@@ -1,7 +1,7 @@
 import { CuratedByte, cleanHeadline, clampEditorialBrief, parseAiJsonResponse, extractAiBody } from "./aiCurator.js";
 import { cloudinaryConfigured } from "../services.js";
 import { getMistralApiKey, getNvidiaApiKey } from "./aiKeys.js";
-import { generateNvidiaFluxImage } from "./imageGeneration.js";
+import { generateNvidiaFluxImage, getTopicStockImage } from "./imageGeneration.js";
 import zlib from "zlib";
 
 /**
@@ -526,7 +526,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
         imageUrl = await generateAiRecreatedImage(draft.imagePrompt);
       }
       if (!imageUrl) {
-        imageUrl = generateDynamicByteCard(draft.cleanTitle, draft.category, draft.source);
+        imageUrl = getTopicStockImage(draft.cleanTitle, draft.category);
       }
 
       return {
