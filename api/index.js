@@ -1573,6 +1573,7 @@ __export(pdfParser_exports, {
   generateDynamicByteCard: () => generateDynamicByteCard,
   parsePdfToBytes: () => parsePdfToBytes
 });
+import zlib from "zlib";
 function extractEntityKicker(headline, category, source) {
   const h = headline.toLowerCase();
   if (/deepseek|chatgpt|openai|claude|anthropic|perplexity|llm|agent|gpt|gemini|numbat|model/.test(h)) {
@@ -1738,16 +1739,40 @@ function extractPdfText(rawBase64) {
   try {
     const buf = Buffer.from(rawBase64, "base64");
     const str = buf.toString("latin1");
-    const matches = [];
+    const extractedParts = [];
     const textBlocks = str.match(/\((?:[^()\\]|\\.)*\)/g) || [];
     for (const match of textBlocks) {
       const cleaned = match.slice(1, -1).replace(/\\([()])/g, "$1").replace(/\\n/g, "\n").replace(/\\r/g, "\r").trim();
       if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
-        matches.push(cleaned);
+        extractedParts.push(cleaned);
       }
     }
-    const extracted = matches.join(" ");
-    if (extracted.length > 30) return extracted;
+    const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let streamMatch;
+    while ((streamMatch = streamRegex.exec(str)) !== null) {
+      const streamContent = streamMatch[1];
+      try {
+        const streamBuf = Buffer.from(streamContent, "latin1");
+        const decompressed = zlib.inflateSync(streamBuf).toString("utf-8");
+        const subMatches = decompressed.match(/\((?:[^()\\]|\\.)*\)/g) || [];
+        for (const match of subMatches) {
+          const cleaned = match.slice(1, -1).replace(/\\([()])/g, "$1").replace(/\\n/g, "\n").replace(/\\r/g, "\r").trim();
+          if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
+            extractedParts.push(cleaned);
+          }
+        }
+      } catch {
+      }
+    }
+    if (extractedParts.length === 0) {
+      const printable = str.replace(/[^\x20-\x7E\n\r\t]/g, " ");
+      const words = printable.split(/\s+/).filter((w) => w.length > 2 && /[a-zA-Z]/.test(w));
+      if (words.length > 10) {
+        extractedParts.push(words.join(" "));
+      }
+    }
+    const resultText = extractedParts.join(" ").replace(/\s+/g, " ").trim();
+    if (resultText.length > 20) return resultText;
   } catch {
   }
   return "";
@@ -1800,7 +1825,7 @@ async function parsePdfToBytes(pdfBase64OrText) {
   const isImage = isBase64Pdf && mimeType.startsWith("image/");
   let documentText = plainText;
   if (isBase64Pdf && !isImage && rawBase64) {
-    documentText = extractPdfText(rawBase64) || plainText;
+    documentText = extractPdfText(rawBase64) || plainText || "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
   }
   const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.tech).
 You are analyzing an uploaded multi-story document / PDF (each page contains a distinct mobile news card with an image at the top, a headline, a summary, and a publisher source at the bottom).

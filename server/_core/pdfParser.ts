@@ -2,6 +2,7 @@ import { CuratedByte, cleanHeadline, clampEditorialBrief, parseAiJsonResponse } 
 import { cloudinaryConfigured } from "../services.js";
 import { getMistralApiKey, getNvidiaApiKey } from "./aiKeys.js";
 import { generateNvidiaFluxImage } from "./imageGeneration.js";
+import zlib from "zlib";
 
 /**
  * Extracts domain-specific theme and branding parameters for bespoke card generation.
@@ -237,7 +238,9 @@ function extractPdfText(rawBase64: string): string {
   try {
     const buf = Buffer.from(rawBase64, "base64");
     const str = buf.toString("latin1");
-    const matches: string[] = [];
+    const extractedParts: string[] = [];
+
+    // 1. Uncompressed PDF string literals (...)
     const textBlocks = str.match(/\((?:[^()\\]|\\.)*\)/g) || [];
     for (const match of textBlocks) {
       const cleaned = match
@@ -247,11 +250,46 @@ function extractPdfText(rawBase64: string): string {
         .replace(/\\r/g, "\r")
         .trim();
       if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
-        matches.push(cleaned);
+        extractedParts.push(cleaned);
       }
     }
-    const extracted = matches.join(" ");
-    if (extracted.length > 30) return extracted;
+
+    // 2. Decompress /FlateDecode zlib streams in PDF buffer
+    const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let streamMatch: RegExpExecArray | null;
+    while ((streamMatch = streamRegex.exec(str)) !== null) {
+      const streamContent = streamMatch[1];
+      try {
+        const streamBuf = Buffer.from(streamContent, "latin1");
+        const decompressed = zlib.inflateSync(streamBuf).toString("utf-8");
+        const subMatches = decompressed.match(/\((?:[^()\\]|\\.)*\)/g) || [];
+        for (const match of subMatches) {
+          const cleaned = match
+            .slice(1, -1)
+            .replace(/\\([()])/g, "$1")
+            .replace(/\\n/g, "\n")
+            .replace(/\\r/g, "\r")
+            .trim();
+          if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
+            extractedParts.push(cleaned);
+          }
+        }
+      } catch {
+        // Stream wasn't zlib or was plain text
+      }
+    }
+
+    // 3. Fallback: Extract printable ASCII text chunks (min 3 consecutive letters)
+    if (extractedParts.length === 0) {
+      const printable = str.replace(/[^\x20-\x7E\n\r\t]/g, " ");
+      const words = printable.split(/\s+/).filter((w) => w.length > 2 && /[a-zA-Z]/.test(w));
+      if (words.length > 10) {
+        extractedParts.push(words.join(" "));
+      }
+    }
+
+    const resultText = extractedParts.join(" ").replace(/\s+/g, " ").trim();
+    if (resultText.length > 20) return resultText;
   } catch {
     // ignore
   }
@@ -314,7 +352,7 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
   const isImage = isBase64Pdf && mimeType.startsWith("image/");
   let documentText = plainText;
   if (isBase64Pdf && !isImage && rawBase64) {
-    documentText = extractPdfText(rawBase64) || plainText;
+    documentText = extractPdfText(rawBase64) || plainText || "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
   }
 
   const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.tech).
