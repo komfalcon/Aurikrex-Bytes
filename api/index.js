@@ -1762,6 +1762,48 @@ function generateDynamicByteCard(headline, category = "Tech", source) {
 </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
+async function uploadBase64ToCloudinary(base64DataUri) {
+  if (!cloudinaryConfigured()) return null;
+  try {
+    const { v2: cloudinary2 } = await import("cloudinary");
+    cloudinary2.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET
+    });
+    const result = await cloudinary2.uploader.upload(base64DataUri, {
+      folder: "aurikrex/posts",
+      resource_type: "image"
+    });
+    return result.secure_url || result.url || null;
+  } catch (err) {
+    console.warn("[PDFParser] Cloudinary upload skipped, using data URI fallback:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+function extractEmbeddedPdfImages(rawBase64) {
+  try {
+    const buf = Buffer.from(rawBase64, "base64");
+    const images = [];
+    let idx = 0;
+    while (idx < buf.length) {
+      const soi = buf.indexOf(Buffer.from([255, 216]), idx);
+      if (soi === -1) break;
+      const eoi = buf.indexOf(Buffer.from([255, 217]), soi);
+      if (eoi === -1) break;
+      const jpegBuf = buf.subarray(soi, eoi + 2);
+      if (jpegBuf.length > 8192) {
+        images.push(`data:image/jpeg;base64,${jpegBuf.toString("base64")}`);
+      }
+      idx = eoi + 2;
+    }
+    console.info(`[PDFParser] Extracted ${images.length} exact embedded JPEG images from PDF buffer.`);
+    return images;
+  } catch (err) {
+    console.warn("[PDFParser] Failed to extract embedded images from PDF:", err instanceof Error ? err.message : String(err));
+    return [];
+  }
+}
 async function generateAiRecreatedImage(prompt) {
   if (!prompt) return null;
   if (getNvidiaApiKey()) {
@@ -2016,11 +2058,17 @@ ${documentText.slice(0, 5e4)}`;
       imagePrompt: item.imagePrompt
     };
   });
-  console.info(`[PDFParser] Extracted ${draftItems.length} stories. Resolving cover images via NVIDIA FLUX...`);
+  const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
+  console.info(`[PDFParser] Extracted ${draftItems.length} stories and ${embeddedImages.length} original PDF images. Resolving cover images...`);
   const results = await Promise.all(
-    draftItems.map(async (draft) => {
+    draftItems.map(async (draft, idx) => {
       let imageUrl = null;
-      if (draft.imagePrompt) {
+      const rawEmbedded = embeddedImages[idx];
+      if (rawEmbedded) {
+        const cdnUrl = await uploadBase64ToCloudinary(rawEmbedded);
+        imageUrl = cdnUrl || rawEmbedded;
+      }
+      if (!imageUrl && draft.imagePrompt) {
         imageUrl = await generateAiRecreatedImage(draft.imagePrompt);
       }
       if (!imageUrl) {

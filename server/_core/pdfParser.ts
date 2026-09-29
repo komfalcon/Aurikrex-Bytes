@@ -218,6 +218,36 @@ async function uploadBase64ToCloudinary(base64DataUri: string): Promise<string |
 }
 
 /**
+ * Extracts embedded JPEG images directly from a PDF buffer (SOI/EOI marker scanner).
+ * Returns array of base64 JPEG data URIs in order of appearance.
+ */
+function extractEmbeddedPdfImages(rawBase64: string): string[] {
+  try {
+    const buf = Buffer.from(rawBase64, "base64");
+    const images: string[] = [];
+    let idx = 0;
+    while (idx < buf.length) {
+      const soi = buf.indexOf(Buffer.from([0xff, 0xd8]), idx);
+      if (soi === -1) break;
+      const eoi = buf.indexOf(Buffer.from([0xff, 0xd9]), soi);
+      if (eoi === -1) break;
+
+      const jpegBuf = buf.subarray(soi, eoi + 2);
+      // Filter out small thumbnails (< 8KB)
+      if (jpegBuf.length > 8192) {
+        images.push(`data:image/jpeg;base64,${jpegBuf.toString("base64")}`);
+      }
+      idx = eoi + 2;
+    }
+    console.info(`[PDFParser] Extracted ${images.length} exact embedded JPEG images from PDF buffer.`);
+    return images;
+  } catch (err) {
+    console.warn("[PDFParser] Failed to extract embedded images from PDF:", err instanceof Error ? err.message : String(err));
+    return [];
+  }
+}
+
+/**
  * Attempts to recreate cover imagery using NVIDIA FLUX.
  */
 async function generateAiRecreatedImage(prompt: string): Promise<string | null> {
@@ -526,14 +556,29 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
     };
   });
 
-  console.info(`[PDFParser] Extracted ${draftItems.length} stories. Resolving cover images via NVIDIA FLUX...`);
+  // Extract exact embedded JPEG images from PDF byte buffer (matches story index 1:1)
+  const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
+
+  console.info(`[PDFParser] Extracted ${draftItems.length} stories and ${embeddedImages.length} original PDF images. Resolving cover images...`);
 
   const results: CuratedByte[] = await Promise.all(
-    draftItems.map(async (draft) => {
+    draftItems.map(async (draft, idx) => {
       let imageUrl: string | null = null;
-      if (draft.imagePrompt) {
+
+      // 1. Primary: Use the exact embedded image extracted from that PDF page
+      const rawEmbedded = embeddedImages[idx];
+      if (rawEmbedded) {
+        // Try uploading embedded image to Cloudinary so we have a clean CDN URL
+        const cdnUrl = await uploadBase64ToCloudinary(rawEmbedded);
+        imageUrl = cdnUrl || rawEmbedded;
+      }
+
+      // 2. Secondary: Generate AI image from prompt if no embedded image found
+      if (!imageUrl && draft.imagePrompt) {
         imageUrl = await generateAiRecreatedImage(draft.imagePrompt);
       }
+
+      // 3. Fallback: Editorial stock image matched by topic
       if (!imageUrl) {
         imageUrl = getTopicStockImage(draft.cleanTitle, draft.category);
       }
