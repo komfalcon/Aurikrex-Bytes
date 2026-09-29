@@ -42,6 +42,7 @@ export async function generateNvidiaFluxImage(prompt: string): Promise<string | 
       },
       body: JSON.stringify({
         prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
+        mode: "base64",
       }),
     });
     clearTimeout(timeout);

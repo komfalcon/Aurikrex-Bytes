@@ -483,11 +483,26 @@ function extractAiHeadline(item: any, fallbackTitle: string): string {
   return cleanHeadline(String(h || fallbackTitle)).slice(0, 120);
 }
 
-function extractAiBody(item: any): string {
+export function extractAiBody(item: any): string {
   if (!item) return "";
   if (typeof item === "string" && item.length > 30) return item;
   if (typeof item.body === "string" && item.body.trim().length > 30) return item.body.trim();
+
+  if (item.body && typeof item.body === "object" && !Array.isArray(item.body)) {
+    const parts = Object.values(item.body)
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .filter((v) => v.length > 5);
+    if (parts.length > 0) return parts.join("\n\n");
+  }
+
   if (typeof item.summary === "string" && item.summary.trim().length > 30) return item.summary.trim();
+  if (item.summary && typeof item.summary === "object" && !Array.isArray(item.summary)) {
+    const parts = Object.values(item.summary)
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .filter((v) => v.length > 5);
+    if (parts.length > 0) return parts.join("\n\n");
+  }
+
   if (typeof item.text === "string" && item.text.trim().length > 30) return item.text.trim();
   if (typeof item.content === "string" && item.content.trim().length > 30) return item.content.trim();
 

@@ -1,4 +1,4 @@
-import { CuratedByte, cleanHeadline, clampEditorialBrief, parseAiJsonResponse } from "./aiCurator.js";
+import { CuratedByte, cleanHeadline, clampEditorialBrief, parseAiJsonResponse, extractAiBody } from "./aiCurator.js";
 import { cloudinaryConfigured } from "../services.js";
 import { getMistralApiKey, getNvidiaApiKey } from "./aiKeys.js";
 import { generateNvidiaFluxImage } from "./imageGeneration.js";
@@ -493,7 +493,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
   }
 
   const draftItems = parsed.map((item: any, idx: number) => {
-    let bodyText = String(item.body || "").trim();
+    let bodyText = extractAiBody(item);
 
     // Remove any accidental raw PDF binary tokens
     if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) {
