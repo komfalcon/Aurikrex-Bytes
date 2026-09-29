@@ -3,6 +3,9 @@ import { cloudinaryConfigured } from "../services.js";
 import { getMistralApiKey, getNvidiaApiKey } from "./aiKeys.js";
 import { generateNvidiaFluxImage, getTopicStockImage } from "./imageGeneration.js";
 import zlib from "zlib";
+import { createRequire } from "module";
+const _require = createRequire(import.meta.url);
+
 
 /**
  * Extracts domain-specific theme and branding parameters for bespoke card generation.
@@ -234,27 +237,26 @@ async function generateAiRecreatedImage(prompt: string): Promise<string | null> 
   return null;
 }
 
-function extractPdfText(rawBase64: string): string {
+async function extractPdfText(rawBase64: string): Promise<string> {
   try {
     const buf = Buffer.from(rawBase64, "base64");
-    const str = buf.toString("latin1");
-    const extractedParts: string[] = [];
 
-    // 1. Uncompressed PDF string literals (...)
-    const textBlocks = str.match(/\((?:[^()\\]|\\.)*\)/g) || [];
-    for (const match of textBlocks) {
-      const cleaned = match
-        .slice(1, -1)
-        .replace(/\\([()])/g, "$1")
-        .replace(/\\n/g, "\n")
-        .replace(/\\r/g, "\r")
-        .trim();
-      if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
-        extractedParts.push(cleaned);
+    // 1. Primary: Use pdf-parse (handles CIDFont, embedded, TrueType encoding)
+    try {
+      const pdfParse = _require("pdf-parse");
+      const data = await pdfParse(buf, { max: 0 });
+      const text = (data.text || "").trim();
+      if (text.length > 50) {
+        console.info(`[PDFParser] pdf-parse extracted ${text.length} chars, ${data.numpages} pages`);
+        return text;
       }
+    } catch (err) {
+      console.warn("[PDFParser] pdf-parse failed, falling back to manual extraction:", err instanceof Error ? err.message : String(err));
     }
 
-    // 2. Decompress /FlateDecode zlib streams in PDF buffer
+    // 2. Fallback: Try decompressing zlib FlateDecode streams
+    const str = buf.toString("latin1");
+    const extractedParts: string[] = [];
     const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
     let streamMatch: RegExpExecArray | null;
     while ((streamMatch = streamRegex.exec(str)) !== null) {
@@ -262,39 +264,21 @@ function extractPdfText(rawBase64: string): string {
       try {
         const streamBuf = Buffer.from(streamContent, "latin1");
         const decompressed = zlib.inflateSync(streamBuf).toString("utf-8");
-        const subMatches = decompressed.match(/\((?:[^()\\]|\\.)*\)/g) || [];
-        for (const match of subMatches) {
-          const cleaned = match
-            .slice(1, -1)
-            .replace(/\\([()])/g, "$1")
-            .replace(/\\n/g, "\n")
-            .replace(/\\r/g, "\r")
-            .trim();
-          if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
-            extractedParts.push(cleaned);
-          }
-        }
+        const words = decompressed.split(/\s+/).filter((w) => w.length > 2 && /[a-zA-Z]/.test(w));
+        if (words.length > 5) extractedParts.push(words.join(" "));
       } catch {
-        // Stream wasn't zlib or was plain text
-      }
-    }
-
-    // 3. Fallback: Extract printable ASCII text chunks (min 3 consecutive letters)
-    if (extractedParts.length === 0) {
-      const printable = str.replace(/[^\x20-\x7E\n\r\t]/g, " ");
-      const words = printable.split(/\s+/).filter((w) => w.length > 2 && /[a-zA-Z]/.test(w));
-      if (words.length > 10) {
-        extractedParts.push(words.join(" "));
+        // Stream wasn't zlib
       }
     }
 
     const resultText = extractedParts.join(" ").replace(/\s+/g, " ").trim();
-    if (resultText.length > 20) return resultText;
+    if (resultText.length > 50) return resultText;
   } catch {
     // ignore
   }
   return "";
 }
+
 
 export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedByte[]> {
   let isBase64Pdf = false;
@@ -352,8 +336,17 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
   const isImage = isBase64Pdf && mimeType.startsWith("image/");
   let documentText = plainText;
   if (isBase64Pdf && !isImage && rawBase64) {
-    documentText = extractPdfText(rawBase64) || plainText || "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
+    documentText = (await extractPdfText(rawBase64)) || plainText || "";
   }
+
+  // Detect image-based PDFs: pages rendered as images, no extractable text
+  const isImageBasedPdf = isBase64Pdf && !isImage && documentText.length < 100;
+  if (isImageBasedPdf) {
+    console.info("[PDFParser] PDF appears to be image-based (no extractable text). Routing to vision AI via document_url.");
+  } else if (!isImage && !documentText) {
+    documentText = "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
+  }
+
 
   const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.tech).
 You are analyzing an uploaded multi-story document / PDF (each page contains a distinct mobile news card with an image at the top, a headline, a summary, and a publisher source at the bottom).
@@ -377,7 +370,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
 
   // 1. Primary Provider: NVIDIA AI NIM (Developer Credits Supported - Fast & High Throughput)
   if (nvidiaKey) {
-    const nvidiaModels = isImage
+    const nvidiaModels = (isImage || isImageBasedPdf)
       ? ["meta/llama-3.2-90b-vision-instruct", "nvidia/neva-22b"]
       : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
 
@@ -389,10 +382,12 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
     nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
       for (const model of nvidiaModels) {
         try {
-          const userContent = isImage
+          // For images and image-based PDFs: send first page as image_url to vision model
+          // For text PDFs: send extracted text as plain string
+          const userContent = (isImage || isImageBasedPdf)
             ? [
                 { type: "text", text: promptText },
-                { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } },
+                { type: "image_url", image_url: { url: isImage ? `data:${mimeType};base64,${rawBase64}` : `data:application/pdf;base64,${rawBase64}` } },
               ]
             : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
 
@@ -434,18 +429,32 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
 
   // 2. Secondary Provider: Mistral AI (Free Tier Compatible)
   if ((!rawJson || rawJson === "[]") && mistralKey) {
-    const mistralModels = isImage
-      ? ["pixtral-12b-2409", "pixtral-large-latest"]
+    const mistralModels = (isImage || isImageBasedPdf)
+      ? ["pixtral-12b-2409", "pixtral-large-latest"]  // Vision models support images + PDF OCR
       : ["open-mistral-7b", "mistral-small-latest", "open-mixtral-8x7b"];
 
     for (const model of mistralModels) {
       try {
-        const userContent = isImage
-          ? [
-              { type: "text", text: promptText },
-              { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` },
-            ]
-          : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
+        let userContent: string | object[];
+        if (isImage) {
+          // Regular image: use image_url
+          userContent = [
+            { type: "text", text: promptText },
+            { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` },
+          ];
+        } else if (isImageBasedPdf) {
+          // Image-based PDF: use document_url (Mistral Pixtral OCR)
+          userContent = [
+            { type: "text", text: promptText },
+            { type: "document_url", document_url: `data:application/pdf;base64,${rawBase64}` },
+          ];
+        } else {
+          // Text PDF: plain text extraction
+          userContent = `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
+        }
+
+        // Vision/document models don't support json_object response_format
+        const responseFormat = (isImage || isImageBasedPdf) ? undefined : { type: "json_object" };
 
         const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
@@ -456,7 +465,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
           },
           body: JSON.stringify({
             model,
-            response_format: { type: "json_object" },
+            ...(responseFormat ? { response_format: responseFormat } : {}),
             messages: [
               { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
               { role: "user", content: userContent },

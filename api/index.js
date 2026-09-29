@@ -1614,6 +1614,7 @@ __export(pdfParser_exports, {
   parsePdfToBytes: () => parsePdfToBytes
 });
 import zlib from "zlib";
+import { createRequire } from "module";
 function extractEntityKicker(headline, category, source) {
   const h = headline.toLowerCase();
   if (/deepseek|chatgpt|openai|claude|anthropic|perplexity|llm|agent|gpt|gemini|numbat|model/.test(h)) {
@@ -1775,18 +1776,22 @@ async function generateAiRecreatedImage(prompt) {
   }
   return null;
 }
-function extractPdfText(rawBase64) {
+async function extractPdfText(rawBase64) {
   try {
     const buf = Buffer.from(rawBase64, "base64");
+    try {
+      const pdfParse = _require("pdf-parse");
+      const data = await pdfParse(buf, { max: 0 });
+      const text2 = (data.text || "").trim();
+      if (text2.length > 50) {
+        console.info(`[PDFParser] pdf-parse extracted ${text2.length} chars, ${data.numpages} pages`);
+        return text2;
+      }
+    } catch (err) {
+      console.warn("[PDFParser] pdf-parse failed, falling back to manual extraction:", err instanceof Error ? err.message : String(err));
+    }
     const str = buf.toString("latin1");
     const extractedParts = [];
-    const textBlocks = str.match(/\((?:[^()\\]|\\.)*\)/g) || [];
-    for (const match of textBlocks) {
-      const cleaned = match.slice(1, -1).replace(/\\([()])/g, "$1").replace(/\\n/g, "\n").replace(/\\r/g, "\r").trim();
-      if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
-        extractedParts.push(cleaned);
-      }
-    }
     const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
     let streamMatch;
     while ((streamMatch = streamRegex.exec(str)) !== null) {
@@ -1794,25 +1799,13 @@ function extractPdfText(rawBase64) {
       try {
         const streamBuf = Buffer.from(streamContent, "latin1");
         const decompressed = zlib.inflateSync(streamBuf).toString("utf-8");
-        const subMatches = decompressed.match(/\((?:[^()\\]|\\.)*\)/g) || [];
-        for (const match of subMatches) {
-          const cleaned = match.slice(1, -1).replace(/\\([()])/g, "$1").replace(/\\n/g, "\n").replace(/\\r/g, "\r").trim();
-          if (cleaned.length > 2 && /[a-zA-Z0-9]/.test(cleaned)) {
-            extractedParts.push(cleaned);
-          }
-        }
+        const words = decompressed.split(/\s+/).filter((w) => w.length > 2 && /[a-zA-Z]/.test(w));
+        if (words.length > 5) extractedParts.push(words.join(" "));
       } catch {
       }
     }
-    if (extractedParts.length === 0) {
-      const printable = str.replace(/[^\x20-\x7E\n\r\t]/g, " ");
-      const words = printable.split(/\s+/).filter((w) => w.length > 2 && /[a-zA-Z]/.test(w));
-      if (words.length > 10) {
-        extractedParts.push(words.join(" "));
-      }
-    }
     const resultText = extractedParts.join(" ").replace(/\s+/g, " ").trim();
-    if (resultText.length > 20) return resultText;
+    if (resultText.length > 50) return resultText;
   } catch {
   }
   return "";
@@ -1865,7 +1858,13 @@ async function parsePdfToBytes(pdfBase64OrText) {
   const isImage = isBase64Pdf && mimeType.startsWith("image/");
   let documentText = plainText;
   if (isBase64Pdf && !isImage && rawBase64) {
-    documentText = extractPdfText(rawBase64) || plainText || "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
+    documentText = await extractPdfText(rawBase64) || plainText || "";
+  }
+  const isImageBasedPdf = isBase64Pdf && !isImage && documentText.length < 100;
+  if (isImageBasedPdf) {
+    console.info("[PDFParser] PDF appears to be image-based (no extractable text). Routing to vision AI via document_url.");
+  } else if (!isImage && !documentText) {
+    documentText = "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
   }
   const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.tech).
 You are analyzing an uploaded multi-story document / PDF (each page contains a distinct mobile news card with an image at the top, a headline, a summary, and a publisher source at the bottom).
@@ -1886,7 +1885,7 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
 7. "source": Extract the publisher / source name indicated at the bottom of the card (e.g., "Electrek", "The New York Times", "Nikkei Asia", "GitHub", "NewsBytes").`;
   let rawJson = "[]";
   if (nvidiaKey) {
-    const nvidiaModels = isImage ? ["meta/llama-3.2-90b-vision-instruct", "nvidia/neva-22b"] : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
+    const nvidiaModels = isImage || isImageBasedPdf ? ["meta/llama-3.2-90b-vision-instruct", "nvidia/neva-22b"] : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
     const nvidiaEndpoints = [
       "https://integrate.api.nvidia.com/v1/chat/completions",
       "https://ai.api.nvidia.com/v1/chat/completions"
@@ -1894,9 +1893,9 @@ CRITICAL CONSTRAINTS & REQUIREMENTS:
     nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
       for (const model of nvidiaModels) {
         try {
-          const userContent = isImage ? [
+          const userContent = isImage || isImageBasedPdf ? [
             { type: "text", text: promptText },
-            { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } }
+            { type: "image_url", image_url: { url: isImage ? `data:${mimeType};base64,${rawBase64}` : `data:application/pdf;base64,${rawBase64}` } }
           ] : `${promptText}
 
 DOCUMENT TEXT:
@@ -1936,16 +1935,27 @@ ${documentText.slice(0, 5e4)}`;
     }
   }
   if ((!rawJson || rawJson === "[]") && mistralKey) {
-    const mistralModels = isImage ? ["pixtral-12b-2409", "pixtral-large-latest"] : ["open-mistral-7b", "mistral-small-latest", "open-mixtral-8x7b"];
+    const mistralModels = isImage || isImageBasedPdf ? ["pixtral-12b-2409", "pixtral-large-latest"] : ["open-mistral-7b", "mistral-small-latest", "open-mixtral-8x7b"];
     for (const model of mistralModels) {
       try {
-        const userContent = isImage ? [
-          { type: "text", text: promptText },
-          { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }
-        ] : `${promptText}
+        let userContent;
+        if (isImage) {
+          userContent = [
+            { type: "text", text: promptText },
+            { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }
+          ];
+        } else if (isImageBasedPdf) {
+          userContent = [
+            { type: "text", text: promptText },
+            { type: "document_url", document_url: `data:application/pdf;base64,${rawBase64}` }
+          ];
+        } else {
+          userContent = `${promptText}
 
 DOCUMENT TEXT:
 ${documentText.slice(0, 5e4)}`;
+        }
+        const responseFormat = isImage || isImageBasedPdf ? void 0 : { type: "json_object" };
         const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -1955,7 +1965,7 @@ ${documentText.slice(0, 5e4)}`;
           },
           body: JSON.stringify({
             model,
-            response_format: { type: "json_object" },
+            ...responseFormat ? { response_format: responseFormat } : {},
             messages: [
               { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
               { role: "user", content: userContent }
@@ -2028,6 +2038,7 @@ ${documentText.slice(0, 5e4)}`;
   );
   return results;
 }
+var _require;
 var init_pdfParser = __esm({
   "server/_core/pdfParser.ts"() {
     "use strict";
@@ -2035,6 +2046,7 @@ var init_pdfParser = __esm({
     init_services();
     init_aiKeys();
     init_imageGeneration();
+    _require = createRequire(import.meta.url);
   }
 });
 
