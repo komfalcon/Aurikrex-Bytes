@@ -1909,22 +1909,20 @@ async function parsePdfToBytes(pdfBase64OrText) {
     documentText = "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
   }
   const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.tech).
-You are analyzing an uploaded multi-story document / PDF (each page contains a distinct mobile news card with an image at the top, a headline, a summary, and a publisher source at the bottom).
+You are analyzing an uploaded multi-page document / PDF containing news cards.
 
-YOUR TASK:
-Scan the entire document and extract EVERY single distinct news story found across the pages (up to 30 stories).
-
-CRITICAL CONSTRAINTS & REQUIREMENTS:
-1. Do NOT output raw PDF binary code, headers, or object tokens (%PDF, obj, endobj, stream, /Catalog, /Pages, xref). Extract ONLY actual human-readable news stories.
-2. For EACH story, write a comprehensive 3-part editorial brief:
+CRITICAL INGESTION & FILTERING RULES:
+1. FILTER OUT NON-NEWS ITEMS & FLYERS: Ignore non-news pages such as event flyers, posters, schedules, advertisements, cover pages, or promotional banners (e.g. "Ingenium Tech Week", "Rally and Gyration", event lineups). ONLY extract genuine technology/science news articles.
+2. EXTRACT PAGE INDEX: For each valid news story found, return "pageNumber": (1-based page number where the story appears). This is required to pair the exact cover photo from that page.
+3. For EACH valid story, write a 3-part editorial brief:
    - Part 1: The Lead \u2014 What happened, who announced it, and the core factual developments.
-   - Part 2: Why It Matters \u2014 The commercial, architectural, or industry-wide impact.
-   - Part 3: The Outlook \u2014 Key engineering milestones, product rollouts, or regulatory challenges to watch next.
-3. Every single "body" MUST be comprehensive and substantive, strictly targeting 650-750 characters. No repetitive text or placeholder sentences.
-4. "headline": Crisp, active headline summarizing the story (under 80 characters). Strip any mobile app UI tags or brackets.
-5. "category": Select the most accurate from: "Tech", "AI", "Science", "Innovation", "Crypto".
-6. "imagePrompt": Look carefully at the image or graphic at the top of the news card on that page. Describe that exact visual scene in a detailed, photorealistic prompt suitable for image generation (e.g., "A studio photograph of...", "Close-up of..."). Focus on high-end tech photography realism.
-7. "source": Extract the publisher / source name indicated at the bottom of the card (e.g., "Electrek", "The New York Times", "Nikkei Asia", "GitHub", "NewsBytes").`;
+   - Part 2: Why It Matters \u2014 Commercial, architectural, or industry-wide impact.
+   - Part 3: The Outlook \u2014 Key engineering milestones or product rollouts to watch next.
+4. "body": Strictly target 650-750 characters. No repetitive text.
+5. "headline": Crisp, active headline (under 80 characters). Strip app tags.
+6. "category": Choose from: "Tech", "AI", "Science", "Innovation", "Crypto".
+7. "imagePrompt": Detailed photorealistic visual description of the photo on that page.
+8. "source": Publisher/source name (e.g., "The Information", "Electrek", "Reuters").`;
   let rawJson = "[]";
   if (nvidiaKey) {
     const nvidiaModels = isImage || isImageBasedPdf ? ["meta/llama-3.2-90b-vision-instruct", "nvidia/neva-22b"] : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
@@ -2050,12 +2048,14 @@ ${documentText.slice(0, 5e4)}`;
       publisher: item.source || "Tech Wire",
       publishedAt: /* @__PURE__ */ new Date()
     });
+    const pageNum = Number(item.pageNumber || idx + 1);
     return {
       cleanTitle,
       finalBody,
       category,
       source: item.source,
-      imagePrompt: item.imagePrompt
+      imagePrompt: item.imagePrompt,
+      pageNumber: pageNum
     };
   });
   const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
@@ -2063,7 +2063,8 @@ ${documentText.slice(0, 5e4)}`;
   const results = await Promise.all(
     draftItems.map(async (draft, idx) => {
       let imageUrl = null;
-      const rawEmbedded = embeddedImages[idx];
+      const imageIdx = Math.max(0, draft.pageNumber - 1);
+      const rawEmbedded = embeddedImages[imageIdx] || embeddedImages[idx];
       if (rawEmbedded) {
         const cdnUrl = await uploadBase64ToCloudinary(rawEmbedded);
         imageUrl = cdnUrl || rawEmbedded;
