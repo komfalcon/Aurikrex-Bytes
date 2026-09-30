@@ -423,9 +423,9 @@ CRITICAL INGESTION & FILTERING RULES:
 
   let rawJson = "[]";
 
-  // 1. Primary Provider: NVIDIA AI NIM (Developer Credits Supported - Fast & High Throughput)
-  if (nvidiaKey) {
-    const nvidiaModels = (isImage || isImageBasedPdf)
+  // 1. Primary Provider: NVIDIA AI NIM (For single images or text PDFs)
+  if (nvidiaKey && (isImage || !isImageBasedPdf)) {
+    const nvidiaModels = isImage
       ? ["meta/llama-3.2-90b-vision-instruct", "meta/llama-3.2-11b-vision-instruct"]
       : ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"];
 
@@ -436,12 +436,10 @@ CRITICAL INGESTION & FILTERING RULES:
     nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
       for (const model of nvidiaModels) {
         try {
-          // For images and image-based PDFs: send first page as image_url to vision model
-          // For text PDFs: send extracted text as plain string
-          const userContent = (isImage || isImageBasedPdf)
+          const userContent = isImage
             ? [
                 { type: "text", text: promptText },
-                { type: "image_url", image_url: { url: isImage ? `data:${mimeType};base64,${rawBase64}` : `data:application/pdf;base64,${rawBase64}` } },
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } },
               ]
             : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
 
@@ -484,8 +482,8 @@ CRITICAL INGESTION & FILTERING RULES:
   // Extract all embedded JPEG images from PDF byte buffer
   const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
 
-  // If image-based PDF and we extracted embedded JPEGs: process text pages concurrently via Mistral Pixtral vision
-  if (isImageBasedPdf && embeddedImages.length > 0 && mistralKey) {
+  // If image-based PDF and we extracted embedded JPEGs: process text pages concurrently via Mistral Pixtral / NVIDIA vision
+  if (isImageBasedPdf && embeddedImages.length > 0 && (mistralKey || nvidiaKey)) {
     console.info(`[PDFParser] Processing ${embeddedImages.length} images concurrently via Mistral Pixtral vision...`);
 
     const hasTextScreenshots = embeddedImages.some(img => {

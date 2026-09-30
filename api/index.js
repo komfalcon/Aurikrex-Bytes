@@ -1946,17 +1946,17 @@ CRITICAL INGESTION & FILTERING RULES:
 7. "imagePrompt": Detailed photorealistic visual description of the photo on that page.
 8. "source": Publisher/source name (e.g., "The Information", "Electrek", "Reuters").`;
   let rawJson = "[]";
-  if (nvidiaKey) {
-    const nvidiaModels = isImage || isImageBasedPdf ? ["meta/llama-3.2-90b-vision-instruct", "meta/llama-3.2-11b-vision-instruct"] : ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"];
+  if (nvidiaKey && (isImage || !isImageBasedPdf)) {
+    const nvidiaModels = isImage ? ["meta/llama-3.2-90b-vision-instruct", "meta/llama-3.2-11b-vision-instruct"] : ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"];
     const nvidiaEndpoints = [
       "https://integrate.api.nvidia.com/v1/chat/completions"
     ];
     nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
       for (const model of nvidiaModels) {
         try {
-          const userContent = isImage || isImageBasedPdf ? [
+          const userContent = isImage ? [
             { type: "text", text: promptText },
-            { type: "image_url", image_url: { url: isImage ? `data:${mimeType};base64,${rawBase64}` : `data:application/pdf;base64,${rawBase64}` } }
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } }
           ] : `${promptText}
 
 DOCUMENT TEXT:
@@ -1996,7 +1996,7 @@ ${documentText.slice(0, 5e4)}`;
     }
   }
   const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
-  if (isImageBasedPdf && embeddedImages.length > 0 && mistralKey) {
+  if (isImageBasedPdf && embeddedImages.length > 0 && (mistralKey || nvidiaKey)) {
     console.info(`[PDFParser] Processing ${embeddedImages.length} images concurrently via Mistral Pixtral vision...`);
     const hasTextScreenshots = embeddedImages.some((img) => {
       const d = getJpegDimensions(img);
