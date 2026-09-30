@@ -58,6 +58,7 @@ import {
 } from "./_core/cookies.js";
 import { systemRouter } from "./_core/systemRouter.js";
 import { publicProcedure, router } from "./_core/trpc.js";
+import { getMistralApiKey, getNvidiaApiKey } from "./_core/aiKeys.js";
 import {
   assertActiveAdmin,
   assertPermission,
@@ -931,13 +932,15 @@ export const appRouter = router({
 
         const searchQuery = `${post.headline} — ${input.question}`;
         let webContext = "";
+        let tavilyDirectAnswer = "";
 
-        if (process.env.TAVILY_API_KEY) {
+        const tavilyApiKey = (process.env.TAVILY_API_KEY || "").trim();
+        if (tavilyApiKey) {
           try {
             const tavilyRes = await axios.post(
               "https://api.tavily.com/search",
               {
-                api_key: process.env.TAVILY_API_KEY,
+                api_key: tavilyApiKey,
                 query: searchQuery,
                 max_results: 5,
                 search_depth: "basic",
@@ -945,6 +948,7 @@ export const appRouter = router({
               },
               { timeout: 10_000 }
             );
+            tavilyDirectAnswer = tavilyRes.data?.answer || "";
             const results: any[] = tavilyRes.data?.results ?? [];
             webContext = results
               .map(
@@ -953,7 +957,7 @@ export const appRouter = router({
               )
               .join("\n\n");
           } catch (err) {
-            console.warn("[FollowUp] Tavily search failed, falling back to story context:", err);
+            console.warn("[FollowUp] Tavily search failed, using story context:", err);
           }
         }
 
@@ -969,37 +973,82 @@ Instructions:
 1. Provide a direct, insightful, and concise answer to the reader's question in 2-3 clear paragraphs.
 2. Synthesize the provided story details and web context into a natural explanation.
 3. Keep the tone calm, authoritative, and focused on tech signal rather than hype.
-4. Do not invent false facts.`;
+4. Do NOT repeat or copy the original story text verbatim.
+5. Do NOT invent false facts.`;
 
         let answer = "";
-        const mistralApiKey = process.env.MISTRAL_API_KEY;
+        const mistralApiKey = getMistralApiKey();
+        const nvidiaApiKey = getNvidiaApiKey();
 
+        // 1. Primary: Try Mistral AI models
         if (mistralApiKey) {
-          try {
-            const mistralRes = await axios.post(
-              "https://api.mistral.ai/v1/chat/completions",
-              {
-                model: "mistral-small-latest",
-                messages: [
-                  { role: "system", content: systemPrompt },
-                  { role: "user", content: input.question },
-                ],
-                max_tokens: 600,
-                temperature: 0.4,
-              },
-              {
-                headers: { Authorization: `Bearer ${mistralApiKey}` },
-                timeout: 20_000,
+          for (const model of ["mistral-small-latest", "open-mistral-7b"]) {
+            try {
+              const mistralRes = await axios.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                {
+                  model,
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: input.question },
+                  ],
+                  max_tokens: 600,
+                  temperature: 0.4,
+                },
+                {
+                  headers: { Authorization: `Bearer ${mistralApiKey}` },
+                  timeout: 15_000,
+                }
+              );
+              const text = mistralRes.data?.choices?.[0]?.message?.content ?? "";
+              if (text && text.trim()) {
+                answer = text.trim();
+                break;
               }
-            );
-            answer = mistralRes.data?.choices?.[0]?.message?.content ?? "";
-          } catch (mistralErr) {
-            console.warn("[FollowUp] Mistral AI call failed:", mistralErr);
+            } catch (mistralErr) {
+              console.warn(`[FollowUp] Mistral AI model ${model} failed:`, mistralErr instanceof Error ? mistralErr.message : String(mistralErr));
+            }
           }
         }
 
+        // 2. Secondary: Fall back to NVIDIA NIM if Mistral failed
+        if (!answer && nvidiaApiKey) {
+          for (const model of ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"]) {
+            try {
+              const nvidiaRes = await axios.post(
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                {
+                  model,
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: input.question },
+                  ],
+                  max_tokens: 600,
+                  temperature: 0.4,
+                },
+                {
+                  headers: { Authorization: `Bearer ${nvidiaApiKey}` },
+                  timeout: 15_000,
+                }
+              );
+              const text = nvidiaRes.data?.choices?.[0]?.message?.content ?? "";
+              if (text && text.trim()) {
+                answer = text.trim();
+                break;
+              }
+            } catch (nvidiaErr) {
+              console.warn(`[FollowUp] NVIDIA NIM model ${model} failed:`, nvidiaErr instanceof Error ? nvidiaErr.message : String(nvidiaErr));
+            }
+          }
+        }
+
+        // 3. Fallback to Tavily direct web answer if AI endpoints failed
+        if (!answer && tavilyDirectAnswer) {
+          answer = tavilyDirectAnswer;
+        }
+
         if (!answer) {
-          answer = `Regarding "${input.question}": ${post.headline} highlights key developments in this domain. ${post.body.slice(0, 300)}…`;
+          answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable live AI web search.`;
         }
 
         return { answer };
