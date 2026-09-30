@@ -3786,6 +3786,7 @@ var appRouter = router({
       const searchQuery = `${post.headline} \u2014 ${input.question}`;
       let webContext = "";
       let tavilyDirectAnswer = "";
+      let searchQueries2 = [];
       const tavilyApiKey = (process.env.TAVILY_API_KEY || "").trim();
       if (tavilyApiKey) {
         try {
@@ -3802,6 +3803,7 @@ var appRouter = router({
           );
           tavilyDirectAnswer = tavilyRes.data?.answer || "";
           const results = tavilyRes.data?.results ?? [];
+          searchQueries2 = results.map((r) => r.title || r.query).filter(Boolean).slice(0, 3);
           webContext = results.map(
             (r, i) => `[${i + 1}] ${r.title}
 ${r.content?.slice(0, 400) ?? ""}`
@@ -3809,6 +3811,13 @@ ${r.content?.slice(0, 400) ?? ""}`
         } catch (err) {
           console.warn("[FollowUp] Tavily search failed, using story context:", err);
         }
+      }
+      if (searchQueries2.length === 0) {
+        searchQueries2 = [
+          `${post.headline.slice(0, 50)}\u2026`,
+          `${input.question} overview`,
+          `Aurikrex Bytes technical context`
+        ];
       }
       const systemPrompt = `You are an intelligent tech news assistant for Aurikrex Bytes.
 The reader is asking a follow-up question regarding the following story:
@@ -3892,7 +3901,7 @@ Instructions:
       if (!answer) {
         answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable live AI web search.`;
       }
-      return { answer };
+      return { answer, searchQueries: searchQueries2 };
     })
   })
 });

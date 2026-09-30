@@ -26,9 +26,12 @@ import {
   Share2,
   ShieldCheck,
   Sparkles,
+  Square,
+  SquarePen,
   Sun,
   Upload,
   User,
+  Workflow,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -1459,12 +1462,14 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
   const [question, setQuestion] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
+  const [searchQueries, setSearchQueries] = useState<string[]>([]);
   const [asked, setAsked] = useState<string | null>(null);
   const answerRef = useRef<HTMLDivElement>(null);
 
   const followUp = trpc.publicPosts.askFollowUp.useMutation({
     onSuccess: (data) => {
       setAnswer(data.answer);
+      setSearchQueries(data.searchQueries || []);
       setTimeout(() => answerRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80);
     },
     onError: (err) => {
@@ -1478,6 +1483,7 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
     if (!q || followUp.isPending) return;
     setAsked(q);
     setAnswer(null);
+    setSearchQueries([]);
     setIsOpen(true);
     followUp.mutate({ postId, question: q });
     setQuestion("");
@@ -1485,102 +1491,145 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
 
   return (
     <>
-      {/* Floating Action Bar */}
-      <div className="followup-floating-bar" role="region" aria-label="Ask a follow-up bar">
-        <form className="followup-floating-form" onSubmit={handleSubmit}>
-          <div className="followup-floating-input-wrap">
-            <Sparkles size={16} className="followup-floating-sparkle" />
-            <input
-              type="text"
-              className="followup-floating-input"
-              placeholder="Ask a follow-up…"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              maxLength={300}
-              aria-label="Ask a follow-up"
-            />
-          </div>
+      {/* Pinned Bottom Bar (Default state on story page) */}
+      <div className="followup-bottom-bar" role="region" aria-label="Ask follow-up bar">
+        <form className="followup-bottom-pill-form" onSubmit={handleSubmit}>
+          <input
+            type="text"
+            className="followup-bottom-input"
+            placeholder="Ask follow-up…"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            maxLength={300}
+            aria-label="Ask follow-up"
+          />
           <button
             type="submit"
-            className="followup-floating-submit"
+            className="followup-bottom-send-btn"
             disabled={!question.trim() || followUp.isPending}
             aria-label="Submit question"
           >
-            <Search size={15} />
+            {followUp.isPending ? <Square size={13} fill="currentColor" /> : <Search size={16} />}
           </button>
         </form>
+        <button
+          type="button"
+          className="followup-bottom-circle-btn"
+          onClick={() => setIsOpen(true)}
+          aria-label="Open follow-up view"
+        >
+          <SquarePen size={18} />
+        </button>
       </div>
 
-      {/* Follow-up Response Modal */}
+      {/* Full-Screen Workspace Overlay */}
       {isOpen && typeof document !== "undefined" && createPortal(
-        <div className="followup-modal-backdrop" onClick={() => setIsOpen(false)} role="dialog" aria-modal="true" aria-label="AI Follow-up response modal">
-          <div className="followup-modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="followup-modal-header">
-              <div className="followup-modal-title">
-                <Sparkles size={18} />
-                <h3>AI Follow-up & Web Search</h3>
+        <div className="followup-fullscreen-view" role="dialog" aria-modal="true" aria-label="Follow-up thread">
+          {/* Top Left Close Button */}
+          <div className="followup-fullscreen-topbar">
+            <button
+              type="button"
+              className="followup-close-circle-btn"
+              onClick={() => setIsOpen(false)}
+              aria-label="Close follow-up view"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          <div className="followup-fullscreen-content">
+            {/* Context Card: "Follow up to" */}
+            <div className="followup-context-card">
+              <div className="followup-context-kicker">
+                <Workflow size={15} />
+                <span>Follow up to</span>
               </div>
-              <button
-                type="button"
-                className="followup-modal-close"
-                onClick={() => setIsOpen(false)}
-                aria-label="Close modal"
-              >
-                <X size={18} />
-              </button>
+              <p className="followup-context-headline">{postHeadline}</p>
             </div>
 
-            <div className="followup-modal-body">
-              {asked && (
-                <div className="followup-exchange" ref={answerRef}>
-                  <div className="followup-question">
-                    <strong>Q: {asked}</strong>
-                  </div>
-                  {followUp.isPending ? (
-                    <div className="followup-loading">
-                      <span className="followup-dot" /><span className="followup-dot" /><span className="followup-dot" />
-                      <span className="followup-loading-text">Searching live web & synthesizing insights…</span>
-                    </div>
-                  ) : answer ? (
-                    <div className="followup-answer">
-                      <FormattedBody body={answer} className="followup-answer-body" />
-                    </div>
-                  ) : null}
+            {/* User Message Bubble */}
+            {asked && (
+              <div className="followup-user-bubble-wrap">
+                <div className="followup-user-bubble">
+                  <span>{asked}</span>
                 </div>
-              )}
-            </div>
-
-            <div className="followup-modal-footer">
-              <form className="followup-modal-form" onSubmit={handleSubmit}>
-                <input
-                  type="text"
-                  className="followup-modal-input"
-                  placeholder="Ask another question about this story…"
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  maxLength={300}
-                  disabled={followUp.isPending}
-                  aria-label="Ask another question"
-                />
-                <button
-                  type="submit"
-                  className="followup-modal-submit"
-                  disabled={!question.trim() || followUp.isPending}
-                  aria-label="Submit follow-up"
-                >
-                  <Search size={15} />
-                </button>
-              </form>
-              <div className="followup-modal-actions">
-                <button
-                  type="button"
-                  className="button button-small button-outline"
-                  onClick={() => setIsOpen(false)}
-                >
-                  Cancel
-                </button>
               </div>
-            </div>
+            )}
+
+            {/* AI Response or Thinking State */}
+            {followUp.isPending ? (
+              <div className="followup-thinking-block">
+                <div className="followup-thinking-header">
+                  <Sparkles size={18} className="followup-thinking-icon" />
+                  <strong>Thinking…</strong>
+                </div>
+                <p className="followup-thinking-sub">Getting more details to help better explain the topic</p>
+
+                <div className="followup-searching-section">
+                  <span className="followup-searching-label">SEARCHING</span>
+                  <div className="followup-searching-pills">
+                    <div className="followup-search-pill"><Search size={14} /> <span>{asked ? `${asked.slice(0, 35)}…` : "Searching live web…"}</span></div>
+                    <div className="followup-search-pill"><Search size={14} /> <span>{postHeadline.slice(0, 38)}…</span></div>
+                  </div>
+                </div>
+              </div>
+            ) : answer ? (
+              <div className="followup-response-block" ref={answerRef}>
+                <div className="followup-thinking-header" style={{ marginBottom: "12px" }}>
+                  <Sparkles size={18} className="followup-thinking-icon" />
+                  <strong>AI Explanation</strong>
+                </div>
+
+                {searchQueries.length > 0 && (
+                  <div className="followup-searching-section">
+                    <span className="followup-searching-label">SEARCHED</span>
+                    <div className="followup-searching-pills">
+                      {searchQueries.map((qStr, idx) => (
+                        <div key={idx} className="followup-search-pill">
+                          <Search size={14} />
+                          <span>{qStr}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="followup-answer-text">
+                  <FormattedBody body={answer} className="followup-answer-body" />
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Bottom Floating Bar inside Full-Screen View */}
+          <div className="followup-bottom-bar followup-bottom-bar-fullscreen">
+            <form className="followup-bottom-pill-form" onSubmit={handleSubmit}>
+              <input
+                type="text"
+                className="followup-bottom-input"
+                placeholder="Ask follow-up…"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                maxLength={300}
+                disabled={followUp.isPending}
+                aria-label="Ask follow-up"
+              />
+              <button
+                type="submit"
+                className="followup-bottom-send-btn"
+                disabled={!question.trim() || followUp.isPending}
+                aria-label="Submit question"
+              >
+                {followUp.isPending ? <Square size={13} fill="currentColor" /> : <Search size={16} />}
+              </button>
+            </form>
+            <button
+              type="button"
+              className="followup-bottom-circle-btn"
+              onClick={() => setIsOpen(false)}
+              aria-label="Close"
+            >
+              <SquarePen size={18} />
+            </button>
           </div>
         </div>,
         document.body
