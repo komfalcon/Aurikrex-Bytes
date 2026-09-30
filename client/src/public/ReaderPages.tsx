@@ -1457,6 +1457,7 @@ export function Archive() {
 }
 function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline: string }) {
   const [question, setQuestion] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
   const [asked, setAsked] = useState<string | null>(null);
   const answerRef = useRef<HTMLDivElement>(null);
@@ -1477,57 +1478,114 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
     if (!q || followUp.isPending) return;
     setAsked(q);
     setAnswer(null);
+    setIsOpen(true);
     followUp.mutate({ postId, question: q });
     setQuestion("");
   };
 
   return (
-    <section className="followup-panel" aria-label="Ask a follow-up question">
-      <div className="followup-header">
-        <Sparkles size={16} />
-        <span>Ask a follow-up</span>
+    <>
+      {/* Floating Action Bar */}
+      <div className="followup-floating-bar" role="region" aria-label="Ask a follow-up bar">
+        <form className="followup-floating-form" onSubmit={handleSubmit}>
+          <div className="followup-floating-input-wrap">
+            <Sparkles size={16} className="followup-floating-sparkle" />
+            <input
+              type="text"
+              className="followup-floating-input"
+              placeholder="Ask a follow-up…"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              maxLength={300}
+              aria-label="Ask a follow-up"
+            />
+          </div>
+          <button
+            type="submit"
+            className="followup-floating-submit"
+            disabled={!question.trim() || followUp.isPending}
+            aria-label="Submit question"
+          >
+            <Search size={15} />
+          </button>
+        </form>
       </div>
 
-      {asked && (
-        <div className="followup-exchange" ref={answerRef}>
-          <div className="followup-question">
-            <strong>Q: {asked}</strong>
-          </div>
-          {followUp.isPending ? (
-            <div className="followup-loading">
-              <span className="followup-dot" /><span className="followup-dot" /><span className="followup-dot" />
-              <span className="followup-loading-text">Searching web & synthesizing insights…</span>
+      {/* Follow-up Response Modal */}
+      {isOpen && typeof document !== "undefined" && createPortal(
+        <div className="followup-modal-backdrop" onClick={() => setIsOpen(false)} role="dialog" aria-modal="true" aria-label="AI Follow-up response modal">
+          <div className="followup-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="followup-modal-header">
+              <div className="followup-modal-title">
+                <Sparkles size={18} />
+                <h3>AI Follow-up & Web Search</h3>
+              </div>
+              <button
+                type="button"
+                className="followup-modal-close"
+                onClick={() => setIsOpen(false)}
+                aria-label="Close modal"
+              >
+                <X size={18} />
+              </button>
             </div>
-          ) : answer ? (
-            <div className="followup-answer">
-              <FormattedBody body={answer} className="followup-answer-body" />
-            </div>
-          ) : null}
-        </div>
-      )}
 
-      <form className="followup-form" onSubmit={handleSubmit}>
-        <input
-          type="text"
-          className="followup-input"
-          placeholder={`Ask a follow-up about this story…`}
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          maxLength={300}
-          disabled={followUp.isPending}
-          aria-label="Follow-up question"
-        />
-        <button
-          type="submit"
-          className="followup-submit"
-          disabled={!question.trim() || followUp.isPending}
-          aria-label="Submit question"
-        >
-          <Search size={15} />
-        </button>
-      </form>
-      <p className="followup-hint">Live web search + AI synthesis for deep story context.</p>
-    </section>
+            <div className="followup-modal-body">
+              {asked && (
+                <div className="followup-exchange" ref={answerRef}>
+                  <div className="followup-question">
+                    <strong>Q: {asked}</strong>
+                  </div>
+                  {followUp.isPending ? (
+                    <div className="followup-loading">
+                      <span className="followup-dot" /><span className="followup-dot" /><span className="followup-dot" />
+                      <span className="followup-loading-text">Searching live web & synthesizing insights…</span>
+                    </div>
+                  ) : answer ? (
+                    <div className="followup-answer">
+                      <FormattedBody body={answer} className="followup-answer-body" />
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            <div className="followup-modal-footer">
+              <form className="followup-modal-form" onSubmit={handleSubmit}>
+                <input
+                  type="text"
+                  className="followup-modal-input"
+                  placeholder="Ask another question about this story…"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  maxLength={300}
+                  disabled={followUp.isPending}
+                  aria-label="Ask another question"
+                />
+                <button
+                  type="submit"
+                  className="followup-modal-submit"
+                  disabled={!question.trim() || followUp.isPending}
+                  aria-label="Submit follow-up"
+                >
+                  <Search size={15} />
+                </button>
+              </form>
+              <div className="followup-modal-actions">
+                <button
+                  type="button"
+                  className="button button-small button-outline"
+                  onClick={() => setIsOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 
@@ -1572,9 +1630,19 @@ export function PostDetail() {
           <div className="detail-loading" />
         ) : post.data ? (
           <article>
-            <Link className="back-link" href="/archive">
-              ← Back to all bytes
-            </Link>
+            <button
+              type="button"
+              className="back-link text-button"
+              onClick={() => {
+                if (typeof window !== "undefined" && window.history.length > 1) {
+                  window.history.back();
+                } else {
+                  window.location.href = "/archive";
+                }
+              }}
+            >
+              ← Back
+            </button>
             <div className="detail-meta">
               <span className="eyebrow">Aurikrex Bytes</span>
               <span>{formatDate(post.data.publishedTime)} · 4 min read</span>
