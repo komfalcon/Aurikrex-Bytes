@@ -455,34 +455,91 @@ CRITICAL INGESTION & FILTERING RULES:
     }
   }
 
-  // 2. Secondary Provider: Mistral AI (Free Tier Compatible)
-  if ((!rawJson || rawJson === "[]") && mistralKey) {
-    const mistralModels = (isImage || isImageBasedPdf)
-      ? ["pixtral-12b-2409", "pixtral-large-latest"]  // Vision models support images + PDF OCR
-      : ["open-mistral-7b", "mistral-small-latest", "open-mixtral-8x7b"];
+  // Extract all embedded JPEG images from PDF byte buffer
+  const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
 
+  // If image-based PDF and we extracted embedded JPEGs: process each page photo individually to extract ALL stories across all 14+ pages
+  if (isImageBasedPdf && embeddedImages.length > 0 && mistralKey) {
+    console.info(`[PDFParser] Processing ${embeddedImages.length} pages individually via Mistral Pixtral vision...`);
+    const allExtractedStories: CuratedByte[] = [];
+
+    for (let pageIdx = 0; pageIdx < embeddedImages.length; pageIdx++) {
+      const pageImg = embeddedImages[pageIdx];
+      const pageNum = pageIdx + 1;
+      const pagePrompt = `${promptText}\n\nNOTE: You are analyzing PAGE ${pageNum} of ${embeddedImages.length}.`;
+
+      for (const model of ["pixtral-12b-2409", "pixtral-large-latest"]) {
+        try {
+          const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${mistralKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                { role: "user", content: [
+                    { type: "text", text: pagePrompt },
+                    { type: "image_url", image_url: pageImg },
+                  ]
+                },
+              ],
+              temperature: 0.3,
+              max_tokens: 4096,
+            }),
+          });
+
+          if (response.ok) {
+            const resData = await response.json();
+            const pageJson = resData.choices?.[0]?.message?.content || "[]";
+            const parsedPage = parseAiJsonResponse(pageJson);
+            if (parsedPage.length > 0) {
+              for (const item of parsedPage) {
+                let bodyText = extractAiBody(item);
+                if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) bodyText = "";
+                const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${pageNum}`)).slice(0, 120);
+                const category = String(item.category || "Tech");
+                const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: item.source || "Tech Wire", publishedAt: new Date() });
+
+                // Try uploading original page JPEG to Cloudinary
+                const cdnUrl = await uploadBase64ToCloudinary(pageImg);
+
+                allExtractedStories.push({
+                  headline: cleanTitle,
+                  body: finalBody,
+                  category,
+                  imageUrl: cdnUrl || pageImg,
+                  sourcePublisher: item.source || "NewsBytes",
+                  sourcePublishedAt: new Date(),
+                });
+              }
+              console.info(`[PDFParser] Page ${pageNum}: Extracted ${parsedPage.length} story/stories.`);
+              break;
+            }
+          }
+        } catch (err) {
+          console.warn(`[PDFParser] Page ${pageNum} extraction error:`, err instanceof Error ? err.message : String(err));
+        }
+      }
+    }
+
+    if (allExtractedStories.length > 0) {
+      console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} pages.`);
+      return allExtractedStories;
+    }
+  }
+
+  // 2. Secondary Provider: Standard Mistral AI (Text/Single Prompt fallback)
+  if ((!rawJson || rawJson === "[]") && mistralKey) {
+    const mistralModels = isImage ? ["pixtral-12b-2409"] : ["open-mistral-7b", "mistral-small-latest"];
     for (const model of mistralModels) {
       try {
-        let userContent: string | object[];
-        if (isImage) {
-          // Regular image: use image_url
-          userContent = [
-            { type: "text", text: promptText },
-            { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` },
-          ];
-        } else if (isImageBasedPdf) {
-          // Image-based PDF: use document_url (Mistral Pixtral OCR)
-          userContent = [
-            { type: "text", text: promptText },
-            { type: "document_url", document_url: `data:application/pdf;base64,${rawBase64}` },
-          ];
-        } else {
-          // Text PDF: plain text extraction
-          userContent = `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
-        }
-
-        // Vision/document models don't support json_object response_format
-        const responseFormat = (isImage || isImageBasedPdf) ? undefined : { type: "json_object" };
+        const userContent = isImage
+          ? [{ type: "text", text: promptText }, { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }]
+          : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
 
         const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
@@ -493,7 +550,6 @@ CRITICAL INGESTION & FILTERING RULES:
           },
           body: JSON.stringify({
             model,
-            ...(responseFormat ? { response_format: responseFormat } : {}),
             messages: [
               { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
               { role: "user", content: userContent },
@@ -510,15 +566,9 @@ CRITICAL INGESTION & FILTERING RULES:
             console.info(`[PDFParser] Successfully parsed document using Mistral AI (${model})`);
             break;
           }
-        } else {
-          const errText = await response.text().catch(() => "");
-          console.warn(`[PDFParser] Mistral AI model ${model} returned status ${response.status}:`, errText.slice(0, 150));
-          if (response.status === 429) {
-            await new Promise((r) => setTimeout(r, 600));
-          }
         }
       } catch (err) {
-        console.warn(`[PDFParser] Error calling Mistral AI model ${model}:`, err instanceof Error ? err.message : String(err));
+        console.warn(`[PDFParser] Mistral fallback error:`, err instanceof Error ? err.message : String(err));
       }
     }
   }
@@ -557,10 +607,10 @@ CRITICAL INGESTION & FILTERING RULES:
     };
   });
 
-  // Extract exact embedded JPEG images from PDF byte buffer
-  const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
+  // Reuse embedded images extracted above or extract if not yet populated
+  const coverImages = embeddedImages.length > 0 ? embeddedImages : (isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : []);
 
-  console.info(`[PDFParser] Extracted ${draftItems.length} stories and ${embeddedImages.length} original PDF images. Resolving cover images...`);
+  console.info(`[PDFParser] Extracted ${draftItems.length} stories and ${coverImages.length} original PDF images. Resolving cover images...`);
 
   const results: CuratedByte[] = await Promise.all(
     draftItems.map(async (draft, idx) => {
@@ -568,7 +618,7 @@ CRITICAL INGESTION & FILTERING RULES:
 
       // 1. Primary: Use the exact embedded image extracted from that specific PDF page (pageNumber index)
       const imageIdx = Math.max(0, draft.pageNumber - 1);
-      const rawEmbedded = embeddedImages[imageIdx] || embeddedImages[idx];
+      const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
       if (rawEmbedded) {
         // Try uploading embedded image to Cloudinary so we have a clean CDN URL
         const cdnUrl = await uploadBase64ToCloudinary(rawEmbedded);

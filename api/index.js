@@ -1974,28 +1974,84 @@ ${documentText.slice(0, 5e4)}`;
       }
     }
   }
+  const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
+  if (isImageBasedPdf && embeddedImages.length > 0 && mistralKey) {
+    console.info(`[PDFParser] Processing ${embeddedImages.length} pages individually via Mistral Pixtral vision...`);
+    const allExtractedStories = [];
+    for (let pageIdx = 0; pageIdx < embeddedImages.length; pageIdx++) {
+      const pageImg = embeddedImages[pageIdx];
+      const pageNum = pageIdx + 1;
+      const pagePrompt = `${promptText}
+
+NOTE: You are analyzing PAGE ${pageNum} of ${embeddedImages.length}.`;
+      for (const model of ["pixtral-12b-2409", "pixtral-large-latest"]) {
+        try {
+          const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${mistralKey}`
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: pagePrompt },
+                    { type: "image_url", image_url: pageImg }
+                  ]
+                }
+              ],
+              temperature: 0.3,
+              max_tokens: 4096
+            })
+          });
+          if (response.ok) {
+            const resData = await response.json();
+            const pageJson = resData.choices?.[0]?.message?.content || "[]";
+            const parsedPage = parseAiJsonResponse(pageJson);
+            if (parsedPage.length > 0) {
+              for (const item of parsedPage) {
+                let bodyText = extractAiBody(item);
+                if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) bodyText = "";
+                const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${pageNum}`)).slice(0, 120);
+                const category = String(item.category || "Tech");
+                const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: item.source || "Tech Wire", publishedAt: /* @__PURE__ */ new Date() });
+                const cdnUrl = await uploadBase64ToCloudinary(pageImg);
+                allExtractedStories.push({
+                  headline: cleanTitle,
+                  body: finalBody,
+                  category,
+                  imageUrl: cdnUrl || pageImg,
+                  sourcePublisher: item.source || "NewsBytes",
+                  sourcePublishedAt: /* @__PURE__ */ new Date()
+                });
+              }
+              console.info(`[PDFParser] Page ${pageNum}: Extracted ${parsedPage.length} story/stories.`);
+              break;
+            }
+          }
+        } catch (err) {
+          console.warn(`[PDFParser] Page ${pageNum} extraction error:`, err instanceof Error ? err.message : String(err));
+        }
+      }
+    }
+    if (allExtractedStories.length > 0) {
+      console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} pages.`);
+      return allExtractedStories;
+    }
+  }
   if ((!rawJson || rawJson === "[]") && mistralKey) {
-    const mistralModels = isImage || isImageBasedPdf ? ["pixtral-12b-2409", "pixtral-large-latest"] : ["open-mistral-7b", "mistral-small-latest", "open-mixtral-8x7b"];
+    const mistralModels = isImage ? ["pixtral-12b-2409"] : ["open-mistral-7b", "mistral-small-latest"];
     for (const model of mistralModels) {
       try {
-        let userContent;
-        if (isImage) {
-          userContent = [
-            { type: "text", text: promptText },
-            { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }
-          ];
-        } else if (isImageBasedPdf) {
-          userContent = [
-            { type: "text", text: promptText },
-            { type: "document_url", document_url: `data:application/pdf;base64,${rawBase64}` }
-          ];
-        } else {
-          userContent = `${promptText}
+        const userContent = isImage ? [{ type: "text", text: promptText }, { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }] : `${promptText}
 
 DOCUMENT TEXT:
 ${documentText.slice(0, 5e4)}`;
-        }
-        const responseFormat = isImage || isImageBasedPdf ? void 0 : { type: "json_object" };
         const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -2005,7 +2061,6 @@ ${documentText.slice(0, 5e4)}`;
           },
           body: JSON.stringify({
             model,
-            ...responseFormat ? { response_format: responseFormat } : {},
             messages: [
               { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
               { role: "user", content: userContent }
@@ -2021,15 +2076,9 @@ ${documentText.slice(0, 5e4)}`;
             console.info(`[PDFParser] Successfully parsed document using Mistral AI (${model})`);
             break;
           }
-        } else {
-          const errText = await response.text().catch(() => "");
-          console.warn(`[PDFParser] Mistral AI model ${model} returned status ${response.status}:`, errText.slice(0, 150));
-          if (response.status === 429) {
-            await new Promise((r) => setTimeout(r, 600));
-          }
         }
       } catch (err) {
-        console.warn(`[PDFParser] Error calling Mistral AI model ${model}:`, err instanceof Error ? err.message : String(err));
+        console.warn(`[PDFParser] Mistral fallback error:`, err instanceof Error ? err.message : String(err));
       }
     }
   }
@@ -2058,13 +2107,13 @@ ${documentText.slice(0, 5e4)}`;
       pageNumber: pageNum
     };
   });
-  const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
-  console.info(`[PDFParser] Extracted ${draftItems.length} stories and ${embeddedImages.length} original PDF images. Resolving cover images...`);
+  const coverImages = embeddedImages.length > 0 ? embeddedImages : isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
+  console.info(`[PDFParser] Extracted ${draftItems.length} stories and ${coverImages.length} original PDF images. Resolving cover images...`);
   const results = await Promise.all(
     draftItems.map(async (draft, idx) => {
       let imageUrl = null;
       const imageIdx = Math.max(0, draft.pageNumber - 1);
-      const rawEmbedded = embeddedImages[imageIdx] || embeddedImages[idx];
+      const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
       if (rawEmbedded) {
         const cdnUrl = await uploadBase64ToCloudinary(rawEmbedded);
         imageUrl = cdnUrl || rawEmbedded;
