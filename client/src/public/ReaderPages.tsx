@@ -1512,14 +1512,6 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
             {followUp.isPending ? <Square size={13} fill="currentColor" /> : <Search size={16} />}
           </button>
         </form>
-        <button
-          type="button"
-          className="followup-bottom-circle-btn"
-          onClick={() => setIsOpen(true)}
-          aria-label="Open follow-up view"
-        >
-          <SquarePen size={18} />
-        </button>
       </div>
 
       {/* Full-Screen Workspace Overlay */}
@@ -1622,14 +1614,6 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
                 {followUp.isPending ? <Square size={13} fill="currentColor" /> : <Search size={16} />}
               </button>
             </form>
-            <button
-              type="button"
-              className="followup-bottom-circle-btn"
-              onClick={() => setIsOpen(false)}
-              aria-label="Close"
-            >
-              <SquarePen size={18} />
-            </button>
           </div>
         </div>,
         document.body
