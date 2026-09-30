@@ -218,6 +218,33 @@ async function uploadBase64ToCloudinary(base64DataUri: string): Promise<string |
 }
 
 /**
+ * Reads JPEG width and height directly from SOF markers in base64 buffer.
+ */
+function getJpegDimensions(base64Uri: string): { width: number; height: number; aspectRatio: number } | null {
+  try {
+    const base64Data = base64Uri.replace(/^data:image\/[a-z]+;base64,/, "");
+    const buf = Buffer.from(base64Data, "base64");
+    let offset = 2;
+    while (offset < buf.length - 8) {
+      if (buf[offset] !== 0xff) break;
+      const marker = buf[offset + 1];
+      if (marker >= 0xc0 && marker <= 0xc3) {
+        const height = buf.readUInt16BE(offset + 5);
+        const width = buf.readUInt16BE(offset + 7);
+        if (width > 0 && height > 0) {
+          return { width, height, aspectRatio: width / height };
+        }
+      }
+      const blockLength = buf.readUInt16BE(offset + 2);
+      offset += 2 + blockLength;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
  * Extracts embedded JPEG images directly from a PDF buffer (SOI/EOI marker scanner).
  * Returns array of base64 JPEG data URIs in order of appearance.
  */
@@ -318,7 +345,7 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
 
   if (pdfBase64OrText.startsWith("data:")) {
     isBase64Pdf = true;
-    const match = pdfBase64OrText.match(/^data:([^;]+);base64,(.*)$/s);
+    const match = pdfBase64OrText.match(/^data:([^;]+);base64,([\s\S]*)$/);
     if (match) {
       mimeType = match[1] || "application/pdf";
       rawBase64 = match[2].trim().replace(/\s+/g, "");
@@ -399,12 +426,11 @@ CRITICAL INGESTION & FILTERING RULES:
   // 1. Primary Provider: NVIDIA AI NIM (Developer Credits Supported - Fast & High Throughput)
   if (nvidiaKey) {
     const nvidiaModels = (isImage || isImageBasedPdf)
-      ? ["meta/llama-3.2-90b-vision-instruct", "nvidia/neva-22b"]
-      : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
+      ? ["meta/llama-3.2-90b-vision-instruct", "meta/llama-3.2-11b-vision-instruct"]
+      : ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"];
 
     const nvidiaEndpoints = [
       "https://integrate.api.nvidia.com/v1/chat/completions",
-      "https://ai.api.nvidia.com/v1/chat/completions",
     ];
 
     nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
@@ -458,14 +484,24 @@ CRITICAL INGESTION & FILTERING RULES:
   // Extract all embedded JPEG images from PDF byte buffer
   const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
 
-  // If image-based PDF and we extracted embedded JPEGs: process each page photo individually to extract ALL stories across all 14+ pages
+  // If image-based PDF and we extracted embedded JPEGs: process text pages concurrently via Mistral Pixtral vision
   if (isImageBasedPdf && embeddedImages.length > 0 && mistralKey) {
-    console.info(`[PDFParser] Processing ${embeddedImages.length} pages individually via Mistral Pixtral vision...`);
-    const allExtractedStories: CuratedByte[] = [];
+    console.info(`[PDFParser] Processing ${embeddedImages.length} images concurrently via Mistral Pixtral vision...`);
 
-    for (let pageIdx = 0; pageIdx < embeddedImages.length; pageIdx++) {
-      const pageImg = embeddedImages[pageIdx];
+    const hasTextScreenshots = embeddedImages.some(img => {
+      const d = getJpegDimensions(img);
+      return d && d.aspectRatio < 0.60;
+    });
+
+    const pageTasks = embeddedImages.map(async (pageImg, pageIdx) => {
       const pageNum = pageIdx + 1;
+      const dims = getJpegDimensions(pageImg);
+
+      // Skip standalone cover photos (aspect ratio >= 0.60) from being sent to text OCR if we have text screenshots
+      if (dims && dims.aspectRatio >= 0.60 && hasTextScreenshots && embeddedImages.length > 1) {
+        return [];
+      }
+
       const pagePrompt = `${promptText}\n\nNOTE: You are analyzing PAGE ${pageNum} of ${embeddedImages.length}.`;
 
       for (const model of ["pixtral-12b-2409", "pixtral-large-latest"]) {
@@ -497,6 +533,7 @@ CRITICAL INGESTION & FILTERING RULES:
             const pageJson = resData.choices?.[0]?.message?.content || "[]";
             const parsedPage = parseAiJsonResponse(pageJson);
             if (parsedPage.length > 0) {
+              const pageStories: CuratedByte[] = [];
               for (const item of parsedPage) {
                 let bodyText = extractAiBody(item);
                 if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) bodyText = "";
@@ -504,30 +541,45 @@ CRITICAL INGESTION & FILTERING RULES:
                 const category = String(item.category || "Tech");
                 const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: item.source || "Tech Wire", publishedAt: new Date() });
 
-                // Try uploading original page JPEG to Cloudinary
-                const cdnUrl = await uploadBase64ToCloudinary(pageImg);
+                // If current page image is a full-page screenshot (aspect ratio < 0.60)
+                // and the NEXT page image is a genuine cover photo (aspect ratio >= 0.60), pair with the cover photo!
+                let chosenCoverImg = pageImg;
+                if (dims && dims.aspectRatio < 0.60 && pageIdx + 1 < embeddedImages.length) {
+                  const nextImg = embeddedImages[pageIdx + 1];
+                  const nextDims = getJpegDimensions(nextImg);
+                  if (nextDims && nextDims.aspectRatio >= 0.60) {
+                    chosenCoverImg = nextImg;
+                  }
+                }
 
-                allExtractedStories.push({
+                // Try uploading cover JPEG to Cloudinary
+                const cdnUrl = await uploadBase64ToCloudinary(chosenCoverImg);
+
+                pageStories.push({
                   headline: cleanTitle,
                   body: finalBody,
                   category,
-                  imageUrl: cdnUrl || pageImg,
+                  imageUrl: cdnUrl || chosenCoverImg,
                   sourcePublisher: item.source || "NewsBytes",
                   sourcePublishedAt: new Date(),
                 });
               }
-              console.info(`[PDFParser] Page ${pageNum}: Extracted ${parsedPage.length} story/stories.`);
-              break;
+              console.info(`[PDFParser] Page ${pageNum}: Extracted ${pageStories.length} story/stories.`);
+              return pageStories;
             }
           }
         } catch (err) {
           console.warn(`[PDFParser] Page ${pageNum} extraction error:`, err instanceof Error ? err.message : String(err));
         }
       }
-    }
+      return [];
+    });
+
+    const pageResults = await Promise.all(pageTasks);
+    const allExtractedStories = pageResults.flat();
 
     if (allExtractedStories.length > 0) {
-      console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} pages.`);
+      console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} images concurrently.`);
       return allExtractedStories;
     }
   }

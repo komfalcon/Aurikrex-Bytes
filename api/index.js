@@ -1781,6 +1781,28 @@ async function uploadBase64ToCloudinary(base64DataUri) {
     return null;
   }
 }
+function getJpegDimensions(base64Uri) {
+  try {
+    const base64Data = base64Uri.replace(/^data:image\/[a-z]+;base64,/, "");
+    const buf = Buffer.from(base64Data, "base64");
+    let offset = 2;
+    while (offset < buf.length - 8) {
+      if (buf[offset] !== 255) break;
+      const marker = buf[offset + 1];
+      if (marker >= 192 && marker <= 195) {
+        const height = buf.readUInt16BE(offset + 5);
+        const width = buf.readUInt16BE(offset + 7);
+        if (width > 0 && height > 0) {
+          return { width, height, aspectRatio: width / height };
+        }
+      }
+      const blockLength = buf.readUInt16BE(offset + 2);
+      offset += 2 + blockLength;
+    }
+  } catch {
+  }
+  return null;
+}
 function extractEmbeddedPdfImages(rawBase64) {
   try {
     const buf = Buffer.from(rawBase64, "base64");
@@ -1859,7 +1881,7 @@ async function parsePdfToBytes(pdfBase64OrText) {
   let plainText = "";
   if (pdfBase64OrText.startsWith("data:")) {
     isBase64Pdf = true;
-    const match = pdfBase64OrText.match(/^data:([^;]+);base64,(.*)$/s);
+    const match = pdfBase64OrText.match(/^data:([^;]+);base64,([\s\S]*)$/);
     if (match) {
       mimeType = match[1] || "application/pdf";
       rawBase64 = match[2].trim().replace(/\s+/g, "");
@@ -1925,10 +1947,9 @@ CRITICAL INGESTION & FILTERING RULES:
 8. "source": Publisher/source name (e.g., "The Information", "Electrek", "Reuters").`;
   let rawJson = "[]";
   if (nvidiaKey) {
-    const nvidiaModels = isImage || isImageBasedPdf ? ["meta/llama-3.2-90b-vision-instruct", "nvidia/neva-22b"] : ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
+    const nvidiaModels = isImage || isImageBasedPdf ? ["meta/llama-3.2-90b-vision-instruct", "meta/llama-3.2-11b-vision-instruct"] : ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"];
     const nvidiaEndpoints = [
-      "https://integrate.api.nvidia.com/v1/chat/completions",
-      "https://ai.api.nvidia.com/v1/chat/completions"
+      "https://integrate.api.nvidia.com/v1/chat/completions"
     ];
     nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
       for (const model of nvidiaModels) {
@@ -1976,11 +1997,17 @@ ${documentText.slice(0, 5e4)}`;
   }
   const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
   if (isImageBasedPdf && embeddedImages.length > 0 && mistralKey) {
-    console.info(`[PDFParser] Processing ${embeddedImages.length} pages individually via Mistral Pixtral vision...`);
-    const allExtractedStories = [];
-    for (let pageIdx = 0; pageIdx < embeddedImages.length; pageIdx++) {
-      const pageImg = embeddedImages[pageIdx];
+    console.info(`[PDFParser] Processing ${embeddedImages.length} images concurrently via Mistral Pixtral vision...`);
+    const hasTextScreenshots = embeddedImages.some((img) => {
+      const d = getJpegDimensions(img);
+      return d && d.aspectRatio < 0.6;
+    });
+    const pageTasks = embeddedImages.map(async (pageImg, pageIdx) => {
       const pageNum = pageIdx + 1;
+      const dims = getJpegDimensions(pageImg);
+      if (dims && dims.aspectRatio >= 0.6 && hasTextScreenshots && embeddedImages.length > 1) {
+        return [];
+      }
       const pagePrompt = `${promptText}
 
 NOTE: You are analyzing PAGE ${pageNum} of ${embeddedImages.length}.`;
@@ -2014,33 +2041,45 @@ NOTE: You are analyzing PAGE ${pageNum} of ${embeddedImages.length}.`;
             const pageJson = resData.choices?.[0]?.message?.content || "[]";
             const parsedPage = parseAiJsonResponse(pageJson);
             if (parsedPage.length > 0) {
+              const pageStories = [];
               for (const item of parsedPage) {
                 let bodyText = extractAiBody(item);
                 if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) bodyText = "";
                 const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${pageNum}`)).slice(0, 120);
                 const category = String(item.category || "Tech");
                 const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: item.source || "Tech Wire", publishedAt: /* @__PURE__ */ new Date() });
-                const cdnUrl = await uploadBase64ToCloudinary(pageImg);
-                allExtractedStories.push({
+                let chosenCoverImg = pageImg;
+                if (dims && dims.aspectRatio < 0.6 && pageIdx + 1 < embeddedImages.length) {
+                  const nextImg = embeddedImages[pageIdx + 1];
+                  const nextDims = getJpegDimensions(nextImg);
+                  if (nextDims && nextDims.aspectRatio >= 0.6) {
+                    chosenCoverImg = nextImg;
+                  }
+                }
+                const cdnUrl = await uploadBase64ToCloudinary(chosenCoverImg);
+                pageStories.push({
                   headline: cleanTitle,
                   body: finalBody,
                   category,
-                  imageUrl: cdnUrl || pageImg,
+                  imageUrl: cdnUrl || chosenCoverImg,
                   sourcePublisher: item.source || "NewsBytes",
                   sourcePublishedAt: /* @__PURE__ */ new Date()
                 });
               }
-              console.info(`[PDFParser] Page ${pageNum}: Extracted ${parsedPage.length} story/stories.`);
-              break;
+              console.info(`[PDFParser] Page ${pageNum}: Extracted ${pageStories.length} story/stories.`);
+              return pageStories;
             }
           }
         } catch (err) {
           console.warn(`[PDFParser] Page ${pageNum} extraction error:`, err instanceof Error ? err.message : String(err));
         }
       }
-    }
+      return [];
+    });
+    const pageResults = await Promise.all(pageTasks);
+    const allExtractedStories = pageResults.flat();
     if (allExtractedStories.length > 0) {
-      console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} pages.`);
+      console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} images concurrently.`);
       return allExtractedStories;
     }
   }
@@ -2825,6 +2864,7 @@ function registerGoogleAuthRoutes(app) {
 init_schema();
 init_env();
 import { TRPCError as TRPCError4 } from "@trpc/server";
+import axios2 from "axios";
 import { eq as eq3, inArray as inArray3 } from "drizzle-orm";
 import { z as z2 } from "zod";
 init_db();
@@ -3730,6 +3770,83 @@ var appRouter = router({
       if (!post) throw genericNotFound();
       await recordPostView(post.id);
       return post;
+    }),
+    askFollowUp: publicProcedure.input(
+      z2.object({
+        postId: z2.number().int().positive(),
+        question: z2.string().min(3).max(300).trim()
+      })
+    ).mutation(async ({ input }) => {
+      await publishDuePosts();
+      const post = await getPublishedPostById(input.postId);
+      if (!post) throw genericNotFound();
+      const searchQuery = `${post.headline} \u2014 ${input.question}`;
+      let webContext = "";
+      if (process.env.TAVILY_API_KEY) {
+        try {
+          const tavilyRes = await axios2.post(
+            "https://api.tavily.com/search",
+            {
+              api_key: process.env.TAVILY_API_KEY,
+              query: searchQuery,
+              max_results: 5,
+              search_depth: "basic",
+              include_answer: true
+            },
+            { timeout: 1e4 }
+          );
+          const results = tavilyRes.data?.results ?? [];
+          webContext = results.map(
+            (r, i) => `[${i + 1}] ${r.title}
+${r.content?.slice(0, 400) ?? ""}`
+          ).join("\n\n");
+        } catch (err) {
+          console.warn("[FollowUp] Tavily search failed, falling back to story context:", err);
+        }
+      }
+      const systemPrompt = `You are an intelligent tech news assistant for Aurikrex Bytes.
+The reader is asking a follow-up question regarding the following story:
+
+HEADLINE: ${post.headline}
+STORY CONTENT: ${post.body}
+
+${webContext ? `RELEVANT LIVE WEB SEARCH CONTEXT:
+${webContext}` : "No external web search results available."}
+
+Instructions:
+1. Provide a direct, insightful, and concise answer to the reader's question in 2-3 clear paragraphs.
+2. Synthesize the provided story details and web context into a natural explanation.
+3. Keep the tone calm, authoritative, and focused on tech signal rather than hype.
+4. Do not invent false facts.`;
+      let answer = "";
+      const mistralApiKey = process.env.MISTRAL_API_KEY;
+      if (mistralApiKey) {
+        try {
+          const mistralRes = await axios2.post(
+            "https://api.mistral.ai/v1/chat/completions",
+            {
+              model: "mistral-small-latest",
+              messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: input.question }
+              ],
+              max_tokens: 600,
+              temperature: 0.4
+            },
+            {
+              headers: { Authorization: `Bearer ${mistralApiKey}` },
+              timeout: 2e4
+            }
+          );
+          answer = mistralRes.data?.choices?.[0]?.message?.content ?? "";
+        } catch (mistralErr) {
+          console.warn("[FollowUp] Mistral AI call failed:", mistralErr);
+        }
+      }
+      if (!answer) {
+        answer = `Regarding "${input.question}": ${post.headline} highlights key developments in this domain. ${post.body.slice(0, 300)}\u2026`;
+      }
+      return { answer };
     })
   })
 });

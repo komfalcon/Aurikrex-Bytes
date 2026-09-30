@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import axios from "axios";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { adminUsers, oneSignalSubscriptions, posts, readers, pushSubscriptions } from "../drizzle/schema.js";
@@ -915,6 +916,93 @@ export const appRouter = router({
         if (!post) throw genericNotFound();
         await recordPostView(post.id);
         return post;
+      }),
+    askFollowUp: publicProcedure
+      .input(
+        z.object({
+          postId: z.number().int().positive(),
+          question: z.string().min(3).max(300).trim(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        await publishDuePosts();
+        const post = await getPublishedPostById(input.postId);
+        if (!post) throw genericNotFound();
+
+        const searchQuery = `${post.headline} — ${input.question}`;
+        let webContext = "";
+
+        if (process.env.TAVILY_API_KEY) {
+          try {
+            const tavilyRes = await axios.post(
+              "https://api.tavily.com/search",
+              {
+                api_key: process.env.TAVILY_API_KEY,
+                query: searchQuery,
+                max_results: 5,
+                search_depth: "basic",
+                include_answer: true,
+              },
+              { timeout: 10_000 }
+            );
+            const results: any[] = tavilyRes.data?.results ?? [];
+            webContext = results
+              .map(
+                (r: any, i: number) =>
+                  `[${i + 1}] ${r.title}\n${r.content?.slice(0, 400) ?? ""}`
+              )
+              .join("\n\n");
+          } catch (err) {
+            console.warn("[FollowUp] Tavily search failed, falling back to story context:", err);
+          }
+        }
+
+        const systemPrompt = `You are an intelligent tech news assistant for Aurikrex Bytes.
+The reader is asking a follow-up question regarding the following story:
+
+HEADLINE: ${post.headline}
+STORY CONTENT: ${post.body}
+
+${webContext ? `RELEVANT LIVE WEB SEARCH CONTEXT:\n${webContext}` : "No external web search results available."}
+
+Instructions:
+1. Provide a direct, insightful, and concise answer to the reader's question in 2-3 clear paragraphs.
+2. Synthesize the provided story details and web context into a natural explanation.
+3. Keep the tone calm, authoritative, and focused on tech signal rather than hype.
+4. Do not invent false facts.`;
+
+        let answer = "";
+        const mistralApiKey = process.env.MISTRAL_API_KEY;
+
+        if (mistralApiKey) {
+          try {
+            const mistralRes = await axios.post(
+              "https://api.mistral.ai/v1/chat/completions",
+              {
+                model: "mistral-small-latest",
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: input.question },
+                ],
+                max_tokens: 600,
+                temperature: 0.4,
+              },
+              {
+                headers: { Authorization: `Bearer ${mistralApiKey}` },
+                timeout: 20_000,
+              }
+            );
+            answer = mistralRes.data?.choices?.[0]?.message?.content ?? "";
+          } catch (mistralErr) {
+            console.warn("[FollowUp] Mistral AI call failed:", mistralErr);
+          }
+        }
+
+        if (!answer) {
+          answer = `Regarding "${input.question}": ${post.headline} highlights key developments in this domain. ${post.body.slice(0, 300)}…`;
+        }
+
+        return { answer };
       }),
   }),
 });

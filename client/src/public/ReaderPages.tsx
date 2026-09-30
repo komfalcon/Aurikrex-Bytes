@@ -1455,6 +1455,82 @@ export function Archive() {
     </PublicLayout>
   );
 }
+function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline: string }) {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [asked, setAsked] = useState<string | null>(null);
+  const answerRef = useRef<HTMLDivElement>(null);
+
+  const followUp = trpc.publicPosts.askFollowUp.useMutation({
+    onSuccess: (data) => {
+      setAnswer(data.answer);
+      setTimeout(() => answerRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80);
+    },
+    onError: (err) => {
+      setAnswer(`Sorry, could not get response: ${err.message}`);
+    },
+  });
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    const q = question.trim();
+    if (!q || followUp.isPending) return;
+    setAsked(q);
+    setAnswer(null);
+    followUp.mutate({ postId, question: q });
+    setQuestion("");
+  };
+
+  return (
+    <section className="followup-panel" aria-label="Ask a follow-up question">
+      <div className="followup-header">
+        <Sparkles size={16} />
+        <span>Ask a follow-up</span>
+      </div>
+
+      {asked && (
+        <div className="followup-exchange" ref={answerRef}>
+          <div className="followup-question">
+            <strong>Q: {asked}</strong>
+          </div>
+          {followUp.isPending ? (
+            <div className="followup-loading">
+              <span className="followup-dot" /><span className="followup-dot" /><span className="followup-dot" />
+              <span className="followup-loading-text">Searching web & synthesizing insights…</span>
+            </div>
+          ) : answer ? (
+            <div className="followup-answer">
+              <FormattedBody body={answer} className="followup-answer-body" />
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <form className="followup-form" onSubmit={handleSubmit}>
+        <input
+          type="text"
+          className="followup-input"
+          placeholder={`Ask a follow-up about this story…`}
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          maxLength={300}
+          disabled={followUp.isPending}
+          aria-label="Follow-up question"
+        />
+        <button
+          type="submit"
+          className="followup-submit"
+          disabled={!question.trim() || followUp.isPending}
+          aria-label="Submit question"
+        >
+          <Search size={15} />
+        </button>
+      </form>
+      <p className="followup-hint">Live web search + AI synthesis for deep story context.</p>
+    </section>
+  );
+}
+
 export function PostDetail() {
   const [, params] = useRoute("/post/:id");
   const id = Number(params?.id);
@@ -1515,6 +1591,7 @@ export function PostDetail() {
             )}
             <FormattedBody body={post.data.body} className="detail-body" />
             <div className="detail-actions"><EngagementActions post={detailPost || post.data} /></div>
+            <FollowUpPanel postId={post.data.id} postHeadline={post.data.headline} />
           </article>
         ) : (
           <div className="empty-state">

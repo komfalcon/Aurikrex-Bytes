@@ -140,7 +140,11 @@ export function NewPostPage() {
           setTimeout(() => navigate("/admin"), 1500);
         } catch (err) {
           const msg = err instanceof Error ? err.message : "Failed to parse document with Falke AI";
-          setPdfError(msg.startsWith("Unexpected token") ? "Falke AI ingestion service returned an error. Please try again or check API keys." : msg);
+          setPdfError(
+            msg.includes("not valid JSON") || msg.includes("Unexpected token")
+              ? "Falke AI ingestion service timed out or returned a server response error. Please re-upload your document."
+              : msg
+          );
         } finally {
           setPdfUploading(false);
         }
