@@ -5922,4 +5922,136 @@ body.has-install-prompt {
   margin-top: 16px;
 }
 
+/* Claude-Style Collapsible Search Summary Bar & Card */
+.followup-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 8px 4px;
+  margin: 8px 0 16px;
+  cursor: pointer;
+  color: var(--muted, #71717a);
+  font-size: 0.92rem;
+  font-family: inherit;
+  transition: color 0.15s ease, background 0.15s ease;
+  border-radius: 8px;
+}
+
+.followup-summary-bar:hover {
+  color: var(--ink, #18181b);
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+}
+
+.followup-summary-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  overflow: hidden;
+}
+
+.followup-summary-icon {
+  flex-shrink: 0;
+  color: var(--muted, #71717a);
+}
+
+.followup-summary-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.followup-summary-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.followup-summary-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+/* Expanded Claude Summary Card */
+.followup-summary-expanded-card {
+  background: var(--surface-2, #f4f4f5);
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 20px;
+  animation: followup-fade-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.followup-summary-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+}
+
+.followup-summary-card-header strong {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink, #18181b);
+}
+
+.followup-summary-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--muted, #71717a);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.followup-summary-close-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--ink, #18181b);
+}
+
+.followup-summary-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  padding-left: 8px;
+  margin-bottom: 16px;
+}
+
+.followup-timeline-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 0.88rem;
+  color: var(--ink, #27272a);
+  line-height: 1.4;
+}
+
+.followup-timeline-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted, #a1a1aa);
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.followup-timeline-globe {
+  color: var(--blue, #2563eb);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.followup-timeline-text {
+  flex: 1;
+}
+
 

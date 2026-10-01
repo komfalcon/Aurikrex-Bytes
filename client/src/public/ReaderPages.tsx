@@ -9,6 +9,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   CircleHelp,
   Clock3,
   Facebook,
@@ -1464,6 +1465,7 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
   const [answer, setAnswer] = useState<string | null>(null);
   const [searchQueries, setSearchQueries] = useState<string[]>([]);
   const [asked, setAsked] = useState<string | null>(null);
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const answerRef = useRef<HTMLDivElement>(null);
 
   const followUp = trpc.publicPosts.askFollowUp.useMutation({
@@ -1484,6 +1486,7 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
     setAsked(q);
     setAnswer(null);
     setSearchQueries([]);
+    setIsSearchExpanded(false);
     setIsOpen(true);
     followUp.mutate({ postId, question: q });
     setQuestion("");
@@ -1548,43 +1551,146 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
               </div>
             )}
 
-            {/* AI Response or Thinking State */}
+            {/* Falke AI Response or Thinking State */}
             {followUp.isPending ? (
               <div className="followup-thinking-block">
                 <div className="followup-thinking-header">
                   <Sparkles size={18} className="followup-thinking-icon" />
-                  <strong>Thinking…</strong>
+                  <strong>Falke AI is thinking…</strong>
                 </div>
-                <p className="followup-thinking-sub">Getting more details to help better explain the topic</p>
+                <p className="followup-thinking-sub">Falke AI is searching live sources to bring you clear details</p>
 
-                <div className="followup-searching-section">
-                  <span className="followup-searching-label">SEARCHING</span>
-                  <div className="followup-searching-pills">
-                    <div className="followup-search-pill"><Search size={14} /> <span>{asked ? `${asked.slice(0, 35)}…` : "Searching live web…"}</span></div>
-                    <div className="followup-search-pill"><Search size={14} /> <span>{postHeadline.slice(0, 38)}…</span></div>
+                {/* Collapsed by default Claude-style summary bar */}
+                <button
+                  type="button"
+                  className="followup-summary-bar"
+                  onClick={() => setIsSearchExpanded((prev) => !prev)}
+                  aria-expanded={isSearchExpanded}
+                  title="Click to toggle search sources summary"
+                >
+                  <div className="followup-summary-bar-left">
+                    <Clock3 size={15} className="followup-summary-icon" />
+                    <span className="followup-summary-text">
+                      Exploring context for "{asked ? excerpt(asked, 36) : excerpt(postHeadline, 36)}"
+                    </span>
                   </div>
-                </div>
+                  <ChevronRight size={15} className={`followup-summary-chevron ${isSearchExpanded ? "is-open" : ""}`} />
+                </button>
+
+                {isSearchExpanded && (
+                  <div className="followup-summary-expanded-card">
+                    <div className="followup-summary-card-header">
+                      <strong>Summary</strong>
+                      <button
+                        type="button"
+                        className="followup-summary-close-btn"
+                        onClick={() => setIsSearchExpanded(false)}
+                        aria-label="Collapse summary"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    <div className="followup-summary-timeline">
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Exploring context for "{postHeadline}"</span>
+                      </div>
+                      <div className="followup-timeline-item">
+                        <Search size={14} className="followup-timeline-globe" />
+                        <span className="followup-timeline-text">Searching web for "{asked || postHeadline}"</span>
+                      </div>
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Synthesizing response with Falke AI</span>
+                      </div>
+                    </div>
+
+                    <div className="followup-searching-section">
+                      <span className="followup-searching-label">SEARCHING</span>
+                      <div className="followup-searching-pills">
+                        <div className="followup-search-pill"><Search size={14} /> <span>{asked ? `${asked.slice(0, 35)}…` : "Searching live web…"}</span></div>
+                        <div className="followup-search-pill"><Search size={14} /> <span>{postHeadline.slice(0, 38)}…</span></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : answer ? (
               <div className="followup-response-block" ref={answerRef}>
                 <div className="followup-thinking-header" style={{ marginBottom: "12px" }}>
                   <Sparkles size={18} className="followup-thinking-icon" />
-                  <strong>AI Explanation</strong>
+                  <strong>Falke AI Explanation</strong>
                 </div>
 
-                {searchQueries.length > 0 && (
-                  <div className="followup-searching-section">
-                    <span className="followup-searching-label">SEARCHED</span>
-                    <div className="followup-searching-pills">
+                {/* Collapsed by default Claude-style summary bar */}
+                <button
+                  type="button"
+                  className="followup-summary-bar"
+                  onClick={() => setIsSearchExpanded((prev) => !prev)}
+                  aria-expanded={isSearchExpanded}
+                  title="Click to toggle search sources summary"
+                >
+                  <div className="followup-summary-bar-left">
+                    <Clock3 size={15} className="followup-summary-icon" />
+                    <span className="followup-summary-text">
+                      {searchQueries.length > 0
+                        ? `Searched ${searchQueries.length} web source${searchQueries.length > 1 ? "s" : ""} for "${asked ? excerpt(asked, 35) : excerpt(postHeadline, 35)}"`
+                        : `Explored context for "${asked ? excerpt(asked, 35) : excerpt(postHeadline, 35)}"`}
+                    </span>
+                  </div>
+                  <ChevronRight size={15} className={`followup-summary-chevron ${isSearchExpanded ? "is-open" : ""}`} />
+                </button>
+
+                {isSearchExpanded && (
+                  <div className="followup-summary-expanded-card">
+                    <div className="followup-summary-card-header">
+                      <strong>Summary</strong>
+                      <button
+                        type="button"
+                        className="followup-summary-close-btn"
+                        onClick={() => setIsSearchExpanded(false)}
+                        aria-label="Collapse summary"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    <div className="followup-summary-timeline">
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Exploring context for "{postHeadline}"</span>
+                      </div>
+
                       {searchQueries.map((qStr, idx) => (
-                        <div key={idx} className="followup-search-pill">
-                          <Search size={14} />
-                          <span>{qStr}</span>
+                        <div key={idx} className="followup-timeline-item">
+                          <Search size={14} className="followup-timeline-globe" />
+                          <span className="followup-timeline-text">Searched for "{qStr}"</span>
                         </div>
                       ))}
+
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Synthesized explanation using Falke AI</span>
+                      </div>
                     </div>
+
+                    {searchQueries.length > 0 && (
+                      <div className="followup-searching-section">
+                        <span className="followup-searching-label">SEARCHED</span>
+                        <div className="followup-searching-pills">
+                          {searchQueries.map((qStr, idx) => (
+                            <div key={idx} className="followup-search-pill">
+                              <Search size={14} />
+                              <span>{qStr}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
+
                 <div className="followup-answer-text">
                   <FormattedBody body={answer} className="followup-answer-body" />
                 </div>
