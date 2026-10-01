@@ -6,6 +6,7 @@ import NotFound from "./pages/NotFound";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import ErrorBoundary from "./components/ErrorBoundary";
 import PWAInstallPrompt from "./components/PWAInstallPrompt";
+import { ScrollToTopButton } from "./components/ScrollToTopButton";
 import Seo from "./components/Seo";
 import { Archive, Contact, HelpCenter, Home, HowItWorks, PostDetail, ReaderAuth, ReaderDashboard, SavedPosts, SupportPage } from "./public/ReaderPages";
 import MaintenancePage from "./public/MaintenancePage";
@@ -25,7 +26,7 @@ function ScrollToTop() {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [location]);
 
-  return null;
+  return <ScrollToTopButton />;
 }
 
 function Router() {

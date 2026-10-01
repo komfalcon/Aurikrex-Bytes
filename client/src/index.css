@@ -6054,4 +6054,56 @@ body.has-install-prompt {
   flex: 1;
 }
 
+/* Floating Scroll to Top Button */
+.scroll-to-top-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface-1, #ffffff);
+  color: var(--ink, #18181b);
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease;
+  animation: scroll-btn-appear 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.scroll-to-top-btn:hover {
+  transform: translateY(-3px) scale(1.05);
+  background: var(--surface-2, #f4f4f5);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16), 0 2px 4px rgba(0, 0, 0, 0.1);
+  color: var(--blue, #2563eb);
+}
+
+.scroll-to-top-btn:active {
+  transform: translateY(0) scale(0.96);
+}
+
+@keyframes scroll-btn-appear {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .scroll-to-top-btn {
+    bottom: 84px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+  }
+}
+
 
