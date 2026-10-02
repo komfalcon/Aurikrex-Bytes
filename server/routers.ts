@@ -14,6 +14,11 @@ import {
   verifyPassword,
 } from "./auth.js";
 import {
+  checkPasswordAttemptLockout,
+  recordFailedPasswordAttempt,
+  resetPasswordAttempts,
+} from "./_core/security.js";
+import {
   getAdminByEmail,
   getAdminById,
   getAdminByRememberToken,
@@ -150,13 +155,26 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input, ctx }) => {
-        const admin = await getAdminByEmail(normalizeEmail(input.email));
+        const email = normalizeEmail(input.email);
+        const lockout = checkPasswordAttemptLockout(email);
+        if (lockout.locked) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: lockout.message,
+          });
+        }
+
+        const admin = await getAdminByEmail(email);
         if (
           !admin ||
           !admin.isActive ||
           !(await verifyPassword(input.password, admin.passwordHash))
-        )
+        ) {
+          recordFailedPasswordAttempt(email);
           throw genericNotFound();
+        }
+
+        resetPasswordAttempts(email);
         const token = createToken(
           { kind: "admin", id: admin.id, email: admin.email, role: admin.role },
           input.remember
@@ -695,21 +713,58 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input, ctx }) => {
-        const reader = await getReaderByEmail(normalizeEmail(input.email));
+        const email = normalizeEmail(input.email);
+        const lockout = checkPasswordAttemptLockout(email);
+        if (lockout.locked) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: lockout.message,
+          });
+        }
+
+        const reader = await getReaderByEmail(email);
         if (
           !reader ||
           !reader.passwordHash ||
           !(await verifyPassword(input.password, reader.passwordHash))
-        )
+        ) {
+          const attempt = recordFailedPasswordAttempt(email);
+          if (attempt.autoResetNeeded && reader) {
+            try {
+              const token = randomToken();
+              const db = await getDb();
+              if (db) {
+                await db
+                  .update(readers)
+                  .set({
+                    resetToken: token,
+                    resetTokenExpires: new Date(Date.now() + 1000 * 60 * 30),
+                  })
+                  .where(eq(readers.id, reader.id));
+                const url = `${appBaseUrl()}/reset-password?token=${token}`;
+                await sendAuthEmail(
+                  reader.email,
+                  "Security Alert: Reset your Aurikrex Bytes password",
+                  resetPasswordEmailHtml(url)
+                );
+              }
+            } catch (err) {
+              console.error("[Auth] Failed sending auto password reset email:", err);
+            }
+          }
           throw new TRPCError({
             code: "UNAUTHORIZED",
-            message: "Invalid email or password",
+            message: attempt.message,
           });
+        }
+
         if (!reader.emailVerified)
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Please verify your email before signing in",
           });
+
+        resetPasswordAttempts(email);
         const token = createToken(
           {
             kind: "reader",
@@ -846,6 +901,7 @@ export const appRouter = router({
             resetTokenExpires: null,
           })
           .where(eq(readers.id, reader.id));
+        resetPasswordAttempts(reader.email);
         return { success: true };
       }),
     googleStart: publicProcedure.query(({ ctx }) => {

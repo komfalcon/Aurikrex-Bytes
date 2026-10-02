@@ -2867,6 +2867,112 @@ import { TRPCError as TRPCError4 } from "@trpc/server";
 import axios2 from "axios";
 import { eq as eq3, inArray as inArray3 } from "drizzle-orm";
 import { z as z2 } from "zod";
+
+// server/_core/security.ts
+var authAttempts = /* @__PURE__ */ new Map();
+var AUTH_WINDOW_MS = 6e4;
+var AUTH_MAX_REQUESTS = 30;
+var failedAttemptsMap = /* @__PURE__ */ new Map();
+var MAX_FAILED_BEFORE_LOCKOUT = 5;
+var LOCKOUT_DURATION_MS = 15 * 60 * 1e3;
+var MAX_FAILED_BEFORE_AUTO_RESET = 8;
+var ATTEMPT_WINDOW_MS = 15 * 60 * 1e3;
+function securityHeaders(_req, res, next) {
+  res.removeHeader("X-Powered-By");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob: https://res.cloudinary.com https://*.googleusercontent.com; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com https://maps.googleapis.com; connect-src 'self' https://maps.googleapis.com https://api.cloudinary.com wss:; frame-src https://accounts.google.com; form-action 'self' https://accounts.google.com");
+  if (process.env.NODE_ENV === "production" && process.env.APP_BASE_URL?.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+}
+function authRateLimit(req, res, next) {
+  if (!req.originalUrl.startsWith("/api/trpc/")) return next();
+  const route = req.originalUrl.split("?")[0];
+  if (!/\/(reader\.(signup|login|requestPasswordReset|resetPassword|verifyEmail)|admin\.login)$/.test(route)) return next();
+  const key = `${req.ip || req.socket?.remoteAddress || req.headers["x-forwarded-for"] || "unknown"}:${route}`;
+  const now2 = Date.now();
+  const current = authAttempts.get(key);
+  if (!current || current.resetAt <= now2) authAttempts.set(key, { count: 1, resetAt: now2 + AUTH_WINDOW_MS });
+  else current.count += 1;
+  const attempt = authAttempts.get(key);
+  res.setHeader("RateLimit-Limit", AUTH_MAX_REQUESTS);
+  res.setHeader("RateLimit-Remaining", Math.max(0, AUTH_MAX_REQUESTS - attempt.count));
+  if (attempt.count > AUTH_MAX_REQUESTS) {
+    res.setHeader("Retry-After", String(Math.ceil((attempt.resetAt - now2) / 1e3)));
+    return res.status(429).json({ error: "Too many authentication requests. Please try again shortly." });
+  }
+  next();
+}
+function checkPasswordAttemptLockout(email) {
+  const normEmail = email.trim().toLowerCase();
+  const record = failedAttemptsMap.get(normEmail);
+  if (!record) return { locked: false };
+  const now2 = Date.now();
+  if (record.lockedUntil && record.lockedUntil > now2) {
+    const remainingSec = Math.ceil((record.lockedUntil - now2) / 1e3);
+    const minutes = Math.ceil(remainingSec / 60);
+    return {
+      locked: true,
+      message: record.resetSent ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address." : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
+      autoResetTriggered: record.resetSent
+    };
+  }
+  if (now2 - record.firstAttemptAt > ATTEMPT_WINDOW_MS && (!record.lockedUntil || record.lockedUntil <= now2)) {
+    failedAttemptsMap.delete(normEmail);
+    return { locked: false };
+  }
+  if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
+    if (!record.lockedUntil || record.lockedUntil <= now2) {
+      record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
+    }
+    const remainingSec = Math.ceil((record.lockedUntil - now2) / 1e3);
+    const minutes = Math.ceil(remainingSec / 60);
+    return {
+      locked: true,
+      message: record.resetSent ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address." : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
+      autoResetTriggered: record.resetSent
+    };
+  }
+  return { locked: false };
+}
+function recordFailedPasswordAttempt(email) {
+  const normEmail = email.trim().toLowerCase();
+  const now2 = Date.now();
+  let record = failedAttemptsMap.get(normEmail);
+  if (!record || now2 - record.firstAttemptAt > ATTEMPT_WINDOW_MS) {
+    record = { count: 1, firstAttemptAt: now2, lockedUntil: null, resetSent: false };
+  } else {
+    record.count += 1;
+  }
+  let locked = false;
+  let autoResetNeeded = false;
+  let message = "Invalid email or password";
+  if (record.count >= MAX_FAILED_BEFORE_AUTO_RESET) {
+    record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
+    locked = true;
+    if (!record.resetSent) {
+      autoResetNeeded = true;
+      record.resetSent = true;
+    }
+    message = "Account locked due to multiple failed login attempts. A password reset link has been automatically sent to your email address.";
+  } else if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
+    record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
+    locked = true;
+    message = "Too many failed password attempts. Account temporarily locked for 15 minutes. Please try again later or reset your password.";
+  } else {
+    const remaining = MAX_FAILED_BEFORE_LOCKOUT - record.count;
+    message = `Invalid email or password. ${remaining} attempt${remaining > 1 ? "s" : ""} remaining before temporary account lock.`;
+  }
+  failedAttemptsMap.set(normEmail, record);
+  return { count: record.count, locked, autoResetNeeded, message };
+}
+function resetPasswordAttempts(email) {
+  failedAttemptsMap.delete(email.trim().toLowerCase());
+}
+
+// server/routers.ts
 init_db();
 init_services();
 
@@ -3134,9 +3240,20 @@ var appRouter = router({
         remember: z2.boolean().default(false)
       })
     ).mutation(async ({ input, ctx }) => {
-      const admin = await getAdminByEmail(normalizeEmail(input.email));
-      if (!admin || !admin.isActive || !await verifyPassword(input.password, admin.passwordHash))
+      const email = normalizeEmail(input.email);
+      const lockout = checkPasswordAttemptLockout(email);
+      if (lockout.locked) {
+        throw new TRPCError4({
+          code: "TOO_MANY_REQUESTS",
+          message: lockout.message
+        });
+      }
+      const admin = await getAdminByEmail(email);
+      if (!admin || !admin.isActive || !await verifyPassword(input.password, admin.passwordHash)) {
+        recordFailedPasswordAttempt(email);
         throw genericNotFound();
+      }
+      resetPasswordAttempts(email);
       const token = createToken(
         { kind: "admin", id: admin.id, email: admin.email, role: admin.role },
         input.remember
@@ -3583,17 +3700,48 @@ var appRouter = router({
         remember: z2.boolean().default(false)
       })
     ).mutation(async ({ input, ctx }) => {
-      const reader = await getReaderByEmail(normalizeEmail(input.email));
-      if (!reader || !reader.passwordHash || !await verifyPassword(input.password, reader.passwordHash))
+      const email = normalizeEmail(input.email);
+      const lockout = checkPasswordAttemptLockout(email);
+      if (lockout.locked) {
+        throw new TRPCError4({
+          code: "TOO_MANY_REQUESTS",
+          message: lockout.message
+        });
+      }
+      const reader = await getReaderByEmail(email);
+      if (!reader || !reader.passwordHash || !await verifyPassword(input.password, reader.passwordHash)) {
+        const attempt = recordFailedPasswordAttempt(email);
+        if (attempt.autoResetNeeded && reader) {
+          try {
+            const token2 = randomToken();
+            const db = await getDb();
+            if (db) {
+              await db.update(readers).set({
+                resetToken: token2,
+                resetTokenExpires: new Date(Date.now() + 1e3 * 60 * 30)
+              }).where(eq3(readers.id, reader.id));
+              const url = `${appBaseUrl()}/reset-password?token=${token2}`;
+              await sendAuthEmail(
+                reader.email,
+                "Security Alert: Reset your Aurikrex Bytes password",
+                resetPasswordEmailHtml(url)
+              );
+            }
+          } catch (err) {
+            console.error("[Auth] Failed sending auto password reset email:", err);
+          }
+        }
         throw new TRPCError4({
           code: "UNAUTHORIZED",
-          message: "Invalid email or password"
+          message: attempt.message
         });
+      }
       if (!reader.emailVerified)
         throw new TRPCError4({
           code: "FORBIDDEN",
           message: "Please verify your email before signing in"
         });
+      resetPasswordAttempts(email);
       const token = createToken(
         {
           kind: "reader",
@@ -3706,6 +3854,7 @@ var appRouter = router({
         resetToken: null,
         resetTokenExpires: null
       }).where(eq3(readers.id, reader.id));
+      resetPasswordAttempts(reader.email);
       return { success: true };
     }),
     googleStart: publicProcedure.query(({ ctx }) => {
@@ -4351,39 +4500,6 @@ function registerSeoRoutes(app) {
 </html>`;
     return res.status(200).type("html").send(doc);
   });
-}
-
-// server/_core/security.ts
-var authAttempts = /* @__PURE__ */ new Map();
-var AUTH_WINDOW_MS = 6e4;
-var AUTH_MAX_REQUESTS = 30;
-function securityHeaders(_req, res, next) {
-  res.removeHeader("X-Powered-By");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob: https://res.cloudinary.com https://*.googleusercontent.com; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com https://maps.googleapis.com; connect-src 'self' https://maps.googleapis.com https://api.cloudinary.com wss:; frame-src https://accounts.google.com; form-action 'self' https://accounts.google.com");
-  if (process.env.NODE_ENV === "production" && process.env.APP_BASE_URL?.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-  next();
-}
-function authRateLimit(req, res, next) {
-  if (!req.originalUrl.startsWith("/api/trpc/")) return next();
-  const route = req.originalUrl.split("?")[0];
-  if (!/\/(reader\.(signup|login|requestPasswordReset|resetPassword|verifyEmail)|admin\.login)$/.test(route)) return next();
-  const key = `${req.ip || req.socket?.remoteAddress || req.headers["x-forwarded-for"] || "unknown"}:${route}`;
-  const now2 = Date.now();
-  const current = authAttempts.get(key);
-  if (!current || current.resetAt <= now2) authAttempts.set(key, { count: 1, resetAt: now2 + AUTH_WINDOW_MS });
-  else current.count += 1;
-  const attempt = authAttempts.get(key);
-  res.setHeader("RateLimit-Limit", AUTH_MAX_REQUESTS);
-  res.setHeader("RateLimit-Remaining", Math.max(0, AUTH_MAX_REQUESTS - attempt.count));
-  if (attempt.count > AUTH_MAX_REQUESTS) {
-    res.setHeader("Retry-After", String(Math.ceil((attempt.resetAt - now2) / 1e3)));
-    return res.status(429).json({ error: "Too many authentication requests. Please try again shortly." });
-  }
-  next();
 }
 
 // server/_core/vercel.ts
