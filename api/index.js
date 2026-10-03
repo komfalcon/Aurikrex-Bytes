@@ -779,7 +779,7 @@ async function sendEmail(to, subject, html, fromAddress) {
     console.info(`[Email placeholder] ${subject} for ${to}`);
     return;
   }
-  const from = fromAddress || process.env.SMTP_FROM || "info@aurikrex.tech";
+  const from = fromAddress || process.env.SMTP_FROM || "info@aurikrex.com";
   await transport.sendMail({ from, to, subject, html });
 }
 async function sendAuthEmail(to, subject, html) {
@@ -787,14 +787,14 @@ async function sendAuthEmail(to, subject, html) {
     to,
     subject,
     html,
-    process.env.SMTP_FROM || "info@aurikrex.tech"
+    process.env.SMTP_FROM || "info@aurikrex.com"
   );
 }
 function verificationEmailHtml(url) {
-  return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">A considered daily read</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">You're almost ready for your daily briefing.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">Confirm your email to start receiving Aurikrex Bytes \u2014 a daily tech briefing with the context behind what matters.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Verify Email &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 24 hours. If you didn't create an Aurikrex Bytes account, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.tech" style="color:#2f67d8">support@aurikrex.tech</a></div></div></div></body></html>`;
+  return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">A considered daily read</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">You're almost ready for your daily briefing.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">Confirm your email to start receiving Aurikrex Bytes \u2014 a daily tech briefing with the context behind what matters.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Verify Email &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 24 hours. If you didn't create an Aurikrex Bytes account, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.com" style="color:#2f67d8">support@aurikrex.com</a></div></div></div></body></html>`;
 }
 function resetPasswordEmailHtml(url) {
-  return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">Account Security</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">Reset your password.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">We received a request to reset the password for your Aurikrex Bytes account. Click the button below to choose a new password.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Reset Password &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 30 minutes. If you didn't request a password reset, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.tech" style="color:#2f67d8">support@aurikrex.tech</a></div></div></div></body></html>`;
+  return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">Account Security</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">Reset your password.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">We received a request to reset the password for your Aurikrex Bytes account. Click the button below to choose a new password.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Reset Password &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 30 minutes. If you didn't request a password reset, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.com" style="color:#2f67d8">support@aurikrex.com</a></div></div></div></body></html>`;
 }
 function cloudinaryConfigured() {
   return Boolean(
@@ -1099,7 +1099,7 @@ async function extractSourceArticleImage(url) {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; AurikrexBytesBot/1.0; +https://www.bytes.aurikrex.tech)",
+        "User-Agent": "Mozilla/5.0 (compatible; AurikrexBytesBot/1.0; +https://www.bytes.aurikrex.com)",
         "Accept": "text/html,application/xhtml+xml"
       }
     });
@@ -1930,7 +1930,7 @@ async function parsePdfToBytes(pdfBase64OrText) {
   } else if (!isImage && !documentText) {
     documentText = "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
   }
-  const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.tech).
+  const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.com).
 You are analyzing an uploaded multi-page document / PDF containing news cards.
 
 CRITICAL INGESTION & FILTERING RULES:
@@ -2220,7 +2220,7 @@ async function sendOneSignalNotification(payload) {
   return responseBody ? JSON.parse(responseBody) : {};
 }
 function formatPushNotificationContent(story, timeZone = process.env.APP_TIMEZONE || "Africa/Lagos", now2 = /* @__PURE__ */ new Date()) {
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.tech";
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const hour = Number(
     new Intl.DateTimeFormat("en-US", {
       timeZone,
@@ -2276,7 +2276,7 @@ async function sendDailyPushNotifications() {
     console.warn("[Push] Unable to fetch latest story for notification, using fallback copy:", err);
   }
   const notification = formatPushNotificationContent(topStory, timeZone, now2);
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.tech";
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const iconUrl = `${baseUrl}/logo-192.png`;
   const payload = {
     headings: { en: notification.heading },
@@ -2329,7 +2329,7 @@ async function sendDailyPushNotifications() {
   return result;
 }
 async function sendTestPushNotification(subscriptionId) {
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.tech";
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const iconUrl = `${baseUrl}/logo-192.png`;
   try {
     await sendOneSignalNotification({
@@ -4076,7 +4076,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import sharp from "sharp";
-var siteUrl = () => (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.tech").replace(/\/$/, "");
+var siteUrl = () => (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.com").replace(/\/$/, "");
 var xmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 var htmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 var cleanText = (value) => value.replace(/\s+/g, " ").trim();

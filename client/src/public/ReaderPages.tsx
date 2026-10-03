@@ -510,7 +510,7 @@ export function PublicLayout({
 }
 function ShareButton({ post }: { post: any }) {
   const [open, setOpen] = useState(false);
-  const shareUrl = `https://www.bytes.aurikrex.tech/post/${post.id}`;
+  const shareUrl = `https://www.bytes.aurikrex.com/post/${post.id}`;
   const share = async () => {
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
       const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
@@ -790,7 +790,7 @@ function TodayCompletionCard({
 
   const handleShare = () => {
     const text = `I just completed today's tech briefing on Aurikrex Bytes! 🔥 ${streak}-day streak active.`;
-    const url = "https://www.bytes.aurikrex.tech/";
+    const url = "https://www.bytes.aurikrex.com/";
     if (typeof navigator !== "undefined" && navigator.share) {
       navigator.share({ title: "Aurikrex Bytes Briefing Complete", text, url }).catch(() => undefined);
     } else if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -1897,11 +1897,11 @@ export function HelpCenter() {
     ],
     [
       "How do I report an incorrect or outdated story?",
-      "Email support@aurikrex.tech with the story link and the correction you believe is needed. Include a source where possible so the editorial team can review it quickly.",
+      "Email support@aurikrex.com with the story link and the correction you believe is needed. Include a source where possible so the editorial team can review it quickly.",
     ],
     [
       "How do I contact support?",
-      "Email support@aurikrex.tech for account, editorial, or accessibility help. We aim to respond during normal business hours.",
+      "Email support@aurikrex.com for account, editorial, or accessibility help. We aim to respond during normal business hours.",
     ],
   ];
   return (
@@ -1958,8 +1958,8 @@ export function Contact() {
             <p>
               For account support, editorial feedback, or partnership enquiries.
             </p>
-            <a className="inline-link" href="mailto:support@aurikrex.tech">
-              support@aurikrex.tech <ArrowRight size={15} />
+            <a className="inline-link" href="mailto:support@aurikrex.com">
+              support@aurikrex.com <ArrowRight size={15} />
             </a>
           </div>
           <div className="contact-card">
@@ -2078,12 +2078,12 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
               We retain account and usage data for as long as your account is
               active. We delete account and usage data within a reasonable period
               after you request account deletion. Send access, correction, or
-              deletion requests to support@aurikrex.tech. We will verify requests
+              deletion requests to support@aurikrex.com. We will verify requests
               before acting on them and explain any information we must retain
               for security or legal reasons.
             </ArticleSection>
             <ArticleSection title="Contact">
-              For privacy questions or requests, contact support@aurikrex.tech.
+              For privacy questions or requests, contact support@aurikrex.com.
               This policy applies to the free Aurikrex Bytes reader experience
               and may be updated as the service changes.
             </ArticleSection>
@@ -2124,7 +2124,7 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
               stories accurate and current but cannot guarantee that every card
               is complete or error-free. To the extent permitted by law,
               Aurikrex is not liable for decisions made solely from a Byte.
-              Questions about these terms can be sent to support@aurikrex.tech.
+              Questions about these terms can be sent to support@aurikrex.com.
             </ArticleSection>
           </>
         )}

@@ -13,4 +13,4 @@ Allow: /*.png
 Allow: /*.ico
 Allow: /*.svg
 
-Sitemap: https://www.bytes.aurikrex.tech/sitemap.xml
+Sitemap: https://www.bytes.aurikrex.com/sitemap.xml

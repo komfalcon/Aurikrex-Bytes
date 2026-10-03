@@ -405,7 +405,7 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
   }
 
 
-  const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.tech).
+  const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.com).
 You are analyzing an uploaded multi-page document / PDF containing news cards.
 
 CRITICAL INGESTION & FILTERING RULES:

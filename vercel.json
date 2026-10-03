@@ -59,7 +59,31 @@
     {
       "source": "/(.*)",
       "has": [{ "type": "host", "value": "bytes.aurikrex.tech" }],
-      "destination": "https://www.bytes.aurikrex.tech/$1",
+      "destination": "https://www.bytes.aurikrex.com/$1",
+      "statusCode": 301
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "aurikrex.tech" }],
+      "destination": "https://www.bytes.aurikrex.com/$1",
+      "statusCode": 301
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "www.aurikrex.tech" }],
+      "destination": "https://www.bytes.aurikrex.com/$1",
+      "statusCode": 301
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "bytes.aurikrex.com" }],
+      "destination": "https://www.bytes.aurikrex.com/$1",
+      "statusCode": 301
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "aurikrex.com" }],
+      "destination": "https://www.bytes.aurikrex.com/$1",
       "statusCode": 301
     }
   ],

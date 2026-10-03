@@ -6,4 +6,4 @@ Mailgun applies DKIM signing at the relay for a verified sending domain. The app
 
 ## Manual production check
 
-Falcon should confirm in Mailgun's domain-verification view that `aurikrex.tech` reports DKIM as verified. This status is controlled by the DKIM DNS records already added in Cloudflare, not by application configuration. After DNS and domain verification are confirmed, send a real verification email and password-reset email and verify receipt.
+Falcon should confirm in Mailgun's domain-verification view that `aurikrex.com` reports DKIM as verified. This status is controlled by the DKIM DNS records already added in Cloudflare, not by application configuration. After DNS and domain verification are confirmed, send a real verification email and password-reset email and verify receipt.

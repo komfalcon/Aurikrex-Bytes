@@ -6,7 +6,7 @@ import sharp from "sharp";
 import { getPostById, listPublishedPosts, isMaintenanceMode } from "../db.js";
 
 const siteUrl = () =>
-  (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.tech").replace(/\/$/, "");
+  (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.com").replace(/\/$/, "");
 const xmlEscape = (value: string) =>
   value
     .replace(/&/g, "&amp;")

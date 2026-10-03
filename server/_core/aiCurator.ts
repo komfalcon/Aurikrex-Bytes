@@ -213,7 +213,7 @@ export async function extractSourceArticleImage(url: string): Promise<string | n
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; AurikrexBytesBot/1.0; +https://www.bytes.aurikrex.tech)",
+        "User-Agent": "Mozilla/5.0 (compatible; AurikrexBytesBot/1.0; +https://www.bytes.aurikrex.com)",
         "Accept": "text/html,application/xhtml+xml",
       },
     });

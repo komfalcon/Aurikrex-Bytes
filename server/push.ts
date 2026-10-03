@@ -48,7 +48,7 @@ export function formatPushNotificationContent(
   timeZone = process.env.APP_TIMEZONE || "Africa/Lagos",
   now = new Date()
 ): FormattedNotification {
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.tech";
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const hour = Number(
     new Intl.DateTimeFormat("en-US", {
       timeZone,
@@ -119,7 +119,7 @@ export async function sendDailyPushNotifications(): Promise<PushDeliveryResult> 
   }
 
   const notification = formatPushNotificationContent(topStory, timeZone, now);
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.tech";
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const iconUrl = `${baseUrl}/logo-192.png`;
 
   const payload: Record<string, unknown> = {
@@ -186,7 +186,7 @@ export async function sendDailyPushNotifications(): Promise<PushDeliveryResult> 
 }
 
 export async function sendTestPushNotification(subscriptionId: string) {
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.tech";
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const iconUrl = `${baseUrl}/logo-192.png`;
 
   try {

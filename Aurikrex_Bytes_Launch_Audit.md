@@ -19,7 +19,7 @@ I have conducted a comprehensive end-to-end production readiness audit for Aurik
 **Score: PASS** ✅
 
 *   **Schedule Accuracy:** Verified `.github/workflows/onesignal-daily.yml`. Dispatches accurately at 08:00 AM WAT and 10:00 PM WAT. The pre-warm cron triggers precisely at minute 50 and executes perfect exact-second sleep synchronization to eliminate queue delays.
-*   **Dynamic Story-Grounded Copy:** Verified. Morning and Evening digests dynamically inject lead headlines with appropriate emojis (`🌅` / `🌙`) and slice ~110 characters. Clean fallback copy is present, and deep-links correctly point to `https://www.bytes.aurikrex.tech/post/:id`.
+*   **Dynamic Story-Grounded Copy:** Verified. Morning and Evening digests dynamically inject lead headlines with appropriate emojis (`🌅` / `🌙`) and slice ~110 characters. Clean fallback copy is present, and deep-links correctly point to `https://www.bytes.aurikrex.com/post/:id`.
 *   **Rich Media & Delivery Resilience:** Verified. OneSignal payloads inject `big_picture`, `chrome_web_icon`, and `chrome_web_badge`. The system automatically intercepts `invalid_subscription_ids` and `invalid_player_ids` to proactively prune stale device records from the database.
 
 ---
@@ -69,7 +69,7 @@ I have conducted a comprehensive end-to-end production readiness audit for Aurik
 **None.** The application architecture is resilient, highly optimized, and meticulously secured. 
 
 ### 2. Post-Launch Recommendations
-1.  **Google Search Console Integration:** Submit the exact `https://www.bytes.aurikrex.tech/sitemap.xml` URI to GSC immediately upon launch to accelerate knowledge-graph association.
+1.  **Google Search Console Integration:** Submit the exact `https://www.bytes.aurikrex.com/sitemap.xml` URI to GSC immediately upon launch to accelerate knowledge-graph association.
 2.  **Environment Variable Verification:** Verify that Vercel is injected with `TURSO_DATABASE_URL` rather than just `DATABASE_URL` as defined in your Turso configuration.
 
 ### 3. Final Verdict
