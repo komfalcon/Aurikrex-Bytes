@@ -4378,7 +4378,7 @@ function registerSeoRoutes(app) {
       ].join("\n")
     );
   });
-  app.get("/sitemap.xml", async (_req, res) => {
+  app.get(["/sitemap.xml", "/api/sitemap.xml", "/sitemap"], async (_req, res) => {
     const staticEntries = [
       { path: "/", priority: "1.0", changefreq: "daily" },
       { path: "/archive", priority: "0.9", changefreq: "daily" },
@@ -4405,7 +4405,7 @@ function registerSeoRoutes(app) {
         error instanceof Error ? error.message : String(error)
       );
     }
-    res.type("application/xml").send(
+    res.setHeader("Content-Type", "application/xml; charset=utf-8").setHeader("Cache-Control", "public, max-age=3600, s-maxage=86400, stale-while-revalidate=43200").send(
       `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`
     );
   });
@@ -4511,6 +4511,13 @@ async function setupApp() {
     console.error(`[Environment] Production configuration incomplete: ${environmentIssues.join("; ")}`);
   }
   const app = express();
+  app.use((req, _res, next) => {
+    const matchedPath = req.headers["x-matched-path"];
+    if (matchedPath && (matchedPath === "/sitemap.xml" || matchedPath === "/robots.txt" || matchedPath.endsWith("/sitemap.xml"))) {
+      req.url = matchedPath;
+    }
+    next();
+  });
   app.use(securityHeaders);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));

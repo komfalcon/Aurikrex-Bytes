@@ -17,6 +17,13 @@ async function setupApp() {
     console.error(`[Environment] Production configuration incomplete: ${environmentIssues.join("; ")}`);
   }
   const app = express();
+  app.use((req, _res, next) => {
+    const matchedPath = req.headers["x-matched-path"] as string | undefined;
+    if (matchedPath && (matchedPath === "/sitemap.xml" || matchedPath === "/robots.txt" || matchedPath.endsWith("/sitemap.xml"))) {
+      req.url = matchedPath;
+    }
+    next();
+  });
   app.use(securityHeaders);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));

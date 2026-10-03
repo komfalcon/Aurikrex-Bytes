@@ -399,7 +399,7 @@ export function registerSeoRoutes(app: Express) {
       );
   });
 
-  app.get("/sitemap.xml", async (_req: Request, res: Response) => {
+  app.get(["/sitemap.xml", "/api/sitemap.xml", "/sitemap"], async (_req: Request, res: Response) => {
     type StaticEntry = { path: string; priority: string; changefreq: string };
     const staticEntries: StaticEntry[] = [
       { path: "/",             priority: "1.0", changefreq: "daily" },
@@ -429,7 +429,8 @@ export function registerSeoRoutes(app: Express) {
       );
     }
     res
-      .type("application/xml")
+      .setHeader("Content-Type", "application/xml; charset=utf-8")
+      .setHeader("Cache-Control", "public, max-age=3600, s-maxage=86400, stale-while-revalidate=43200")
       .send(
         `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`
       );
