@@ -774,20 +774,54 @@ function mailTransport() {
   });
 }
 async function sendEmail(to, subject, html, fromAddress) {
+  const defaultFrom = process.env.RESEND_FROM || process.env.SMTP_FROM || "Aurikrex Bytes <info@aurikrex.com>";
+  const from = fromAddress || defaultFrom;
+  const resendApiKey = process.env.RESEND_API_KEY;
+  if (resendApiKey) {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey.trim()}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          from,
+          to: [to],
+          subject,
+          html
+        })
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(
+          `[Resend API Error] Status ${response.status}: ${errorText}`
+        );
+        throw new Error(`Resend error ${response.status}: ${errorText}`);
+      }
+      const data = await response.json();
+      console.log(`[Resend Email Sent] ID: ${data?.id} to ${to}`);
+      return data;
+    } catch (err) {
+      console.error(
+        "[Resend API Delivery Failure]",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
   const transport = mailTransport();
-  if (!transport) {
-    console.info(`[Email placeholder] ${subject} for ${to}`);
+  if (transport) {
+    await transport.sendMail({ from, to, subject, html });
     return;
   }
-  const from = fromAddress || process.env.SMTP_FROM || "info@aurikrex.com";
-  await transport.sendMail({ from, to, subject, html });
+  console.info(`[Email placeholder] ${subject} for ${to}`);
 }
 async function sendAuthEmail(to, subject, html) {
   await sendEmail(
     to,
     subject,
     html,
-    process.env.SMTP_FROM || "info@aurikrex.com"
+    process.env.RESEND_FROM || process.env.SMTP_FROM || "Aurikrex Bytes <info@aurikrex.com>"
   );
 }
 function verificationEmailHtml(url) {
