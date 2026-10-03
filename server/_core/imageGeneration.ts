@@ -16,7 +16,106 @@
  *   });
  */
 import { storagePut } from "server/storage";
-import { ENV } from "./env";
+import { ENV } from "./env.js";
+import { getNvidiaApiKey } from "./aiKeys.js";
+import { cloudinaryConfigured } from "../services.js";
+
+/**
+ * Generates photorealistic 16:9 PNG images using NVIDIA NIM (FLUX.1-schnell).
+ * Automatically uploads the resulting PNG to Cloudinary CDN if configured.
+ */
+export async function generateNvidiaFluxImage(prompt: string): Promise<string | null> {
+  const nvidiaKey = getNvidiaApiKey();
+  if (!nvidiaKey || !prompt) return null;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    const endpoints = [
+      "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell",
+      "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux-1-schnell",
+      "https://integrate.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell",
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          signal: controller.signal,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${nvidiaKey}`,
+          },
+          body: JSON.stringify({
+            prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
+            mode: "base64",
+          }),
+        });
+
+        if (response.ok) {
+          clearTimeout(timeout);
+          const data = await response.json();
+          const b64 = data.b64_json || data.artifacts?.[0]?.base64 || data.image || data.predictions?.[0]?.bytesBase64Encoded;
+          if (b64) {
+            const dataUri = `data:image/png;base64,${b64}`;
+            if (cloudinaryConfigured()) {
+              try {
+                const { v2: cloudinary } = await import("cloudinary");
+                cloudinary.config({
+                  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+                  api_key: process.env.CLOUDINARY_API_KEY,
+                  api_secret: process.env.CLOUDINARY_API_SECRET,
+                });
+                const uploadRes = await cloudinary.uploader.upload(dataUri, {
+                  folder: "aurikrex/posts",
+                  resource_type: "image",
+                });
+                if (uploadRes.secure_url || uploadRes.url) {
+                  return uploadRes.secure_url || uploadRes.url;
+                }
+              } catch {
+                // Cloudinary fallback to dataUri
+              }
+            }
+            return dataUri;
+          }
+        }
+      } catch {
+        // Try next endpoint
+      }
+    }
+    clearTimeout(timeout);
+  } catch (err) {
+    console.warn("[NVIDIA FLUX] Generation failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  return null;
+}
+
+export function getTopicStockImage(headline: string, category = "Tech"): string {
+  const h = headline.toLowerCase();
+  if (/ai|model|llm|deepseek|chatgpt|openai|claude|numbat|robot|agent|neural/.test(h)) {
+    return "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/chip|hardware|semiconductor|huawei|apple|nvidia|intel|processor|camera|phone/.test(h)) {
+    return "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/space|satellite|orbit|moon|rocket|astronomy|starlink|earth/.test(h)) {
+    return "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/car|tesla|ev|vehicle|battery|autonomous|transport/.test(h)) {
+    return "https://images.unsplash.com/photo-1563720223185-11003d516935?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/crypto|bitcoin|ethereum|blockchain|token/.test(h)) {
+    return "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/science|health|dna|drug|biology|physics|cell/.test(h)) {
+    return "https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=1200&q=80";
+  }
+  return "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80";
+}
 
 // Default model for generated sites. "MODEL_GPT_IMAGE_2" is the forge images.v1
 // enum for GPT Image 2 (id: gpt-image-2). If omitted, forge falls back to Gemini 2.5 Flash.

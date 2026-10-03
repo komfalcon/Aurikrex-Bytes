@@ -3,7 +3,7 @@
 - [x] Add PWA manifest, install metadata, and baseline service worker registration.
 - [x] Add Turso-compatible schema and migration workflow for posts, admin_users, and readers.
 - [x] Add Cloudinary configuration and secure image-upload URL handling.
-- [x] Implement disguised admin/editor authentication at /newsroom-7x with bcrypt, roles, sessions/JWT, remembered-device tokens, and generic 404 failures.
+- [x] Implement disguised admin/editor authentication at /falcon-system-auth with bcrypt, roles, sessions/JWT, remembered-device tokens, and generic 404 failures.
 - [x] Implement discoverable reader signup and login with email/password.
 - [x] Implement reader Google OAuth sign-in integration point and callback handling.
 - [x] Implement reader email verification, unverified-account state, password reset request, reset token validation, and new-password flow.
@@ -12,7 +12,7 @@
 - [x] Add admin/editor and reader structural pages and route guards without exposing the disguised admin entry point.
 - [x] Add Vitest coverage for schema/auth utilities and generic admin failure behavior.
 - [x] Validate local development server, generated migration execution, TypeScript, tests, build, and route surfaces; credentialed live auth validation is documented as deployment-time handoff because secrets were intentionally omitted.
-- [ ] Create branch manus/scaffold-full-auth, commit implementation, push branch, and open PR into main without merging.
+- [x] Create branch manus/auth-rebuild-and-config-fix, commit implementation, push branch, and open PR into main without merging.
 - [x] Add real PWA icons and verify manifest installability metadata.
 - [x] Apply and verify the generated migration against a disposable local libSQL database; apply it to the deployment Turso database after deployment variables are supplied.
 - [x] Implement a client-side Cloudinary upload flow and persist returned image URLs into post records.

@@ -1,14 +1,19 @@
 import "dotenv/config";
 import express from "express";
-import { createServer } from "http";
+import { createServer, type Server } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "./oauth";
-import { registerStorageProxy } from "./storageProxy";
-import { registerGoogleAuthRoutes } from "../google-auth";
-import { appRouter } from "../routers";
-import { createContext } from "./context";
-import { serveStatic, setupVite } from "./vite";
+import { registerOAuthRoutes } from "./oauth.js";
+import { registerStorageProxy } from "./storageProxy.js";
+import { registerGoogleAuthRoutes } from "../google-auth.js";
+import { appRouter } from "../routers.js";
+import { createContext } from "./context.js";
+import { sendDailyPushNotifications } from "../push.js";
+import { serveStatic, setupVite } from "./vite.js";
+import { registerSeoRoutes } from "./seoRoutes.js";
+import { authRateLimit, securityHeaders } from "./security.js";
+import { validateProductionEnvironment } from "./env.js";
+import { publishDuePosts } from "../db.js";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -30,14 +35,66 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function setupApp() {
+  const environmentIssues = validateProductionEnvironment();
+  if (environmentIssues.length) {
+    console.error(`[Environment] Production configuration incomplete: ${environmentIssues.join("; ")}`);
+  }
   const app = express();
-  let server;
+  let server: Server | undefined;
   if (!process.env.VERCEL) {
     server = createServer(app);
   }
-  // Configure body parser with larger size limit for file uploads
+  // Configure body parser with 50mb limit to support multi-page screenshot PDF uploads
+  app.use(securityHeaders);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  registerSeoRoutes(app);
+  app.get("/api/cron/publish", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const authorization = req.headers.authorization;
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      return res.json({ published: await publishDuePosts() });
+    } catch (error) {
+      console.error("[Cron] publish failed", error);
+      return res.status(500).json({ error: "Publish job failed" });
+    }
+  });
+  app.get("/api/cron/notify", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const authorization = req.headers.authorization;
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const sent = await sendDailyPushNotifications();
+      return res.json({ sent });
+    } catch (error) {
+      console.error("[Cron] notify failed", error);
+      return res.status(500).json({ error: "Notify job failed" });
+    }
+  });
+  app.get("/api/cron/curate", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const authorization = req.headers.authorization;
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const { runNightlyCuration } = await import("./aiCurator.js");
+      const curated = await runNightlyCuration();
+      return res.json({ curated });
+    } catch (error) {
+      console.error("[Cron] curate failed", error);
+      return res.status(500).json({ error: "Curation job failed" });
+    }
+  });
+  app.use(authRateLimit);
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   registerGoogleAuthRoutes(app);
@@ -49,11 +106,11 @@ async function setupApp() {
       createContext,
     })
   );
-  
+
   // Skip static serving if on Vercel (Vercel Edge handles it)
   if (!process.env.VERCEL) {
     if (process.env.NODE_ENV === "development") {
-      await setupVite(app, server);
+      await setupVite(app, server!);
     } else {
       serveStatic(app);
     }
@@ -64,24 +121,32 @@ async function setupApp() {
 let cachedApp: express.Express | null = null;
 
 export default async function handler(req: any, res: any) {
-  if (!cachedApp) {
-    const { app } = await setupApp();
-    cachedApp = app;
-  }
-  return cachedApp(req, res);
-}
-
-if (!process.env.VERCEL) {
-  async function startServer() {
-    const { server } = await setupApp();
-    const preferredPort = parseInt(process.env.PORT || "3000");
-    const port = await findAvailablePort(preferredPort);
-    if (port !== preferredPort) {
-      console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+  try {
+    if (!cachedApp) {
+      const { app } = await setupApp();
+      cachedApp = app;
     }
-    server!.listen(port, () => {
-      console.log(`Server running on http://localhost:${port}/`);
+    return cachedApp(req, res);
+  } catch (error) {
+    console.error("Vercel Edge Handler Error:", error);
+    res.status(500).json({
+      error: "Fatal Vercel Handler Error",
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
   }
-  startServer().catch(console.error);
 }
+
+async function startServer() {
+  const { server } = await setupApp();
+  const preferredPort = parseInt(process.env.PORT || "3000");
+  const port = await findAvailablePort(preferredPort);
+  if (port !== preferredPort) {
+    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+  }
+  server!.listen(port, () => {
+    console.log(`Server running on http://localhost:${port}/`);
+  });
+}
+
+if (!process.env.VERCEL) startServer().catch(console.error);
