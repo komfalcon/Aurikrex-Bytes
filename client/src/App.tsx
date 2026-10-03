@@ -10,6 +10,7 @@ import { ScrollToTopButton } from "./components/ScrollToTopButton";
 import Seo from "./components/Seo";
 import { Archive, Contact, HelpCenter, Home, HowItWorks, PostDetail, ReaderAuth, ReaderDashboard, SavedPosts, SupportPage } from "./public/ReaderPages";
 import MaintenancePage from "./public/MaintenancePage";
+import SsoCallbackPage from "./pages/SsoCallbackPage";
 import { trpc } from "./lib/trpc";
 
 const AdminDashboard = React.lazy(() => import("./admin/AdminPages").then(m => ({ default: m.AdminDashboard })));
@@ -52,6 +53,8 @@ function Router() {
     <Route path="/privacy" component={() => <SupportPage kind="/privacy" />} />
     <Route path="/terms" component={() => <SupportPage kind="/terms" />} />
     <Route path="/login"><ReaderAuth mode="login" /></Route>
+    <Route path="/sso/callback" component={SsoCallbackPage} />
+    <Route path="/sso/login">{() => { window.location.href = "https://cbt.aurikrex.com/api/v1/auth/sso/authorize?client_id=aurikrex_bytes&redirect_uri=" + encodeURIComponent(window.location.origin + "/sso/callback"); return null; }}</Route>
     <Route path="/signup"><ReaderAuth mode="signup" /></Route>
     <Route path="/forgot-password"><ReaderAuth mode="forgot" /></Route>
     <Route path="/reset-password"><ReaderAuth mode="reset" /></Route>

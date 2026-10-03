@@ -144,6 +144,69 @@ export const appRouter = router({
         ctx.res.clearCookie(name, { ...oauthCookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+    ssoExchange: publicProcedure
+      .input(
+        z.object({
+          code: z.string(),
+          code_verifier: z.string().optional(),
+          redirect_uri: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const cbtApiBase = process.env.CBT_API_URL || 'https://cbt.aurikrex.com';
+        const response = await fetch(`${cbtApiBase}/api/v1/auth/sso/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_id: 'aurikrex_bytes',
+            code: input.code,
+            code_verifier: input.code_verifier,
+            redirect_uri: input.redirect_uri || 'https://bytes.aurikrex.com/sso/callback',
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: errorData.message || 'SSO Token Exchange failed',
+          });
+        }
+
+        const tokenData = await response.json();
+        const { aurikrex_id, user: ssoUser } = tokenData;
+
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database error' });
+
+        let [reader] = await db
+          .select()
+          .from(readers)
+          .where(eq(readers.email, ssoUser.email.toLowerCase()))
+          .limit(1);
+
+        if (!reader) {
+          const [newReader] = await db
+            .insert(readers)
+            .values({
+              email: ssoUser.email.toLowerCase(),
+              name: ssoUser.fullName || ssoUser.email.split('@')[0],
+              openId: aurikrex_id,
+              aurikrexId: aurikrex_id,
+            })
+            .returning();
+          reader = newReader;
+        }
+
+        const token = createToken({ id: reader.id, kind: 'reader', email: reader.email });
+        const cookieOpts = getFirstPartyCookieOptions(ctx.req);
+        ctx.res.cookie(READER_COOKIE, token, cookieOpts);
+
+        return {
+          success: true,
+          reader: { id: reader.id, email: reader.email, name: reader.name, aurikrexId: aurikrex_id },
+        };
+      }),
   }),
   admin: router({
     login: publicProcedure

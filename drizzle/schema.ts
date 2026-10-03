@@ -11,6 +11,7 @@ export const ADMIN_ROLES = ["admin", "editor"] as const;
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  aurikrexId: text("aurikrex_id").unique(),
   openId: text("open_id").notNull().unique(),
   name: text("name"),
   email: text("email"),
