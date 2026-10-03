@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
 import { trpc } from '../lib/trpc';
 
 export default function SsoCallbackPage() {
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const [error, setError] = useState('');
   const ssoExchange = trpc.auth.ssoExchange.useMutation();
 
   useEffect(() => {
     async function handleSso() {
+      const searchParams = new URLSearchParams(window.location.search);
       const code = searchParams.get('code');
       if (!code) {
         setError('Missing authorization code from Identity Provider.');
@@ -28,7 +26,7 @@ export default function SsoCallbackPage() {
     }
 
     handleSso();
-  }, [searchParams]);
+  }, []);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white p-4">
@@ -41,7 +39,7 @@ export default function SsoCallbackPage() {
             <h2 className="text-xl font-bold text-red-400 mb-2">SSO Authentication Failed</h2>
             <p className="text-sm text-slate-400 mb-6">{error}</p>
             <a
-              href="/auth"
+              href="/login"
               className="inline-block px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm font-medium transition-colors"
             >
               Return to Login
