@@ -863,6 +863,9 @@ function PostCard({
               alt={post.headline}
               loading="lazy"
               decoding="async"
+              onError={event => {
+                event.currentTarget.style.display = "none";
+              }}
             />
           ) : (
             <div className="image-placeholder">
@@ -1119,25 +1122,38 @@ function NoiseVsSignalSection() {
         </div>
       </div>
 
-      <div className="mobile-comparison-toggle">
+      <div className="mobile-comparison-toggle" role="tablist" aria-label="Choose comparison view">
         <button
           type="button"
+          id="comparison-tab-signal"
           className={activeTab === "signal" ? "active" : ""}
+          role="tab"
+          aria-selected={activeTab === "signal"}
+          aria-controls="comparison-panel-signal"
           onClick={() => setActiveTab("signal")}
         >
           <CheckCircle2 size={15} className="text-blue" /> Aurikrex Bytes
         </button>
         <button
           type="button"
+          id="comparison-tab-noise"
           className={activeTab === "noise" ? "active" : ""}
+          role="tab"
+          aria-selected={activeTab === "noise"}
+          aria-controls="comparison-panel-noise"
           onClick={() => setActiveTab("noise")}
         >
           <XCircle size={15} className="text-red" /> Social Feeds
         </button>
       </div>
 
-      <div className="comparison-container">
-        <div className={`comparison-col comparison-noise ${activeTab === "noise" ? "show-mobile" : ""}`}>
+      <div className="comparison-container" role="group" aria-label="Aurikrex Bytes versus social feeds">
+        <div
+          id="comparison-panel-noise"
+          className={`comparison-col comparison-noise ${activeTab === "noise" ? "show-mobile" : ""}`}
+          role="tabpanel"
+          aria-labelledby="comparison-tab-noise"
+        >
           <div className="col-header">
             <div className="col-header-badge red-badge">
               <XCircle size={14} /> TRADITIONAL FEEDS
@@ -1158,7 +1174,12 @@ function NoiseVsSignalSection() {
           </div>
         </div>
 
-        <div className={`comparison-col comparison-signal ${activeTab === "signal" ? "show-mobile" : ""}`}>
+        <div
+          id="comparison-panel-signal"
+          className={`comparison-col comparison-signal ${activeTab === "signal" ? "show-mobile" : ""}`}
+          role="tabpanel"
+          aria-labelledby="comparison-tab-signal"
+        >
           <div className="col-header">
             <div className="col-header-badge blue-badge">
               <CheckCircle2 size={14} /> 5-MINUTE DAILY SIGNAL
@@ -1185,10 +1206,11 @@ function NoiseVsSignalSection() {
 
 function FloatingMobileCta() {
   const [visible, setVisible] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     const handleScroll = () => {
-      if (window.scrollY > 450) {
+      if (window.scrollY > 450 && !dismissed) {
         setVisible(true);
       } else {
         setVisible(false);
@@ -1196,16 +1218,29 @@ function FloatingMobileCta() {
     };
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
+  }, [dismissed]);
 
   if (!visible) return null;
 
   return (
     <div className="floating-mobile-cta">
-      <span>Get your 8 AM tech briefing</span>
-      <Link href="/signup" className="button button-small">
-        Join Free <ArrowRight size={14} />
-      </Link>
+      <span className="floating-mobile-cta-copy">Get your 8 AM tech briefing</span>
+      <div className="floating-mobile-cta-actions">
+        <Link href="/signup" className="button button-small">
+          Join Free <ArrowRight size={14} />
+        </Link>
+        <button
+          type="button"
+          className="floating-mobile-cta-dismiss"
+          aria-label="Dismiss briefing sign-up banner"
+          onClick={() => {
+            setDismissed(true);
+            setVisible(false);
+          }}
+        >
+          <X size={16} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -1242,9 +1277,7 @@ export function Home() {
             </div>
             <div className="hero-trust-badges">
               <span><Check size={13} className="check-icon" /> Free forever</span>
-              <span>•</span>
               <span><Check size={13} className="check-icon" /> 30-second sign up</span>
-              <span>•</span>
               <span><Check size={13} className="check-icon" /> No credit card</span>
             </div>
           </div>
