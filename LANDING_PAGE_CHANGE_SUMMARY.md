@@ -7,6 +7,7 @@
 - Kept the hero preview visible at tablet widths instead of hiding it below 960px.
 - Made feature pillars responsive: four columns on desktop, two on tablet, one full-width card on phone.
 - Rebuilt the sample-story section as a copy + preview composition on desktop and a stacked layout on smaller screens.
+- On phones, hide the secondary sample-story section so the hero remains the single Byte showcase; preserve it at tablet and desktop widths.
 - Made the comparison section show both columns on desktop/tablet and exactly one active panel on phones.
 - Added accessible tab/panel semantics to the comparison toggle.
 - Removed the landing-page overflow mask and the shared global overflow clipping rules.
@@ -22,7 +23,7 @@
 | `>= 1101px` | Two-column hero, four feature cards, two comparison columns, desktop sample-story split. |
 | `761–1100px` | Balanced two-column hero until `960px`; two feature-card columns. |
 | `<= 960px` | Hero preview stacks below the copy but remains visible; sample story stacks below the copy. |
-| `<= 760px` | Full-width single-column cards, one comparison panel at a time, mobile comparison toggle and fixed CTA. |
+| `<= 760px` | Full-width single-column cards, one comparison panel at a time, one hero Byte showcase, mobile comparison toggle and fixed CTA. |
 | `<= 480px` | Stacked hero actions, independent trust-badge rows, tighter phone gutters and CTA sizing. |
 
 ## Validation

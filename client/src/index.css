@@ -6619,6 +6619,11 @@ body.has-install-prompt {
     padding-bottom: calc(144px + env(safe-area-inset-bottom));
   }
 
+  /* The hero preview is the single mobile Byte showcase; avoid repeating it below. */
+  .landing-page .sample-section {
+    display: none;
+  }
+
   .landing-page .container,
   .sample-section {
     width: calc(100% - 32px);
