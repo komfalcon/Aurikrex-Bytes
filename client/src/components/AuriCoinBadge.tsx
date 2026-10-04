@@ -15,7 +15,19 @@ export function AuriCoinBadge({ className = '' }: { className?: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const token = typeof window !== 'undefined' ? (localStorage.getItem('accessToken') || localStorage.getItem('token')) : null;
+  const getToken = () => {
+    if (typeof window === 'undefined') return null;
+    return (
+      localStorage.getItem('accessToken') ||
+      localStorage.getItem('token') ||
+      localStorage.getItem('aurikrex:bytes-token') ||
+      localStorage.getItem('aurikrex:vault-token') ||
+      sessionStorage.getItem('aurikrex:library-session-token') ||
+      sessionStorage.getItem('accessToken') ||
+      sessionStorage.getItem('token')
+    );
+  };
+  const token = getToken();
 
   const fetchBalance = async () => {
     if (!token) return;
@@ -54,8 +66,6 @@ export function AuriCoinBadge({ className = '' }: { className?: string }) {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  if (!token) return null;
 
   const balance = balanceData?.balance ?? 5000;
   const isLow = balance < 5;
