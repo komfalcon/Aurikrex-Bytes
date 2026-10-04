@@ -58,10 +58,11 @@ export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?
   const getTargetUrl = (app: AppOption): string => {
     if (app.id === currentAppId) return app.defaultUrl;
     const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
-    const cbtIdpUrl = 'https://cbt.aurikrex.com';
+    const apiBase = (import.meta.env.VITE_API_BASE_URL || 'https://cbt.pxxl.click').replace(/\/+$/, '');
 
     if (token && app.id !== 'cbt') {
-      return `${cbtIdpUrl}/api/v1/auth/sso/authorize?client_id=${app.clientId}&redirect_uri=${encodeURIComponent(app.redirectUri)}&token=${encodeURIComponent(token)}`;
+      const endpoint = apiBase.endsWith('/api/v1') ? `${apiBase}/auth/sso/authorize` : `${apiBase}/api/v1/auth/sso/authorize`;
+      return `${endpoint}?client_id=${app.clientId}&redirect_uri=${encodeURIComponent(app.redirectUri)}&token=${encodeURIComponent(token)}`;
     }
     return app.defaultUrl;
   };
