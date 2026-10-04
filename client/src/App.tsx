@@ -54,7 +54,7 @@ function Router() {
     <Route path="/terms">{() => <SupportPage kind="/terms" />}</Route>
     <Route path="/login"><ReaderAuth mode="login" /></Route>
     <Route path="/sso/callback" component={SsoCallbackPage} />
-    <Route path="/sso/login">{() => { window.location.href = "https://cbt.aurikrex.com/api/v1/auth/sso/authorize?client_id=aurikrex_bytes&redirect_uri=" + encodeURIComponent(window.location.origin + "/sso/callback"); return null; }}</Route>
+    <Route path="/sso/login">{() => { window.location.href = "https://cbt.pxxl.click/api/v1/auth/sso/authorize?client_id=aurikrex_bytes&redirect_uri=" + encodeURIComponent(window.location.origin + "/sso/callback"); return null; }}</Route>
     <Route path="/signup"><ReaderAuth mode="signup" /></Route>
     <Route path="/forgot-password"><ReaderAuth mode="forgot" /></Route>
     <Route path="/reset-password"><ReaderAuth mode="reset" /></Route>
