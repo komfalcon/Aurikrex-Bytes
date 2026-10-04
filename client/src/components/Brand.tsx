@@ -23,8 +23,6 @@ export function ThemeToggle() {
   );
 }
 
-import { AurikrexAppsSwitcher } from "./AurikrexAppsSwitcher";
-
 export function SiteHeader({ action }: { action?: React.ReactNode }) {
   return (
     <header className="site-header">
