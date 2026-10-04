@@ -137,7 +137,10 @@ export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?
   const getTargetUrl = (app: AppOption): string => {
     if (app.id === currentAppId) return app.defaultUrl;
     const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
-    const apiBase = (import.meta.env.VITE_API_BASE_URL || 'https://cbt.pxxl.click').replace(/\/+$/, '');
+    let apiBase = (import.meta.env.VITE_API_BASE_URL || 'https://cbt.pxxl.click').replace(/\/+$/, '');
+    if (!apiBase || !apiBase.includes('pxxl.click')) {
+      apiBase = 'https://cbt.pxxl.click';
+    }
 
     if (token && app.id !== 'cbt') {
       const endpoint = apiBase.endsWith('/api/v1') ? `${apiBase}/auth/sso/authorize` : `${apiBase}/api/v1/auth/sso/authorize`;
