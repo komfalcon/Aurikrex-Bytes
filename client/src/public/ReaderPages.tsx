@@ -1005,85 +1005,116 @@ function EmptyToday() {
     </div>
   );
 }
-function HeroInteractiveDemo() {
-  const [activePrompt, setActivePrompt] = useState<string | null>("why");
+function HeroByteShowcase() {
+  const [activeTab, setActiveTab] = useState<"matters" | "outlook" | "ask">("matters");
   const [query, setQuery] = useState("");
-  const [customAnswer, setCustomAnswer] = useState<string | null>(null);
+  const [customResponse, setCustomResponse] = useState<string | null>(null);
 
-  const prompts: Record<string, { label: string; icon: ReactNode; answer: string }> = {
-    why: {
-      label: "Why it matters",
-      icon: <Zap size={13} />,
-      answer: "This architecture enables low-latency AI inference at 1/10th the compute cost, unlocking real-time edge intelligence for mobile applications."
-    },
-    outlook: {
-      label: "Industry Outlook",
-      icon: <TrendingUp size={13} />,
-      answer: "Expect commercial rollouts across cloud providers within 60 days. Developer adoption is surging with open-weight releases."
-    },
-    ask: {
-      label: "Ask Falke AI",
-      icon: <Bot size={13} />,
-      answer: "Falke AI synthesizes live web search context with story technical briefs to answer any follow-up question instantly."
-    }
+  const responses = {
+    matters: "This architecture enables low-latency AI inference at 1/10th the compute cost, unlocking real-time edge intelligence for mobile and web applications.",
+    outlook: "Accelerates enterprise adoption of open-weights models and pressures proprietary API pricing across frontier AI providers.",
   };
 
-  const currentAnswer = customAnswer || (activePrompt ? prompts[activePrompt]?.answer : prompts.why.answer);
-
-  const handleAskSubmit = (e: React.FormEvent) => {
+  const handleAsk = (e: FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
-    setActivePrompt(null);
-    setCustomAnswer(`Analyzing "${query.trim()}"… Falke AI synthesizes live technical web search to deliver instant, high-signal answers.`);
+    setCustomResponse(`Falke AI: "${query.trim()}" — Key insight: Open-weights models reduce infrastructure lock-in while improving auditability.`);
+    setQuery("");
   };
 
   return (
-    <div className="hero-demo-card">
-      <div className="hero-demo-badge">
-        <span className="live-dot" /> LIVE PRODUCT DEMO
-      </div>
-      <div className="hero-demo-content">
-        <div className="hero-demo-tag">AI & COMPUTE BRIEFING</div>
-        <h3 className="hero-demo-title">DeepSeek Releases Open V3 Model with MoE Architecture</h3>
-        <p className="hero-demo-body">
-          A 671B parameter mixture-of-experts model trained for under $6M, matching frontier performance on coding and reasoning benchmarks.
-        </p>
-
-        <div className="hero-demo-prompts">
-          <span className="hero-demo-prompts-label">Try interactive AI context:</span>
-          <div className="hero-demo-pills">
-            {Object.entries(prompts).map(([key, val]) => (
-              <button
-                key={key}
-                type="button"
-                className={`demo-pill ${activePrompt === key && !customAnswer ? "active" : ""}`}
-                onClick={() => {
-                  setCustomAnswer(null);
-                  setActivePrompt(key);
-                }}
-              >
-                {val.icon} {val.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="hero-demo-answer">
-          <div className="hero-demo-answer-head">
-            <Sparkles size={14} /> <span>Falke AI Intelligence</span>
-          </div>
-          <p>{currentAnswer}</p>
-        </div>
-
-        <form className="hero-demo-ask-form" onSubmit={handleAskSubmit}>
-          <input
-            type="text"
-            placeholder="Ask a follow-up question..."
-            value={query}
-            onChange={e => setQuery(e.target.value)}
+    <div className="hero-byte-showcase" role="region" aria-label="Interactive Byte Story Showcase">
+      <div className="showcase-card">
+        <div className="showcase-image">
+          <img
+            src="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=800&auto=format&fit=crop"
+            alt="DeepSeek MoE Architecture"
+            loading="eager"
           />
-          <button type="submit" className="button button-small">Ask AI</button>
-        </form>
+          <span className="showcase-category-tag">AI & COMPUTE BRIEFING</span>
+        </div>
+
+        <div className="showcase-content">
+          <div className="showcase-meta">
+            <span>OCT 1, 2026</span>
+            <span>·</span>
+            <span>4 MIN READ</span>
+          </div>
+
+          <h3 className="showcase-title">DeepSeek Releases Open V3 Model with MoE Architecture</h3>
+
+          <p className="showcase-lead">
+            A 671B parameter mixture-of-experts model trained for under $6M, matching frontier performance on coding and reasoning benchmarks.
+          </p>
+
+          <div className="showcase-ai-box">
+            <div className="ai-box-header">
+              <Sparkles size={14} className="text-blue" />
+              <span>Falke AI Live Context</span>
+            </div>
+
+            <div className="ai-pills">
+              <button
+                type="button"
+                className={`ai-pill ${activeTab === "matters" && !customResponse ? "active" : ""}`}
+                onClick={() => { setActiveTab("matters"); setCustomResponse(null); }}
+              >
+                <Zap size={12} /> Why it matters
+              </button>
+              <button
+                type="button"
+                className={`ai-pill ${activeTab === "outlook" && !customResponse ? "active" : ""}`}
+                onClick={() => { setActiveTab("outlook"); setCustomResponse(null); }}
+              >
+                <TrendingUp size={12} /> Industry Outlook
+              </button>
+              <button
+                type="button"
+                className={`ai-pill ${activeTab === "ask" || customResponse ? "active" : ""}`}
+                onClick={() => setActiveTab("ask")}
+              >
+                <Bot size={12} /> Ask Falke AI
+              </button>
+            </div>
+
+            <div className="ai-response-drawer">
+              <p>
+                {customResponse || responses[activeTab === "ask" ? "matters" : activeTab]}
+              </p>
+            </div>
+
+            {activeTab === "ask" && (
+              <form onSubmit={handleAsk} className="ai-ask-form">
+                <input
+                  type="text"
+                  placeholder="Ask Falke AI a follow-up question..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <button type="submit" className="button button-small">
+                  Ask AI
+                </button>
+              </form>
+            )}
+          </div>
+
+          <div className="showcase-footer">
+            <div className="showcase-engagement">
+              <span className="engagement-item active">
+                <Flame size={14} fill="currentColor" /> 12
+              </span>
+              <span className="engagement-item">
+                <Bookmark size={14} />
+              </span>
+              <span className="engagement-item">
+                <Share2 size={14} />
+              </span>
+            </div>
+            <Link href="/signup" className="showcase-read-link">
+              Read full story <ArrowRight size={13} />
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1143,6 +1174,62 @@ function FeaturePillarsGrid() {
 function NoiseVsSignalSection() {
   const [activeTab, setActiveTab] = useState<"signal" | "noise">("signal");
 
+  const signalPoints = [
+    {
+      icon: <Layers size={18} className="text-blue" />,
+      title: "5 to 10 Curated Stories Daily",
+      desc: "Only high-signal tech developments, zero fluff or repetitive posts."
+    },
+    {
+      icon: <Workflow size={18} className="text-blue" />,
+      title: "Verified 3-Part Briefs",
+      desc: "Clear structure: The Lead, Why It Matters, and Industry Outlook."
+    },
+    {
+      icon: <Clock3 size={18} className="text-blue" />,
+      title: "Finished in 5 Quiet Minutes",
+      desc: "Predictable morning & evening drops (8 AM & 10 PM)."
+    },
+    {
+      icon: <ShieldCheck size={18} className="text-blue" />,
+      title: "100% Ad-Free & Distraction-Free",
+      desc: "Zero sponsored posts, clickbait headlines, or algorithmic rage bait."
+    },
+    {
+      icon: <Sparkles size={18} className="text-blue" />,
+      title: "Built-in Falke AI Assistance",
+      desc: "Ask live follow-up questions directly on any story in real time."
+    },
+  ];
+
+  const noisePoints = [
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "100+ Unverified Feed Items",
+      desc: "Overwhelming noise, duplicate rumors, and unvetted hot takes."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "Clickbait Headline Loops",
+      desc: "Manipulative headlines designed to generate outrage clicks."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "Endless Infinite Scrolling",
+      desc: "Addictive design loops that waste 45+ minutes of your day."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "Intrusive Ads & Sponsored Content",
+      desc: "Promoted ads disguised as authentic technical recommendations."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "No Technical Depth or Context",
+      desc: "Shallow surface text with no interactive follow-up capability."
+    },
+  ];
+
   return (
     <section className="section container noise-signal-section">
       <div className="section-heading text-center">
@@ -1165,39 +1252,51 @@ function NoiseVsSignalSection() {
           className={activeTab === "noise" ? "active" : ""}
           onClick={() => setActiveTab("noise")}
         >
-          <XCircle size={15} className="text-red" /> Social Media Feeds
+          <XCircle size={15} className="text-red" /> Social Feeds
         </button>
       </div>
 
       <div className="comparison-container">
         <div className={`comparison-col comparison-noise ${activeTab === "noise" ? "show-mobile" : ""}`}>
           <div className="col-header">
-            <XCircle size={20} className="text-red" />
-            <h3>Traditional Tech Feeds</h3>
-            <span>Clickbait & Algorithmic Noise</span>
+            <div className="col-header-badge red-badge">
+              <XCircle size={14} /> TRADITIONAL FEEDS
+            </div>
+            <h3>Social Media Feeds</h3>
+            <p>Clickbait & Algorithmic Noise</p>
           </div>
-          <ul>
-            <li><XCircle size={15} className="text-red-icon" /> 100+ unverified posts cluttering your timeline</li>
-            <li><XCircle size={15} className="text-red-icon" /> Clickbait headlines designed to manufacture outrage</li>
-            <li><XCircle size={15} className="text-red-icon" /> Endless infinite scroll wasting your morning</li>
-            <li><XCircle size={15} className="text-red-icon" /> Intrusive ads, sponsored posts, and self-promotion</li>
-            <li><XCircle size={15} className="text-red-icon" /> No contextual follow-up or technical depth</li>
-          </ul>
+          <div className="structured-points-list">
+            {noisePoints.map((pt, idx) => (
+              <div key={idx} className="structured-point-card point-noise">
+                <div className="point-icon">{pt.icon}</div>
+                <div className="point-body">
+                  <h4>{pt.title}</h4>
+                  <p>{pt.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className={`comparison-col comparison-signal ${activeTab === "signal" ? "show-mobile" : ""}`}>
           <div className="col-header">
-            <CheckCircle2 size={20} className="text-blue" />
+            <div className="col-header-badge blue-badge">
+              <CheckCircle2 size={14} /> 5-MINUTE DAILY SIGNAL
+            </div>
             <h3>Aurikrex Bytes</h3>
-            <span>5-Minute Daily Signal</span>
+            <p>Focused Daily Curation + Falke AI</p>
           </div>
-          <ul>
-            <li><CheckCircle2 size={15} className="text-blue-icon" /> 5 to 10 curated stories per daily drop</li>
-            <li><CheckCircle2 size={15} className="text-blue-icon" /> Verified 3-part briefs: The Lead, Why It Matters, Outlook</li>
-            <li><CheckCircle2 size={15} className="text-blue-icon" /> Finished in 5 quiet minutes (8 AM & 10 PM drops)</li>
-            <li><CheckCircle2 size={15} className="text-blue-icon" /> 100% ad-free, calm, distraction-free interface</li>
-            <li><CheckCircle2 size={15} className="text-blue-icon" /> Falke AI built-in to answer follow-up questions live</li>
-          </ul>
+          <div className="structured-points-list">
+            {signalPoints.map((pt, idx) => (
+              <div key={idx} className="structured-point-card point-signal">
+                <div className="point-icon">{pt.icon}</div>
+                <div className="point-body">
+                  <h4>{pt.title}</h4>
+                  <p>{pt.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </section>
@@ -1269,7 +1368,7 @@ export function Home() {
               <span><Check size={13} className="check-icon" /> No credit card</span>
             </div>
           </div>
-          <HeroInteractiveDemo />
+          <HeroByteShowcase />
         </section>
 
         <FeaturePillarsGrid />

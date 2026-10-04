@@ -6447,62 +6447,303 @@ body.has-install-prompt {
   animation: slideUpCta 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.floating-mobile-cta span {
-  font-size: 13px;
+/* Hero Byte Showcase Card */
+.hero-byte-showcase {
+  width: 100%;
+}
+
+.showcase-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.showcase-image {
+  position: relative;
+  width: 100%;
+  height: 200px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.showcase-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.showcase-category-tag {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  color: #60a5fa;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+}
+
+.showcase-content {
+  padding: 20px 24px;
+}
+
+.showcase-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
   font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.showcase-title {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+
+.showcase-lead {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 0 0 16px;
+}
+
+.showcase-ai-box {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.ai-box-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--blue);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.ai-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.ai-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 5px 10px;
+  border-radius: 16px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ai-pill:hover,
+.ai-pill.active {
+  background: var(--blue);
+  color: #ffffff;
+  border-color: var(--blue);
+}
+
+.ai-response-drawer {
+  background: var(--surface);
+  border-left: 3px solid var(--blue);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--ink);
 }
 
-@keyframes slideUpCta {
-  from {
-    transform: translateY(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
+.ai-response-drawer p {
+  margin: 0;
 }
 
-/* Responsive Media Queries */
-@media (max-width: 960px) {
-  .landing-hero-grid {
-    grid-template-columns: 1fr;
-    gap: 40px;
-    padding-top: 40px;
-    padding-bottom: 40px;
-  }
+.ai-ask-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
 
-  .pillars-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
+.ai-ask-form input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--ink);
+  outline: none;
+}
+
+.showcase-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.showcase-engagement {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.engagement-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.engagement-item.active {
+  color: #f59e0b;
+}
+
+.showcase-read-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.showcase-read-link:hover {
+  text-decoration: underline;
+}
+
+/* Structured Points List in Noise vs Signal */
+.structured-points-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.structured-point-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.point-signal:hover {
+  border-color: var(--blue);
+  transform: translateX(3px);
+}
+
+.point-noise:hover {
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.point-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--surface-2);
+}
+
+.point-signal .point-icon {
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.point-noise .point-icon {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.point-body h4 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 3px;
+}
+
+.point-body p {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  margin: 0;
+}
+
+.col-header-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  width: fit-content;
+}
+
+.blue-badge {
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--blue);
+}
+
+.red-badge {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+/* Mobile Safeguard padding for floating bottom CTA */
+.landing-page {
+  padding-bottom: 90px;
 }
 
 @media (max-width: 640px) {
-  .hero-trust-badges {
-    flex-wrap: wrap;
-    gap: 6px 8px;
+  .showcase-content {
+    padding: 16px;
   }
 
-  .pillars-grid {
-    grid-template-columns: 1fr;
+  .showcase-title {
+    font-size: 16px;
   }
 
-  .mobile-comparison-toggle {
-    display: flex;
-  }
-
-  .comparison-container {
-    grid-template-columns: 1fr;
-  }
-
-  .comparison-col {
-    display: none;
-  }
-
-  .comparison-col.show-mobile {
-    display: block;
+  .structured-point-card {
+    padding: 12px 14px;
+    gap: 12px;
   }
 }
+
 
 
