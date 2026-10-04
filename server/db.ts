@@ -309,7 +309,8 @@ export async function listPublishedPostsForCarousel() {
     .select()
     .from(posts)
     .where(eq(posts.status, "published"))
-    .orderBy(desc(posts.publishedTime), desc(posts.id));
+    .orderBy(desc(posts.publishedTime), desc(posts.id))
+    .limit(12);
 }
 export async function getPostById(id: number) {
   const db = await getDb();
@@ -667,4 +668,3 @@ export async function isMaintenanceMode(): Promise<boolean> {
 export async function setMaintenanceMode(enabled: boolean): Promise<void> {
   await setSystemSetting("maintenance_mode", enabled ? "true" : "false");
 }
-
