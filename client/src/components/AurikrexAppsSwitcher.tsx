@@ -3,16 +3,17 @@ import { ExternalLink } from 'lucide-react';
 
 export function CbtLogo({ size = 22 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-      <rect width="32" height="32" rx="8" fill="url(#cbt-grad-b)" />
-      <circle cx="16" cy="16" r="8" stroke="#ffffff" strokeWidth="2.5" fill="none" />
-      <path d="M12 16h8M16 12v8" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" />
+    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" style={{ flexShrink: 0 }}>
       <defs>
-        <linearGradient id="cbt-grad-b" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#2563eb" />
-          <stop offset="1" stopColor="#1d4ed8" />
+        <linearGradient id="cbt-g-b" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#38bdf8"/>
+          <stop offset="100%" stopColor="#2563eb"/>
         </linearGradient>
       </defs>
+      <rect width="64" height="64" rx="16" fill="#07111f"/>
+      <circle cx="32" cy="32" r="22" fill="none" stroke="url(#cbt-g-b)" strokeWidth="6"/>
+      <path d="M22 38V26h12" fill="none" stroke="#e2e8f0" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M42 26v12H30" fill="none" stroke="#e2e8f0" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
 }
@@ -34,31 +35,33 @@ export function LibraryLogo({ size = 22 }: { size?: number }) {
 
 export function BytesLogo({ size = 22 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-      <rect width="32" height="32" rx="8" fill="url(#bytes-grad-b)" />
-      <path d="M9 10h11a3 3 0 0 1 0 6H13h7a3 3 0 0 1 0 6H9V10z" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <defs>
-        <linearGradient id="bytes-grad-b" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#3b82f6" />
-          <stop offset="1" stopColor="#1d4ed8" />
-        </linearGradient>
-      </defs>
+    <svg width={size} height={size} viewBox="0 0 512 512" fill="none" style={{ flexShrink: 0 }}>
+      <rect width="512" height="512" rx="112" fill="#3b82f6"/>
+      <path fill="#fff" d="M128 155c0-18 15-33 33-33h190c18 0 33 15 33 33v30c0 18-15 33-33 33H161c-18 0-33-15-33-33v-30Zm0 86c0-18 15-33 33-33h124c18 0 33 15 33 33v30c0 18-15 33-33 33H161c-18 0-33-15-33-33v-30Zm0 86c0-18 15-33 33-33h190c18 0 33 15 33 33v30c0 18-15 33-33 33H161c-18 0-33-15-33-33v-30Z"/>
+      <circle cx="353" cy="170" r="12" fill="#3b82f6"/>
+      <circle cx="287" cy="256" r="12" fill="#3b82f6"/>
+      <circle cx="353" cy="342" r="12" fill="#3b82f6"/>
     </svg>
   );
 }
 
 export function PhoryntLogo({ size = 22 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-      <rect width="32" height="32" rx="8" fill="url(#phor-grad-b)" />
-      <path d="M10 8h7a5 5 0 0 1 0 10h-7V8zm0 10v6" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <circle cx="21" cy="22" r="2" fill="#38bdf8" />
+    <svg width={size} height={size} viewBox="0 0 512 512" fill="none" style={{ flexShrink: 0 }}>
       <defs>
-        <linearGradient id="phor-grad-b" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#8b5cf6" />
-          <stop offset="1" stopColor="#6d28d9" />
+        <linearGradient id="cyanFold-b" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#38BDF8"/>
+          <stop offset="100%" stopColor="#18A9E3"/>
+        </linearGradient>
+        <linearGradient id="royalFold-b" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#2F74EE"/>
+          <stop offset="100%" stopColor="#2563EB"/>
         </linearGradient>
       </defs>
+      <rect width="512" height="512" rx="124" fill="#07111F"/>
+      <path d="M128 190 242 84h150c20 0 31 24 17 38L236 295l-91 91c-32-12-55-43-55-80V224c0-13 5-25 15-34l23-22Z" fill="url(#cyanFold-b)"/>
+      <path d="m274 190 83-82 91 82c10 9 15 21 15 34v87c0 37-23 68-55 80l-135-96-45-32 46-46Z" fill="url(#royalFold-b)"/>
+      <path d="m256 206 61 61-61 61-61-61 61-61Z" fill="#E2E8F0"/>
     </svg>
   );
 }
@@ -112,6 +115,14 @@ const AURIKREX_APPS: AppOption[] = [
   },
 ];
 
+export function getSanitizedCbtBackendUrl() {
+  let url = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || 'https://cbt.pxxl.click').replace(/\/+$/, '');
+  if (!url || !url.includes('pxxl.click')) {
+    url = 'https://cbt.pxxl.click';
+  }
+  return url;
+}
+
 export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?: 'cbt' | 'library' | 'bytes' | 'vault' }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -137,10 +148,7 @@ export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?
   const getTargetUrl = (app: AppOption): string => {
     if (app.id === currentAppId) return app.defaultUrl;
     const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
-    let apiBase = (import.meta.env.VITE_API_BASE_URL || 'https://cbt.pxxl.click').replace(/\/+$/, '');
-    if (!apiBase || !apiBase.includes('pxxl.click')) {
-      apiBase = 'https://cbt.pxxl.click';
-    }
+    const apiBase = getSanitizedCbtBackendUrl();
 
     if (token && app.id !== 'cbt') {
       const endpoint = apiBase.endsWith('/api/v1') ? `${apiBase}/auth/sso/authorize` : `${apiBase}/api/v1/auth/sso/authorize`;
