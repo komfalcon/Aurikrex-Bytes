@@ -4211,9 +4211,9 @@ function buildMetaTags(seo) {
     `<meta name="twitter:title" content="${htmlEscape(seo.headline)}">`,
     `<meta name="twitter:description" content="${htmlEscape(seo.description)}">`,
     `<meta name="twitter:image" content="${htmlEscape(seo.imageUrl)}">`,
+    `<link rel="icon" type="image/png" sizes="96x96" href="${siteUrl()}/favicon-96x96.png">`,
     `<link rel="icon" type="image/x-icon" href="${siteUrl()}/favicon.ico">`,
     `<link rel="icon" type="image/png" sizes="48x48" href="${siteUrl()}/favicon-48x48.png">`,
-    `<link rel="icon" type="image/png" sizes="96x96" href="${siteUrl()}/favicon-96x96.png">`,
     `<link rel="icon" type="image/svg+xml" href="${siteUrl()}/logo.svg">`,
     `<link rel="icon" type="image/png" sizes="192x192" href="${siteUrl()}/logo-192.png">`,
     `<link rel="icon" type="image/png" sizes="512x512" href="${siteUrl()}/logo-512.png">`,
@@ -4536,7 +4536,8 @@ function registerSeoRoutes(app) {
     <script type="application/ld+json">${safeJson({
       "@context": "https://schema.org",
       "@type": "WebSite",
-      name: "Aurikrex Bytes",
+      name: "Aurikrex",
+      alternateName: "Aurikrex Bytes",
       url: siteUrl(),
       description: metadata.description,
       potentialAction: {
