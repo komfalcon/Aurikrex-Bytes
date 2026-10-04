@@ -23,6 +23,8 @@ export function ThemeToggle() {
   );
 }
 
+import { AuriCoinBadge } from "./AuriCoinBadge";
+
 export function SiteHeader({ action }: { action?: React.ReactNode }) {
   return (
     <header className="site-header">
@@ -31,6 +33,7 @@ export function SiteHeader({ action }: { action?: React.ReactNode }) {
         <a href="#briefing">The briefing</a>
         <a href="#principles">Our edit</a>
         {action}
+        <AuriCoinBadge />
         <AurikrexAppsSwitcher currentAppId="bytes" />
         <ThemeToggle />
       </nav>
