@@ -90,7 +90,8 @@ export default function Seo({ title, description, path = "/", image = DEFAULT_IM
       websiteScript.textContent = JSON.stringify({
         "@context": "https://schema.org",
         "@type": "WebSite",
-        name: SITE_NAME,
+        name: "Aurikrex",
+        alternateName: SITE_NAME,
         url: SITE_URL,
         description,
         potentialAction: {
