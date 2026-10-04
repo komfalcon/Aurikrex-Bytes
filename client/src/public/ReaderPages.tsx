@@ -2773,6 +2773,14 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                       <GoogleIcon />
                       <span>Continue with Google</span>
                     </a>
+                    <a
+                      className="google-button"
+                      style={{ marginTop: '0.5rem', backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc' }}
+                      href={`https://cbt.aurikrex.com/api/v1/auth/sso/authorize?client_id=aurikrex_bytes&redirect_uri=${encodeURIComponent(window.location.origin + '/sso/callback')}`}
+                    >
+                      <img src="/aurikrex-logo.png" alt="Aurikrex ID" style={{ width: 18, height: 18, objectFit: 'contain' }} />
+                      <span>Sign in with Aurikrex ID</span>
+                    </a>
                     <div className="auth-links">
                       {mode === "login" ? (
                         <Link href={authLink(authRoutes.signup)}>Create an account</Link>
