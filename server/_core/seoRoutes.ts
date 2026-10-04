@@ -2,7 +2,6 @@ import type { Express, NextFunction, Request, Response } from "express";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import sharp from "sharp";
 import { getPostById, listPublishedPosts, isMaintenanceMode } from "../db.js";
 
 const siteUrl = () =>
@@ -302,7 +301,14 @@ async function generateShareCard(post: SeoPost): Promise<Buffer> {
     coverBuffer = await fetchRemoteImageBuffer(post.imageUrl);
   }
   const svg = await buildShareSvg(post, coverBuffer);
-  return sharp(svg).png({ quality: 90 }).toBuffer();
+  try {
+    // @ts-ignore
+    const sharpMod = await import("sharp");
+    const sharp = sharpMod.default || sharpMod;
+    return await sharp(svg).png({ quality: 90 }).toBuffer();
+  } catch {
+    return Buffer.from(svg);
+  }
 }
 
 function escapeXml(value: string) {

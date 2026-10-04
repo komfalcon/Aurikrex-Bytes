@@ -7,6 +7,7 @@ import { ENV } from "./_core/env.js";
 import {
   createToken,
   hashPassword,
+  hashToken,
   isValidPassword,
   normalizeEmail,
   randomToken,
@@ -210,8 +211,6 @@ export const appRouter = router({
             .values({
               email: ssoUser.email.toLowerCase(),
               name: ssoUser.fullName || ssoUser.email.split('@')[0],
-              openId: aurikrex_id,
-              aurikrexId: aurikrex_id,
             })
             .returning();
           reader = newReader;
@@ -266,7 +265,7 @@ export const appRouter = router({
         if (db && deviceToken)
           await db
             .update(adminUsers)
-            .set({ rememberDeviceToken: deviceToken })
+            .set({ rememberDeviceToken: hashToken(deviceToken) })
             .where(eq(adminUsers.id, admin.id));
         setSession(ctx, ADMIN_COOKIE, token, input.remember);
         if (deviceToken)
@@ -674,7 +673,13 @@ export const appRouter = router({
             message: "Only administrators can toggle maintenance mode.",
           });
         }
-        const expected = process.env.MAINTENANCE_PASSWORD || "KorexTonyFalconStark1025$";
+        const expected = process.env.MAINTENANCE_PASSWORD;
+        if (!expected) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "MAINTENANCE_PASSWORD is not configured in environment variables.",
+          });
+        }
         if (input.password !== expected) {
           throw new TRPCError({
             code: "FORBIDDEN",
@@ -690,21 +695,17 @@ export const appRouter = router({
     registerOneSignalSubscription: publicProcedure
       .input(z.object({ subscriptionId: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {
-        let readerId: number | null = null;
-        try {
-          readerId = (await requireReader(ctx)).id;
-        } catch {
-          // Guest subscription without active session
-        }
+        const session = await requireReader(ctx);
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-        await db.delete(oneSignalSubscriptions).where(eq(oneSignalSubscriptions.subscriptionId, input.subscriptionId));
-        await db.insert(oneSignalSubscriptions).values({ readerId, subscriptionId: input.subscriptionId });
+        await db.delete(oneSignalSubscriptions).where(and(eq(oneSignalSubscriptions.subscriptionId, input.subscriptionId), eq(oneSignalSubscriptions.readerId, session.id)));
+        await db.insert(oneSignalSubscriptions).values({ readerId: session.id, subscriptionId: input.subscriptionId });
         return { success: true };
       }),
     sendTestPush: publicProcedure
       .input(z.object({ subscriptionId: z.string().min(1) }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await requireAdmin(ctx);
         const { sendTestPushNotification } = await import("./push.js");
         return await sendTestPushNotification(input.subscriptionId);
       }),

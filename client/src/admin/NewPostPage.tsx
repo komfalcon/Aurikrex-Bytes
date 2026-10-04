@@ -215,7 +215,7 @@ export function NewPostPage() {
 
       {mode === "pdf" && !editId && (
         <section className="table-card image-upload-card" style={{ padding: "2rem" }}>
-          <h3>📄 Upload Multi-Story PDF or Image Document</h3>
+          <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><FileText size={20} /> Upload Multi-Story PDF or Image Document</h3>
           <p className="muted" style={{ marginBottom: "1.5rem" }}>
             Falke AI will scan your PDF document or image card screenshot, extract up to 20+ distinct news stories, attach high-resolution cover imagery, and bulk-save them as drafts in your newsroom inbox.
           </p>
@@ -245,7 +245,7 @@ export function NewPostPage() {
 
       {mode === "ai" && !editId && (
         <section className="table-card" style={{ padding: "2rem" }}>
-          <h3>✦ Falke AI 10-Byte Daily Curation Drop</h3>
+          <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><Sparkles size={20} /> Falke AI 10-Byte Daily Curation Drop</h3>
           <p className="muted" style={{ marginBottom: "1.5rem" }}>
             Click below to immediately trigger Falke AI. It will analyze current technology, AI, science, and world developments to generate 10 fresh Bytes with high-resolution photos.
           </p>

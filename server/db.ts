@@ -16,6 +16,7 @@ import {
 } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
 import { updateDailyStreak } from "./streak.js";
+import { hashToken } from "./auth.js";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _schemaRepair: Promise<void> | null = null;
@@ -197,10 +198,11 @@ export async function getAdminById(id: number) {
 export async function getAdminByRememberToken(token: string) {
   const db = await getDb();
   if (!db) return undefined;
+  const hashed = hashToken(token);
   const result = await db
     .select()
     .from(adminUsers)
-    .where(eq(adminUsers.rememberDeviceToken, token))
+    .where(eq(adminUsers.rememberDeviceToken, hashed))
     .limit(1);
   return result[0];
 }

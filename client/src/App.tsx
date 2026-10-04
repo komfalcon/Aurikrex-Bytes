@@ -50,8 +50,8 @@ function Router() {
     <Route path="/how-it-works" component={HowItWorks} />
     <Route path="/help" component={HelpCenter} />
     <Route path="/contact" component={Contact} />
-    <Route path="/privacy" component={() => <SupportPage kind="/privacy" />} />
-    <Route path="/terms" component={() => <SupportPage kind="/terms" />} />
+    <Route path="/privacy">{() => <SupportPage kind="/privacy" />}</Route>
+    <Route path="/terms">{() => <SupportPage kind="/terms" />}</Route>
     <Route path="/login"><ReaderAuth mode="login" /></Route>
     <Route path="/sso/callback" component={SsoCallbackPage} />
     <Route path="/sso/login">{() => { window.location.href = "https://cbt.aurikrex.com/api/v1/auth/sso/authorize?client_id=aurikrex_bytes&redirect_uri=" + encodeURIComponent(window.location.origin + "/sso/callback"); return null; }}</Route>
@@ -59,13 +59,13 @@ function Router() {
     <Route path="/forgot-password"><ReaderAuth mode="forgot" /></Route>
     <Route path="/reset-password"><ReaderAuth mode="reset" /></Route>
     <Route path="/verify-email"><ReaderAuth mode="verify" /></Route>
-    <Route path="/falcon-system-auth" component={() => <Suspense fallback={<div className="route-loading">Loading...</div>}><Seo title="Newsroom access – Aurikrex Bytes" description="Private Aurikrex Bytes newsroom access." path="/falcon-system-auth" robots="noindex,nofollow" /><AdminLogin /></Suspense>} />
-    <Route path="/admin" component={() => <Suspense fallback={<div className="route-loading">Loading...</div>}><Seo title="Newsroom – Aurikrex Bytes" description="Private Aurikrex Bytes newsroom." path="/admin" robots="noindex,nofollow" /><AdminDashboard /></Suspense>} />
-    <Route path="/admin/new" component={() => <Suspense fallback={<div className="route-loading">Loading...</div>}><NewPostPage /></Suspense>} />
-    <Route path="/admin/new/:id" component={() => <Suspense fallback={<div className="route-loading">Loading...</div>}><NewPostPage /></Suspense>} />
-    <Route path="/admin/preview/:draftId" component={() => <Suspense fallback={<div className="route-loading">Loading...</div>}><PreviewPage /></Suspense>} />
-    <Route path="/admin/team" component={() => <Suspense fallback={<div className="route-loading">Loading...</div>}><TeamManagement /></Suspense>} />
-    <Route path="/admin/analytics" component={() => <Suspense fallback={<div className="route-loading">Loading...</div>}><AnalyticsDashboard /></Suspense>} />
+    <Route path="/falcon-system-auth">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><Seo title="Newsroom access – Aurikrex Bytes" description="Private Aurikrex Bytes newsroom access." path="/falcon-system-auth" robots="noindex,nofollow" /><AdminLogin /></Suspense>}</Route>
+    <Route path="/admin">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><Seo title="Newsroom – Aurikrex Bytes" description="Private Aurikrex Bytes newsroom." path="/admin" robots="noindex,nofollow" /><AdminDashboard /></Suspense>}</Route>
+    <Route path="/admin/new">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><NewPostPage /></Suspense>}</Route>
+    <Route path="/admin/new/:id">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><NewPostPage /></Suspense>}</Route>
+    <Route path="/admin/preview/:draftId">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><PreviewPage /></Suspense>}</Route>
+    <Route path="/admin/team">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><TeamManagement /></Suspense>}</Route>
+    <Route path="/admin/analytics">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><AnalyticsDashboard /></Suspense>}</Route>
     <Route path="/404" component={NotFound} />
     <Route component={NotFound} />
   </Switch>;

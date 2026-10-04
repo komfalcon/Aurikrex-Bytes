@@ -3,8 +3,10 @@ import { createPortal } from "react-dom";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
+  Bell,
   Bookmark,
   BookOpen,
+  Bot,
   Camera,
   Check,
   CheckCircle2,
@@ -17,6 +19,7 @@ import {
   Flame,
   Instagram,
   Info,
+  Layers,
   Linkedin,
   LogOut,
   Mail,
@@ -30,10 +33,13 @@ import {
   Square,
   SquarePen,
   Sun,
+  TrendingUp,
   Upload,
   User,
   Workflow,
   X,
+  XCircle,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -789,7 +795,7 @@ function TodayCompletionCard({
   const isFullyRead = totalCount > 0 && readCount >= totalCount;
 
   const handleShare = () => {
-    const text = `I just completed today's tech briefing on Aurikrex Bytes! 🔥 ${streak}-day streak active.`;
+    const text = `I just completed today's tech briefing on Aurikrex Bytes! ${streak}-day streak active.`;
     const url = "https://www.bytes.aurikrex.com/";
     if (typeof navigator !== "undefined" && navigator.share) {
       navigator.share({ title: "Aurikrex Bytes Briefing Complete", text, url }).catch(() => undefined);
@@ -805,7 +811,7 @@ function TodayCompletionCard({
         <CheckCircle2 size={40} />
       </div>
       <h3 className="today-completion-title">
-        {isFullyRead ? "Nice! You've finished today's Bytes. 🎉" : "You've reached the end of today's drop! 👍"}
+        {isFullyRead ? "Nice! You've finished today's Bytes." : "You've reached the end of today's drop!"}
       </h3>
       <p className="today-completion-subtitle">
         {isFullyRead
@@ -827,8 +833,8 @@ function TodayCompletionCard({
         </Link>
       </div>
 
-      <p style={{ fontSize: "13px", color: "var(--muted, #64748b)", marginTop: "8px", marginBottom: 0 }}>
-        ⏰ See you tomorrow at 8:00 AM for your next briefing drop.
+      <p style={{ fontSize: "13px", color: "var(--muted, #64748b)", marginTop: "8px", marginBottom: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+        <Clock3 size={14} /> See you tomorrow at 8:00 AM for your next briefing drop.
       </p>
     </div>
   );
@@ -999,6 +1005,232 @@ function EmptyToday() {
     </div>
   );
 }
+function HeroInteractiveDemo() {
+  const [activePrompt, setActivePrompt] = useState<string | null>("why");
+  const [query, setQuery] = useState("");
+  const [customAnswer, setCustomAnswer] = useState<string | null>(null);
+
+  const prompts: Record<string, { label: string; icon: ReactNode; answer: string }> = {
+    why: {
+      label: "Why it matters",
+      icon: <Zap size={13} />,
+      answer: "This architecture enables low-latency AI inference at 1/10th the compute cost, unlocking real-time edge intelligence for mobile applications."
+    },
+    outlook: {
+      label: "Industry Outlook",
+      icon: <TrendingUp size={13} />,
+      answer: "Expect commercial rollouts across cloud providers within 60 days. Developer adoption is surging with open-weight releases."
+    },
+    ask: {
+      label: "Ask Falke AI",
+      icon: <Bot size={13} />,
+      answer: "Falke AI synthesizes live web search context with story technical briefs to answer any follow-up question instantly."
+    }
+  };
+
+  const currentAnswer = customAnswer || (activePrompt ? prompts[activePrompt]?.answer : prompts.why.answer);
+
+  const handleAskSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+    setActivePrompt(null);
+    setCustomAnswer(`Analyzing "${query.trim()}"… Falke AI synthesizes live technical web search to deliver instant, high-signal answers.`);
+  };
+
+  return (
+    <div className="hero-demo-card">
+      <div className="hero-demo-badge">
+        <span className="live-dot" /> LIVE PRODUCT DEMO
+      </div>
+      <div className="hero-demo-content">
+        <div className="hero-demo-tag">AI & COMPUTE BRIEFING</div>
+        <h3 className="hero-demo-title">DeepSeek Releases Open V3 Model with MoE Architecture</h3>
+        <p className="hero-demo-body">
+          A 671B parameter mixture-of-experts model trained for under $6M, matching frontier performance on coding and reasoning benchmarks.
+        </p>
+
+        <div className="hero-demo-prompts">
+          <span className="hero-demo-prompts-label">Try interactive AI context:</span>
+          <div className="hero-demo-pills">
+            {Object.entries(prompts).map(([key, val]) => (
+              <button
+                key={key}
+                type="button"
+                className={`demo-pill ${activePrompt === key && !customAnswer ? "active" : ""}`}
+                onClick={() => {
+                  setCustomAnswer(null);
+                  setActivePrompt(key);
+                }}
+              >
+                {val.icon} {val.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="hero-demo-answer">
+          <div className="hero-demo-answer-head">
+            <Sparkles size={14} /> <span>Falke AI Intelligence</span>
+          </div>
+          <p>{currentAnswer}</p>
+        </div>
+
+        <form className="hero-demo-ask-form" onSubmit={handleAskSubmit}>
+          <input
+            type="text"
+            placeholder="Ask a follow-up question..."
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+          <button type="submit" className="button button-small">Ask AI</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function FeaturePillarsGrid() {
+  const pillars = [
+    {
+      icon: <Bot size={22} />,
+      badge: "AI INTELLIGENCE",
+      title: "Falke AI Follow-Up",
+      description: "Ask follow-up questions directly on any story. Gets live web search context and synthesizes clear technical answers."
+    },
+    {
+      icon: <Flame size={22} />,
+      badge: "HABIT TRACKING",
+      title: "Daily Reading Streaks",
+      description: "Build a lasting 5-minute morning ritual. Gain streak flames and track your daily learning consistency."
+    },
+    {
+      icon: <Layers size={22} />,
+      badge: "CUSTOM READING",
+      title: "Dual Reading Modes",
+      description: "Switch seamlessly between immersive Editorial story cards and rapid Compact grid scanning on desktop & mobile."
+    },
+    {
+      icon: <Bell size={22} />,
+      badge: "AUTOMATED DROPS",
+      title: "Morning & Evening Briefings",
+      description: "Get clean web push drops at 8:00 AM and 10:00 PM. Stay informed without doom-scrolling social media feeds."
+    }
+  ];
+
+  return (
+    <section className="section container landing-pillars">
+      <div className="section-heading text-center">
+        <div>
+          <span className="eyebrow">Everything you need in tech</span>
+          <h2>Built for signal. Designed for focus.</h2>
+          <p className="section-subtitle">Four core pillars that transform how you stay ahead in technology.</p>
+        </div>
+      </div>
+      <div className="pillars-grid">
+        {pillars.map(p => (
+          <div key={p.title} className="pillar-card">
+            <div className="pillar-icon-wrap">{p.icon}</div>
+            <span className="pillar-badge">{p.badge}</span>
+            <h3>{p.title}</h3>
+            <p>{p.description}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function NoiseVsSignalSection() {
+  const [activeTab, setActiveTab] = useState<"signal" | "noise">("signal");
+
+  return (
+    <section className="section container noise-signal-section">
+      <div className="section-heading text-center">
+        <div>
+          <span className="eyebrow">The Difference</span>
+          <h2>Why traditional tech feeds fail you</h2>
+        </div>
+      </div>
+
+      <div className="mobile-comparison-toggle">
+        <button
+          type="button"
+          className={activeTab === "signal" ? "active" : ""}
+          onClick={() => setActiveTab("signal")}
+        >
+          <CheckCircle2 size={15} className="text-blue" /> Aurikrex Bytes
+        </button>
+        <button
+          type="button"
+          className={activeTab === "noise" ? "active" : ""}
+          onClick={() => setActiveTab("noise")}
+        >
+          <XCircle size={15} className="text-red" /> Social Media Feeds
+        </button>
+      </div>
+
+      <div className="comparison-container">
+        <div className={`comparison-col comparison-noise ${activeTab === "noise" ? "show-mobile" : ""}`}>
+          <div className="col-header">
+            <XCircle size={20} className="text-red" />
+            <h3>Traditional Tech Feeds</h3>
+            <span>Clickbait & Algorithmic Noise</span>
+          </div>
+          <ul>
+            <li><XCircle size={15} className="text-red-icon" /> 100+ unverified posts cluttering your timeline</li>
+            <li><XCircle size={15} className="text-red-icon" /> Clickbait headlines designed to manufacture outrage</li>
+            <li><XCircle size={15} className="text-red-icon" /> Endless infinite scroll wasting your morning</li>
+            <li><XCircle size={15} className="text-red-icon" /> Intrusive ads, sponsored posts, and self-promotion</li>
+            <li><XCircle size={15} className="text-red-icon" /> No contextual follow-up or technical depth</li>
+          </ul>
+        </div>
+
+        <div className={`comparison-col comparison-signal ${activeTab === "signal" ? "show-mobile" : ""}`}>
+          <div className="col-header">
+            <CheckCircle2 size={20} className="text-blue" />
+            <h3>Aurikrex Bytes</h3>
+            <span>5-Minute Daily Signal</span>
+          </div>
+          <ul>
+            <li><CheckCircle2 size={15} className="text-blue-icon" /> 5 to 10 curated stories per daily drop</li>
+            <li><CheckCircle2 size={15} className="text-blue-icon" /> Verified 3-part briefs: The Lead, Why It Matters, Outlook</li>
+            <li><CheckCircle2 size={15} className="text-blue-icon" /> Finished in 5 quiet minutes (8 AM & 10 PM drops)</li>
+            <li><CheckCircle2 size={15} className="text-blue-icon" /> 100% ad-free, calm, distraction-free interface</li>
+            <li><CheckCircle2 size={15} className="text-blue-icon" /> Falke AI built-in to answer follow-up questions live</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FloatingMobileCta() {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 450) {
+        setVisible(true);
+      } else {
+        setVisible(false);
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  if (!visible) return null;
+
+  return (
+    <div className="floating-mobile-cta">
+      <span>Get your 8 AM tech briefing</span>
+      <Link href="/signup" className="button button-small">
+        Join Free <ArrowRight size={14} />
+      </Link>
+    </div>
+  );
+}
+
 export function Home() {
   const [, navigate] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
@@ -1007,81 +1239,47 @@ export function Home() {
   }, [navigate, session.data]);
   return (
     <PublicLayout>
-        <main className="landing-page">
-        <section className="hero container">
+      <main className="landing-page">
+        <section className="hero container landing-hero-grid">
           <div className="hero-copy">
             <span className="eyebrow">
               <span className="live-dot" />
-              The daily tech briefing
+              The 5-Minute Daily Tech Briefing
             </span>
             <h1>
               Aurikrex Bytes —<br />
               <em>what matters.</em>
             </h1>
             <p>
-              Five to ten considered technology stories, curated and edited for
-              a better start to your day. A useful daily ritual, delivered at
-              8:00 AM.
+              Five to ten considered technology stories curated with AI context. A focused morning ritual delivered at 8:00 AM.
             </p>
             <div className="hero-actions">
-              <Link className="button" href="/signup">
+              <Link className="button button-hero" href="/signup">
                 Start reading free <ArrowRight size={16} />
               </Link>
-              <Link className="text-link" href="/how-it-works">
-                How it works <ArrowRight size={15} />
+              <Link className="text-link" href="/archive">
+                Browse archive <ArrowRight size={15} />
               </Link>
             </div>
+            <div className="hero-trust-badges">
+              <span><Check size={13} className="check-icon" /> Free forever</span>
+              <span>•</span>
+              <span><Check size={13} className="check-icon" /> 30-second sign up</span>
+              <span>•</span>
+              <span><Check size={13} className="check-icon" /> No credit card</span>
+            </div>
           </div>
-          <div className="hero-note">
-            <span>08:00</span>
-            <strong>Every morning</strong>
-            <p>
-              One calm drop. The context behind what is changing. No endless
-              scroll required.
-            </p>
-          </div>
+          <HeroInteractiveDemo />
         </section>
-        <section className="section container">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">The format</span>
-              <h2>Three steps to better context.</h2>
-            </div>
-          </div>
-          <div className="steps-grid">
-            <div>
-              <span>01</span>
-              <h3>Daily curation</h3>
-              <p>
-                We read widely and select the stories that will shape the day
-                ahead.
-              </p>
-            </div>
-            <div>
-              <span>02</span>
-              <h3>8 AM drop</h3>
-              <p>
-                Our edited briefing arrives as a focused set of branded story
-                cards.
-              </p>
-            </div>
-            <div>
-              <span>03</span>
-              <h3>Read your way</h3>
-              <p>
-                Browse Today's Bytes or search the complete archive whenever you
-                need it.
-              </p>
-            </div>
-          </div>
-        </section>
+
+        <FeaturePillarsGrid />
+
         <section className="section container sample-section">
           <div className="sample-copy">
             <span className="eyebrow">A Byte, up close</span>
             <h2>News you can actually use.</h2>
             <p>
-              Each card gives you a clear headline, the useful context behind
-              it, and a few quiet minutes to understand what matters.
+              Each card gives you a clear headline, the useful context behind it, and a few quiet minutes to understand what matters.
             </p>
             <ProtectedLink className="text-link" href="/archive">
               See the archive <ArrowRight size={15} />
@@ -1089,42 +1287,9 @@ export function Home() {
           </div>
           <PublishedStoryCarousel />
         </section>
-        <section className="section why-section">
-          <div className="container">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">Why Bytes</span>
-                <h2>Less noise. More signal.</h2>
-              </div>
-            </div>
-            <div className="why-grid">
-              <div>
-                <h3>Edited by a person</h3>
-                <p>
-                  Not an algorithmic firehose. A real editorial choice about
-                  what deserves your attention.
-                </p>
-              </div>
-              <div>
-                <h3>A daily ritual</h3>
-                <p>
-                  Five to ten stories at 8:00 AM, so staying informed has a
-                  beginning and an end.
-                </p>
-              </div>
-              <div>
-                <h3>Built to return to</h3>
-                <p>
-                  A searchable archive that makes the useful stories easy to
-                  find again.
-                </p>
-              </div>
-            </div>
-            <Link className="button" href="/signup">
-              Join Aurikrex Bytes <ArrowRight size={16} />
-            </Link>
-          </div>
-        </section>
+
+        <NoiseVsSignalSection />
+
         <section className="manifesto">
           <div className="container manifesto-inner">
             <Sparkles size={24} />
@@ -1132,15 +1297,15 @@ export function Home() {
               <span className="eyebrow">The Bytes promise</span>
               <h2>Make room for what matters.</h2>
               <p>
-                Start tomorrow’s briefing with a free reader account, or explore
-                the archive first.
+                Start tomorrow’s briefing with a free reader account, or explore the archive first.
               </p>
             </div>
             <Link className="button" href="/signup">
-              Get started <ArrowRight size={15} />
+              Get started free <ArrowRight size={15} />
             </Link>
           </div>
         </section>
+        <FloatingMobileCta />
       </main>
     </PublicLayout>
   );

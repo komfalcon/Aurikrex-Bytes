@@ -57,7 +57,7 @@ export function formatPushNotificationContent(
     }).format(now)
   );
   const isMorning = hour >= 4 && hour < 16;
-  const prefix = isMorning ? "🌅 Morning Brief" : "🌙 Evening Recap";
+  const prefix = isMorning ? "Morning Brief" : "Evening Recap";
 
   if (story) {
     const cleanTitle = story.headline.replace(/^(show\s+hn|launch\s+hn)\s*:\s*/i, "").trim();
@@ -80,7 +80,7 @@ export function formatPushNotificationContent(
   }
 
   return {
-    heading: isMorning ? "🌅 Daily Tech Briefing is Ready" : "🌙 Evening Tech Roundup",
+    heading: isMorning ? "Daily Tech Briefing is Ready" : "Evening Tech Roundup",
     content: "Catch up on what matters in tech today on Aurikrex Bytes.",
     url: `${baseUrl}/dashboard`,
   };

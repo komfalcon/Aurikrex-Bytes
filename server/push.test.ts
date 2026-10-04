@@ -14,7 +14,7 @@ describe("push notification dynamic formatting", () => {
     const morningTime = new Date("2026-09-19T07:00:00.000Z");
     const result = formatPushNotificationContent(sampleStory, "Africa/Lagos", morningTime);
 
-    expect(result.heading).toBe("🌅 Morning Brief: OpenAI releases new reasoning model architecture");
+    expect(result.heading).toBe("Morning Brief: OpenAI releases new reasoning model architecture");
     expect(result.content.length).toBeLessThanOrEqual(110);
     expect(result.content.endsWith("...")).toBe(true);
     expect(result.url).toContain("/post/42");
@@ -26,7 +26,7 @@ describe("push notification dynamic formatting", () => {
     const eveningTime = new Date("2026-09-19T21:00:00.000Z");
     const result = formatPushNotificationContent(sampleStory, "Africa/Lagos", eveningTime);
 
-    expect(result.heading).toBe("🌙 Evening Recap: OpenAI releases new reasoning model architecture");
+    expect(result.heading).toBe("Evening Recap: OpenAI releases new reasoning model architecture");
     expect(result.content.length).toBeLessThanOrEqual(110);
     expect(result.url).toContain("/post/42");
   });
@@ -41,7 +41,7 @@ describe("push notification dynamic formatting", () => {
     const morningTime = new Date("2026-09-19T07:00:00.000Z");
     const result = formatPushNotificationContent(taggedStory, "Africa/Lagos", morningTime);
 
-    expect(result.heading).toBe("🌅 Morning Brief: FastKV – In-memory distributed store");
+    expect(result.heading).toBe("Morning Brief: FastKV – In-memory distributed store");
     expect(result.heading).not.toContain("Show HN:");
     expect(result.imageUrl).toBeNull();
   });
@@ -49,12 +49,12 @@ describe("push notification dynamic formatting", () => {
   it("provides clean fallback copy when no story is provided", () => {
     const morningTime = new Date("2026-09-19T07:00:00.000Z");
     const morningResult = formatPushNotificationContent(null, "Africa/Lagos", morningTime);
-    expect(morningResult.heading).toBe("🌅 Daily Tech Briefing is Ready");
+    expect(morningResult.heading).toBe("Daily Tech Briefing is Ready");
     expect(morningResult.url).toContain("/dashboard");
 
     const eveningTime = new Date("2026-09-19T21:00:00.000Z");
     const eveningResult = formatPushNotificationContent(null, "Africa/Lagos", eveningTime);
-    expect(eveningResult.heading).toBe("🌙 Evening Tech Roundup");
+    expect(eveningResult.heading).toBe("Evening Tech Roundup");
     expect(eveningResult.url).toContain("/dashboard");
   });
 });
