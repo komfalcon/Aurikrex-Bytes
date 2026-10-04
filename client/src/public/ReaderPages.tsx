@@ -904,7 +904,7 @@ function PublishedStoryCarousel({ featured = false }: { featured?: boolean }) {
         const publishedTimeDifference =
           new Date(b.publishedTime ?? 0).getTime() - new Date(a.publishedTime ?? 0).getTime();
         return publishedTimeDifference || b.id - a.id;
-      }),
+      }).slice(0, 12),
     [archive.data?.posts],
   );
   const [activeIndex, setActiveIndex] = useState(0);
@@ -940,6 +940,8 @@ function PublishedStoryCarousel({ featured = false }: { featured?: boolean }) {
   };
 
   const slides = posts;
+
+  if (!slides.length && archive.isLoading) return null;
 
   if (!slides.length) {
     return (
