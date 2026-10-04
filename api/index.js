@@ -3273,19 +3273,36 @@ var appRouter = router({
         redirect_uri: z2.string().optional()
       })
     ).mutation(async ({ input, ctx }) => {
-      const cbtApiBase = process.env.CBT_API_URL || "https://cbt.aurikrex.com";
-      const response = await fetch(`${cbtApiBase}/api/v1/auth/sso/token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id: "aurikrex_bytes",
-          code: input.code,
-          code_verifier: input.code_verifier,
-          redirect_uri: input.redirect_uri || "https://bytes.aurikrex.com/sso/callback"
-        })
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+      const cbtEndpoints = [
+        process.env.CBT_API_URL,
+        "https://cbt.pxxl.click",
+        "https://cbt.aurikrex.com",
+        "https://cbt-vl4x.onrender.com"
+      ].filter(Boolean);
+      let response = null;
+      for (const base of cbtEndpoints) {
+        try {
+          const cleanBase = base.replace(/\/+$/, "");
+          const targetUrl = cleanBase.endsWith("/api/v1") ? `${cleanBase}/auth/sso/token` : `${cleanBase}/api/v1/auth/sso/token`;
+          const res = await fetch(targetUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              client_id: "aurikrex_bytes",
+              code: input.code,
+              code_verifier: input.code_verifier,
+              redirect_uri: input.redirect_uri || "https://bytes.aurikrex.com/sso/callback"
+            })
+          });
+          if (res.status !== 404 && res.status !== 405) {
+            response = res;
+            break;
+          }
+        } catch (_) {
+        }
+      }
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
         throw new TRPCError4({
           code: "UNAUTHORIZED",
           message: errorData.message || "SSO Token Exchange failed"
