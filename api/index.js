@@ -4536,8 +4536,7 @@ function registerSeoRoutes(app) {
     <script type="application/ld+json">${safeJson({
       "@context": "https://schema.org",
       "@type": "WebSite",
-      name: "Aurikrex",
-      alternateName: "Aurikrex Bytes",
+      name: "Aurikrex Bytes",
       url: siteUrl(),
       description: metadata.description,
       potentialAction: {
