@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ExternalLink, BookOpen, FileText, Monitor } from 'lucide-react';
+import { ExternalLink, BookOpen, FileText, Monitor, Shield } from 'lucide-react';
 
 export interface AppOption {
   id: string;
@@ -39,9 +39,18 @@ const AURIKREX_APPS: AppOption[] = [
     redirectUri: 'https://bytes.aurikrex.com/sso/callback',
     icon: <FileText className="w-5 h-5 text-amber-400" />,
   },
+  {
+    id: 'vault',
+    name: 'Aurikrex Phorynt',
+    description: 'Interactive STEM & Exam Prep Vault',
+    defaultUrl: 'https://phorynt.aurikrex.com',
+    clientId: 'aurikrex_vault',
+    redirectUri: 'https://phorynt.aurikrex.com/sso/callback',
+    icon: <Shield className="w-5 h-5 text-purple-400" />,
+  },
 ];
 
-export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?: 'cbt' | 'library' | 'bytes' }) {
+export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?: 'cbt' | 'library' | 'bytes' | 'vault' }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
