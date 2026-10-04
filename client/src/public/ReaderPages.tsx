@@ -893,7 +893,7 @@ function PostCard({
     </article>
   );
 }
-function PublishedStoryCarousel() {
+function PublishedStoryCarousel({ featured = false }: { featured?: boolean }) {
   const archive = trpc.publicPosts.carousel.useQuery();
   const posts = archive.data?.posts ?? [];
   const [activeIndex, setActiveIndex] = useState(0);
@@ -929,11 +929,11 @@ function PublishedStoryCarousel() {
   };
 
   const fallback = {
-    headline: "The quiet shift changing how teams build with AI",
-    body: "A considered look at the tools, habits, and decisions shaping the next chapter of work.",
-    imageUrl: null,
-    publishedTime: null,
-    id: null,
+    id: 1,
+    headline: "ChatGPT Work can now stay logged in to browser sessions",
+    body: "OpenAI's ChatGPT Work tier can now stay signed in to external websites after a user authenticates once, letting its browser agent reuse that session safely.",
+    imageUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=800&auto=format&fit=crop",
+    publishedTime: new Date("2026-09-07").toISOString(),
   };
   const slides = posts.length ? posts : [fallback];
   return (
@@ -948,16 +948,9 @@ function PublishedStoryCarousel() {
       <div className="sample-card-slides">
         {slides.map((post: any, index: number) => {
           const isActive = index === activeIndex;
-          return posts.length ? (
-            <div key={post.id} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive}>
-              <PostCard post={post} />
-            </div>
-          ) : (
-            <div key="fallback" className="sample-card-slide is-active">
-              <article className="post-card">
-                <div className="card-image"><div className="image-placeholder"><Sparkles size={22} /><span>Preview</span></div></div>
-                <div className="post-card-body"><div className="post-meta"><span>Today</span><span>·</span><span>4 min read</span></div><h2>{fallback.headline}</h2><p>{fallback.body}</p><span className="read-more">Explore the archive <ArrowRight size={15} /></span></div>
-              </article>
+          return (
+            <div key={post.id || index} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive}>
+              <PostCard post={post} featured={featured} />
             </div>
           );
         })}
@@ -1005,120 +998,7 @@ function EmptyToday() {
     </div>
   );
 }
-function HeroByteShowcase() {
-  const [activeTab, setActiveTab] = useState<"matters" | "outlook" | "ask">("matters");
-  const [query, setQuery] = useState("");
-  const [customResponse, setCustomResponse] = useState<string | null>(null);
 
-  const responses = {
-    matters: "This architecture enables low-latency AI inference at 1/10th the compute cost, unlocking real-time edge intelligence for mobile and web applications.",
-    outlook: "Accelerates enterprise adoption of open-weights models and pressures proprietary API pricing across frontier AI providers.",
-  };
-
-  const handleAsk = (e: FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
-    setCustomResponse(`Falke AI: "${query.trim()}" — Key insight: Open-weights models reduce infrastructure lock-in while improving auditability.`);
-    setQuery("");
-  };
-
-  return (
-    <div className="hero-byte-showcase" role="region" aria-label="Interactive Byte Story Showcase">
-      <div className="showcase-card">
-        <div className="showcase-image">
-          <img
-            src="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=800&auto=format&fit=crop"
-            alt="DeepSeek MoE Architecture"
-            loading="eager"
-          />
-          <span className="showcase-category-tag">AI & COMPUTE BRIEFING</span>
-        </div>
-
-        <div className="showcase-content">
-          <div className="showcase-meta">
-            <span>OCT 1, 2026</span>
-            <span>·</span>
-            <span>4 MIN READ</span>
-          </div>
-
-          <h3 className="showcase-title">DeepSeek Releases Open V3 Model with MoE Architecture</h3>
-
-          <p className="showcase-lead">
-            A 671B parameter mixture-of-experts model trained for under $6M, matching frontier performance on coding and reasoning benchmarks.
-          </p>
-
-          <div className="showcase-ai-box">
-            <div className="ai-box-header">
-              <Sparkles size={14} className="text-blue" />
-              <span>Falke AI Live Context</span>
-            </div>
-
-            <div className="ai-pills">
-              <button
-                type="button"
-                className={`ai-pill ${activeTab === "matters" && !customResponse ? "active" : ""}`}
-                onClick={() => { setActiveTab("matters"); setCustomResponse(null); }}
-              >
-                <Zap size={12} /> Why it matters
-              </button>
-              <button
-                type="button"
-                className={`ai-pill ${activeTab === "outlook" && !customResponse ? "active" : ""}`}
-                onClick={() => { setActiveTab("outlook"); setCustomResponse(null); }}
-              >
-                <TrendingUp size={12} /> Industry Outlook
-              </button>
-              <button
-                type="button"
-                className={`ai-pill ${activeTab === "ask" || customResponse ? "active" : ""}`}
-                onClick={() => setActiveTab("ask")}
-              >
-                <Bot size={12} /> Ask Falke AI
-              </button>
-            </div>
-
-            <div className="ai-response-drawer">
-              <p>
-                {customResponse || responses[activeTab === "ask" ? "matters" : activeTab]}
-              </p>
-            </div>
-
-            {activeTab === "ask" && (
-              <form onSubmit={handleAsk} className="ai-ask-form">
-                <input
-                  type="text"
-                  placeholder="Ask Falke AI a follow-up question..."
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-                <button type="submit" className="button button-small">
-                  Ask AI
-                </button>
-              </form>
-            )}
-          </div>
-
-          <div className="showcase-footer">
-            <div className="showcase-engagement">
-              <span className="engagement-item active">
-                <Flame size={14} fill="currentColor" /> 12
-              </span>
-              <span className="engagement-item">
-                <Bookmark size={14} />
-              </span>
-              <span className="engagement-item">
-                <Share2 size={14} />
-              </span>
-            </div>
-            <Link href="/signup" className="showcase-read-link">
-              Read full story <ArrowRight size={13} />
-            </Link>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function FeaturePillarsGrid() {
   const pillars = [
@@ -1368,7 +1248,9 @@ export function Home() {
               <span><Check size={13} className="check-icon" /> No credit card</span>
             </div>
           </div>
-          <HeroByteShowcase />
+          <div className="hero-side-showcase">
+            <PublishedStoryCarousel featured={true} />
+          </div>
         </section>
 
         <FeaturePillarsGrid />
