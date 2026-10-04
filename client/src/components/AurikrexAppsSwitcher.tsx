@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ExternalLink } from 'lucide-react';
 
-export function CbtLogo({ size = 20 }: { size?: number }) {
+export function CbtLogo({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
       <rect width="32" height="32" rx="8" fill="url(#cbt-grad-b)" />
@@ -17,7 +17,7 @@ export function CbtLogo({ size = 20 }: { size?: number }) {
   );
 }
 
-export function LibraryLogo({ size = 20 }: { size?: number }) {
+export function LibraryLogo({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
       <rect width="32" height="32" rx="8" fill="url(#lib-grad-b)" />
@@ -32,7 +32,7 @@ export function LibraryLogo({ size = 20 }: { size?: number }) {
   );
 }
 
-export function BytesLogo({ size = 20 }: { size?: number }) {
+export function BytesLogo({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
       <rect width="32" height="32" rx="8" fill="url(#bytes-grad-b)" />
@@ -47,7 +47,7 @@ export function BytesLogo({ size = 20 }: { size?: number }) {
   );
 }
 
-export function PhoryntLogo({ size = 20 }: { size?: number }) {
+export function PhoryntLogo({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
       <rect width="32" height="32" rx="8" fill="url(#phor-grad-b)" />
@@ -149,8 +149,6 @@ export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?
     return app.defaultUrl;
   };
 
-  const currentApp = AURIKREX_APPS.find((a) => a.id === currentAppId) || AURIKREX_APPS[2];
-
   const dropdownStyle: React.CSSProperties = isMobile
     ? {
         position: 'fixed',
@@ -190,7 +188,7 @@ export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?
         title="Aurikrex Ecosystem Apps"
       >
         <span className="inline-flex items-center justify-center shrink-0">
-          {currentApp.icon}
+          <img src="/aurikrex-logo.png" alt="Aurikrex Logo" className="w-5 h-5 object-contain rounded" style={{ width: '20px', height: '20px', minWidth: '20px', minHeight: '20px', objectFit: 'contain' }} />
         </span>
         <span className="whitespace-nowrap">
           {isMobile ? 'Apps' : 'Aurikrex Apps'}
