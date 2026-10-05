@@ -80,7 +80,7 @@ export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth <= 640);
+    const handleResize = () => setIsMobile(window.innerWidth <= 800);
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);

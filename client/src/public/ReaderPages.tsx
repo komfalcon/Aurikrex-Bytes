@@ -322,7 +322,7 @@ export function SiteHeader() {
         <Link href="/how-it-works">About</Link>
       </nav>
       <div className="header-actions">
-        <AuriCoinBadge />
+        <AuriCoinBadge className="header-coin-badge" />
         <PushSubscribeButton variant="header" />
         <AurikrexAppsSwitcher currentAppId="bytes" />
         <ThemeToggle />
@@ -377,6 +377,13 @@ export function SiteHeader() {
               <Link href="/how-it-works" onClick={() => setMenu(false)}><Info size={16} /> About</Link>
               <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>
               <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>
+            </div>
+            <div className="mobile-nav-section mobile-nav-preferences">
+              <span className="mobile-nav-label">Preferences</span>
+              <div className="mobile-nav-preference-row">
+                <span>Appearance</span>
+                <ThemeToggle />
+              </div>
             </div>
             <div className="mobile-nav-section mobile-nav-legal">
               <span className="mobile-nav-label">Legal</span>

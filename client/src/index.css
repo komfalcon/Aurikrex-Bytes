@@ -6782,3 +6782,54 @@ body.has-install-prompt {
     transition: none;
   }
 }
+
+
+/* Compact mobile header: preserve coin, notifications, Apps and menu in one row. */
+@media (max-width: 800px) {
+  .site-header .header-actions > .icon-button {
+    display: none;
+  }
+
+  .site-header .header-actions .header-avatar-btn {
+    display: none;
+  }
+
+  .site-header .header-actions .header-coin-badge {
+    gap: 4px;
+    padding-inline: 7px;
+  }
+
+  .site-header .header-actions .header-coin-badge > span:last-child {
+    display: none;
+  }
+
+  .mobile-nav-preference-row {
+    display: flex;
+    min-height: 48px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 2px 8px 2px 12px;
+    border-radius: 11px;
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .mobile-nav-preference-row .icon-button {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+}
+
+@media (max-width: 460px) {
+  .site-header .brand > span {
+    display: none;
+  }
+}
