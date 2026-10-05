@@ -45,6 +45,7 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { PushSubscribeButton } from "@/components/PushSubscribeButton";
 import { AurikrexAppsSwitcher } from "@/components/AurikrexAppsSwitcher";
+import { AuriCoinBadge } from "@/components/AuriCoinBadge";
 import { useTheme } from "@/contexts/ThemeContext";
 import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
 import Seo from "@/components/Seo";
@@ -321,6 +322,7 @@ export function SiteHeader() {
         <Link href="/how-it-works">About</Link>
       </nav>
       <div className="header-actions">
+        <AuriCoinBadge />
         <PushSubscribeButton variant="header" />
         <AurikrexAppsSwitcher currentAppId="bytes" />
         <ThemeToggle />

@@ -2,68 +2,19 @@ import React, { useState, useRef, useEffect } from 'react';
 import { ExternalLink } from 'lucide-react';
 
 export function CbtLogo({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" style={{ flexShrink: 0 }}>
-      <defs>
-        <linearGradient id="cbt-g-b" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#38bdf8"/>
-          <stop offset="100%" stopColor="#2563eb"/>
-        </linearGradient>
-      </defs>
-      <rect width="64" height="64" rx="16" fill="#07111f"/>
-      <circle cx="32" cy="32" r="22" fill="none" stroke="url(#cbt-g-b)" strokeWidth="6"/>
-      <path d="M22 38V26h12" fill="none" stroke="#e2e8f0" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M42 26v12H30" fill="none" stroke="#e2e8f0" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  );
+  return <img src="/aurikrex-logo.png" alt="Aurikrex CBT" style={{ width: size, height: size, objectFit: 'contain', borderRadius: '4px', flexShrink: 0 }} />;
 }
 
 export function LibraryLogo({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-      <rect width="32" height="32" rx="8" fill="url(#lib-grad-b)" />
-      <path d="M7.25 24.5 14.4 7.5h3.2l7.15 17M10.15 18h11.7" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <defs>
-        <linearGradient id="lib-grad-b" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#059669" />
-          <stop offset="1" stopColor="#047857" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
+  return <img src="/library-logo.png" alt="Aurikrex Library" style={{ width: size, height: size, objectFit: 'contain', borderRadius: '4px', flexShrink: 0 }} />;
 }
 
 export function BytesLogo({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 512 512" fill="none" style={{ flexShrink: 0 }}>
-      <rect width="512" height="512" rx="112" fill="#3b82f6"/>
-      <path fill="#fff" d="M128 155c0-18 15-33 33-33h190c18 0 33 15 33 33v30c0 18-15 33-33 33H161c-18 0-33-15-33-33v-30Zm0 86c0-18 15-33 33-33h124c18 0 33 15 33 33v30c0 18-15 33-33 33H161c-18 0-33-15-33-33v-30Zm0 86c0-18 15-33 33-33h190c18 0 33 15 33 33v30c0 18-15 33-33 33H161c-18 0-33-15-33-33v-30Z"/>
-      <circle cx="353" cy="170" r="12" fill="#3b82f6"/>
-      <circle cx="287" cy="256" r="12" fill="#3b82f6"/>
-      <circle cx="353" cy="342" r="12" fill="#3b82f6"/>
-    </svg>
-  );
+  return <img src="/bytes-logo.svg" alt="Aurikrex Bytes" style={{ width: size, height: size, objectFit: 'contain', borderRadius: '4px', flexShrink: 0 }} />;
 }
 
 export function PhoryntLogo({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 512 512" fill="none" style={{ flexShrink: 0 }}>
-      <defs>
-        <linearGradient id="cyanFold-b" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#38BDF8"/>
-          <stop offset="100%" stopColor="#18A9E3"/>
-        </linearGradient>
-        <linearGradient id="royalFold-b" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#2F74EE"/>
-          <stop offset="100%" stopColor="#2563EB"/>
-        </linearGradient>
-      </defs>
-      <rect width="512" height="512" rx="124" fill="#07111F"/>
-      <path d="M128 190 242 84h150c20 0 31 24 17 38L236 295l-91 91c-32-12-55-43-55-80V224c0-13 5-25 15-34l23-22Z" fill="url(#cyanFold-b)"/>
-      <path d="m274 190 83-82 91 82c10 9 15 21 15 34v87c0 37-23 68-55 80l-135-96-45-32 46-46Z" fill="url(#royalFold-b)"/>
-      <path d="m256 206 61 61-61 61-61-61 61-61Z" fill="#E2E8F0"/>
-    </svg>
-  );
+  return <img src="/phorynt-logo.svg" alt="Aurikrex Phorynt" style={{ width: size, height: size, objectFit: 'contain', borderRadius: '4px', flexShrink: 0 }} />;
 }
 
 export interface AppOption {
