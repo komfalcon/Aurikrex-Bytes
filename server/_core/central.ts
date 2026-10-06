@@ -1,7 +1,8 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 const CENTRAL_API_URL = process.env.CENTRAL_API_URL || 'https://aurikrex-central.pxxl.click';
-const S2S_SECRET = process.env.AURIKREX_CENTRAL_S2S_SECRET || 'aurikrex-s2s-master-key-2026';
+const S2S_SECRET = process.env.AURIKREX_CENTRAL_S2S_SECRET || '';
+
 
 const jwksUrl = new URL(`${CENTRAL_API_URL}/.well-known/jwks.json`);
 const JWKS = createRemoteJWKSet(jwksUrl);
