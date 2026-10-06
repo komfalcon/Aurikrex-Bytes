@@ -19,5 +19,6 @@ export function readToken(token: string): SessionPayload | null {
   try { return jwt.verify(token, secret()) as SessionPayload; } catch { return null; }
 }
 export function randomToken() { return crypto.randomBytes(32).toString("hex"); }
+export function hashToken(token: string) { return crypto.createHash("sha256").update(token).digest("hex"); }
 export function normalizeEmail(email: string) { return email.trim().toLowerCase(); }
 export function isValidPassword(password: string) { return password.length >= 8 && /\d/.test(password) && /[^A-Za-z0-9]/.test(password); }

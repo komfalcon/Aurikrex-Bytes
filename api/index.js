@@ -22,10 +22,11 @@ __export(schema_exports, {
   pushSubscriptions: () => pushSubscriptions,
   readers: () => readers,
   searchQueries: () => searchQueries,
+  systemSettings: () => systemSettings,
   users: () => users
 });
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postViews, postReactions, postBookmarks, searchQueries, pushSubscriptions, oneSignalSubscriptions;
+var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postViews, postReactions, postBookmarks, searchQueries, pushSubscriptions, oneSignalSubscriptions, systemSettings;
 var init_schema = __esm({
   "drizzle/schema.ts"() {
     "use strict";
@@ -39,6 +40,7 @@ var init_schema = __esm({
     ADMIN_ROLES = ["admin", "editor"];
     users = sqliteTable("users", {
       id: integer("id").primaryKey({ autoIncrement: true }),
+      aurikrexId: text("aurikrex_id").unique(),
       openId: text("open_id").notNull().unique(),
       name: text("name"),
       email: text("email"),
@@ -51,15 +53,22 @@ var init_schema = __esm({
     posts = sqliteTable("posts", {
       id: integer("id").primaryKey({ autoIncrement: true }),
       imageUrl: text("image_url"),
+      sourceUrl: text("source_url"),
+      sourcePublisher: text("source_publisher"),
+      sourcePublishedAt: integer("source_published_at", { mode: "timestamp_ms" }),
+      duplicateKey: text("duplicate_key"),
+      imageQuery: text("image_query"),
+      imageProvenance: text("image_provenance"),
       headline: text("headline").notNull(),
       body: text("body").notNull(),
+      category: text("category").notNull().default("Tech"),
       status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
       scheduledTime: integer("scheduled_time", { mode: "timestamp_ms" }),
       publishedTime: integer("published_time", { mode: "timestamp_ms" }),
       rejectionNote: text("rejection_note"),
       createdBy: integer("created_by").notNull(),
       updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
-    });
+    }, (table) => ({ duplicateKeyUnique: uniqueIndex("posts_duplicate_key_unique").on(table.duplicateKey) }));
     adminUsers = sqliteTable("admin_users", {
       id: integer("id").primaryKey({ autoIncrement: true }),
       email: text("email").notNull().unique(),
@@ -124,6 +133,11 @@ var init_schema = __esm({
       readerId: integer("reader_id").references(() => readers.id, { onDelete: "cascade" }),
       subscriptionId: text("subscription_id").notNull().unique(),
       createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    });
+    systemSettings = sqliteTable("system_settings", {
+      key: text("key").primaryKey(),
+      value: text("value").notNull(),
+      updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
     });
   }
 });
@@ -203,7 +217,9 @@ __export(db_exports, {
   getReaderByVerificationToken: () => getReaderByVerificationToken,
   getReaderDashboard: () => getReaderDashboard,
   getReaderPostEngagement: () => getReaderPostEngagement,
+  getSystemSetting: () => getSystemSetting,
   getUserByOpenId: () => getUserByOpenId,
+  isMaintenanceMode: () => isMaintenanceMode,
   listAdmins: () => listAdmins,
   listPosts: () => listPosts,
   listPublishedPosts: () => listPublishedPosts,
@@ -215,6 +231,8 @@ __export(db_exports, {
   recordPostView: () => recordPostView,
   recordSearchQuery: () => recordSearchQuery,
   searchPublishedPosts: () => searchPublishedPosts,
+  setMaintenanceMode: () => setMaintenanceMode,
+  setSystemSetting: () => setSystemSetting,
   togglePostBookmark: () => togglePostBookmark,
   togglePostReaction: () => togglePostReaction,
   updateReaderAvatar: () => updateReaderAvatar,
@@ -275,6 +293,37 @@ async function repairEngagementSchema(db) {
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_reactions_post_reader_unique ON post_reactions (post_id, reader_id)"));
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_bookmarks_post_reader_unique ON post_bookmarks (post_id, reader_id)"));
 }
+async function repairVerifiedNewsSchema(db) {
+  const columns = await db.all(sql.raw("PRAGMA table_info('posts')"));
+  const names = new Set(
+    columns.map((column) => column.name).filter(Boolean)
+  );
+  const repairs = [
+    ["source_url", "text"],
+    ["source_publisher", "text"],
+    ["source_published_at", "integer"],
+    ["duplicate_key", "text"],
+    ["image_query", "text"],
+    ["image_provenance", "text"],
+    ["category", "text DEFAULT 'Tech' NOT NULL"]
+  ];
+  for (const [name, definition] of repairs) {
+    if (names.has(name)) continue;
+    await db.run(sql.raw(`ALTER TABLE posts ADD COLUMN ${name} ${definition}`));
+    console.info(`[Database] Applied missing posts.${name} column`);
+  }
+  await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS posts_duplicate_key_unique ON posts (duplicate_key)"));
+}
+async function repairSystemSettingsSchema(db) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS system_settings (
+    key text PRIMARY KEY NOT NULL,
+    value text NOT NULL,
+    updated_at integer NOT NULL
+  )`));
+}
+async function cleanupTemplatedPosts(db) {
+  return;
+}
 async function getDb() {
   if (!_db && process.env.TURSO_DATABASE_URL) {
     try {
@@ -284,7 +333,13 @@ async function getDb() {
           authToken: process.env.TURSO_AUTH_TOKEN
         })
       );
-      _schemaRepair = Promise.all([repairReaderSchema(_db), repairEngagementSchema(_db)]).then(() => void 0).catch((error) => {
+      _schemaRepair = Promise.all([
+        repairReaderSchema(_db),
+        repairEngagementSchema(_db),
+        repairVerifiedNewsSchema(_db),
+        repairSystemSettingsSchema(_db),
+        cleanupTemplatedPosts(_db)
+      ]).then(() => void 0).catch((error) => {
         console.error("[Database] Schema repair failed:", error);
         throw error;
       });
@@ -571,7 +626,9 @@ async function searchPublishedPosts(query, page, pageSize) {
   const normalizedQuery = query.trim().toLowerCase();
   const search = normalizedQuery ? or(
     like(posts.headline, `%${normalizedQuery}%`),
-    like(posts.body, `%${normalizedQuery}%`)
+    like(posts.body, `%${normalizedQuery}%`),
+    like(posts.category, `%${normalizedQuery}%`),
+    like(posts.sourcePublisher, `%${normalizedQuery}%`)
   ) : void 0;
   const where = search ? and(eq(posts.status, "published"), search) : eq(posts.status, "published");
   const rows = await db.select().from(posts).where(where).orderBy(desc(posts.publishedTime), desc(posts.id)).limit(pageSize + 1).offset((page - 1) * pageSize);
@@ -665,6 +722,28 @@ async function createIngestedPost(input) {
   }).returning();
   return created;
 }
+async function getSystemSetting(key) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(systemSettings).where(eq(systemSettings.key, key)).limit(1);
+  return rows[0] ? rows[0].value : null;
+}
+async function setSystemSetting(key, value) {
+  const db = await getDb();
+  if (!db) return;
+  const now2 = /* @__PURE__ */ new Date();
+  await db.insert(systemSettings).values({ key, value, updatedAt: now2 }).onConflictDoUpdate({
+    target: systemSettings.key,
+    set: { value, updatedAt: now2 }
+  });
+}
+async function isMaintenanceMode() {
+  const val = await getSystemSetting("maintenance_mode");
+  return val === "true";
+}
+async function setMaintenanceMode(enabled) {
+  await setSystemSetting("maintenance_mode", enabled ? "true" : "false");
+}
 var _db, _schemaRepair;
 var init_db = __esm({
   "server/db.ts"() {
@@ -677,399 +756,1480 @@ var init_db = __esm({
   }
 });
 
+// server/services.ts
+import { v2 as cloudinary } from "cloudinary";
+import nodemailer from "nodemailer";
+function mailTransport() {
+  const host = process.env.SMTP_HOST;
+  if (!host) return null;
+  return nodemailer.createTransport({
+    host,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: Number(process.env.SMTP_PORT) === 465,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+    dkim: process.env.SMTP_DKIM_PRIVATE_KEY && process.env.SMTP_DKIM_DOMAIN && process.env.SMTP_DKIM_SELECTOR ? {
+      domainName: process.env.SMTP_DKIM_DOMAIN,
+      keySelector: process.env.SMTP_DKIM_SELECTOR,
+      privateKey: process.env.SMTP_DKIM_PRIVATE_KEY
+    } : void 0
+  });
+}
+async function sendEmail(to, subject, html, fromAddress) {
+  const defaultFrom = process.env.RESEND_FROM || process.env.SMTP_FROM || "Aurikrex Bytes <info@aurikrex.com>";
+  const from = fromAddress || defaultFrom;
+  const resendApiKey = process.env.RESEND_API_KEY;
+  if (resendApiKey) {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey.trim()}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          from,
+          to: [to],
+          subject,
+          html
+        })
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(
+          `[Resend API Error] Status ${response.status}: ${errorText}`
+        );
+        throw new Error(`Resend error ${response.status}: ${errorText}`);
+      }
+      const data = await response.json();
+      console.log(`[Resend Email Sent] ID: ${data?.id} to ${to}`);
+      return data;
+    } catch (err) {
+      console.error(
+        "[Resend API Delivery Failure]",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+  const transport = mailTransport();
+  if (transport) {
+    await transport.sendMail({ from, to, subject, html });
+    return;
+  }
+  console.info(`[Email placeholder] ${subject} for ${to}`);
+}
+async function sendAuthEmail(to, subject, html) {
+  await sendEmail(
+    to,
+    subject,
+    html,
+    process.env.RESEND_FROM || process.env.SMTP_FROM || "Aurikrex Bytes <info@aurikrex.com>"
+  );
+}
+function verificationEmailHtml(url) {
+  return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">A considered daily read</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">You're almost ready for your daily briefing.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">Confirm your email to start receiving Aurikrex Bytes \u2014 a daily tech briefing with the context behind what matters.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Verify Email &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 24 hours. If you didn't create an Aurikrex Bytes account, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.com" style="color:#2f67d8">support@aurikrex.com</a></div></div></div></body></html>`;
+}
+function resetPasswordEmailHtml(url) {
+  return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">Account Security</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">Reset your password.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">We received a request to reset the password for your Aurikrex Bytes account. Click the button below to choose a new password.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Reset Password &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 30 minutes. If you didn't request a password reset, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.com" style="color:#2f67d8">support@aurikrex.com</a></div></div></div></body></html>`;
+}
+function cloudinaryConfigured() {
+  return Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET
+  );
+}
+function getCloudinaryUploadSignature(folder = "aurikrex/posts") {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
+  const timestamp = Math.floor(Date.now() / 1e3);
+  const signature = cloudinary.utils.api_sign_request(
+    { timestamp, folder },
+    process.env.CLOUDINARY_API_SECRET || ""
+  );
+  return {
+    timestamp,
+    folder,
+    signature,
+    apiKey: process.env.CLOUDINARY_API_KEY || "",
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || ""
+  };
+}
+var init_services = __esm({
+  "server/services.ts"() {
+    "use strict";
+  }
+});
+
+// server/_core/aiKeys.ts
+function getMistralApiKey() {
+  return (process.env.MISTRAL_API_KEY || process.env.MISTRAL_KEY || "").trim();
+}
+function getNvidiaApiKey() {
+  return (process.env.NVIDIA_API_KEY || process.env.NVIDIA_KEY || "").trim();
+}
+var init_aiKeys = __esm({
+  "server/_core/aiKeys.ts"() {
+    "use strict";
+  }
+});
+
+// server/storage.ts
+var init_storage = __esm({
+  "server/storage.ts"() {
+    "use strict";
+    init_env();
+  }
+});
+
+// server/_core/imageGeneration.ts
+async function generateNvidiaFluxImage(prompt) {
+  const nvidiaKey = getNvidiaApiKey();
+  if (!nvidiaKey || !prompt) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3e4);
+    const endpoints = [
+      "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell",
+      "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux-1-schnell",
+      "https://integrate.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell"
+    ];
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          signal: controller.signal,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${nvidiaKey}`
+          },
+          body: JSON.stringify({
+            prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
+            mode: "base64"
+          })
+        });
+        if (response.ok) {
+          clearTimeout(timeout);
+          const data = await response.json();
+          const b64 = data.b64_json || data.artifacts?.[0]?.base64 || data.image || data.predictions?.[0]?.bytesBase64Encoded;
+          if (b64) {
+            const dataUri = `data:image/png;base64,${b64}`;
+            if (cloudinaryConfigured()) {
+              try {
+                const { v2: cloudinary2 } = await import("cloudinary");
+                cloudinary2.config({
+                  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+                  api_key: process.env.CLOUDINARY_API_KEY,
+                  api_secret: process.env.CLOUDINARY_API_SECRET
+                });
+                const uploadRes = await cloudinary2.uploader.upload(dataUri, {
+                  folder: "aurikrex/posts",
+                  resource_type: "image"
+                });
+                if (uploadRes.secure_url || uploadRes.url) {
+                  return uploadRes.secure_url || uploadRes.url;
+                }
+              } catch {
+              }
+            }
+            return dataUri;
+          }
+        }
+      } catch {
+      }
+    }
+    clearTimeout(timeout);
+  } catch (err) {
+    console.warn("[NVIDIA FLUX] Generation failed:", err instanceof Error ? err.message : String(err));
+  }
+  return null;
+}
+function getTopicStockImage(headline, category = "Tech") {
+  const h = headline.toLowerCase();
+  if (/ai|model|llm|deepseek|chatgpt|openai|claude|numbat|robot|agent|neural/.test(h)) {
+    return "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/chip|hardware|semiconductor|huawei|apple|nvidia|intel|processor|camera|phone/.test(h)) {
+    return "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/space|satellite|orbit|moon|rocket|astronomy|starlink|earth/.test(h)) {
+    return "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/car|tesla|ev|vehicle|battery|autonomous|transport/.test(h)) {
+    return "https://images.unsplash.com/photo-1563720223185-11003d516935?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/crypto|bitcoin|ethereum|blockchain|token/.test(h)) {
+    return "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?auto=format&fit=crop&w=1200&q=80";
+  }
+  if (/science|health|dna|drug|biology|physics|cell/.test(h)) {
+    return "https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=1200&q=80";
+  }
+  return "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80";
+}
+var init_imageGeneration = __esm({
+  "server/_core/imageGeneration.ts"() {
+    "use strict";
+    init_storage();
+    init_env();
+    init_aiKeys();
+    init_services();
+  }
+});
+
 // server/_core/aiCurator.ts
 var aiCurator_exports = {};
 __export(aiCurator_exports, {
+  buildDuplicateKey: () => buildDuplicateKey,
+  canonicalizeUrl: () => canonicalizeUrl,
+  clampEditorialBrief: () => clampEditorialBrief,
+  cleanHeadline: () => cleanHeadline,
   curateTenBytes: () => curateTenBytes,
+  decodeHtmlEntities: () => decodeHtmlEntities,
+  extractAiBody: () => extractAiBody,
+  extractSourceArticleImage: () => extractSourceArticleImage,
+  fetchTodayCandidates: () => fetchTodayCandidates,
+  generateEditorialSvgCard: () => generateEditorialSvgCard,
   getHdUnsplashCoverUrl: () => getHdUnsplashCoverUrl,
+  getTodayWindow: () => getTodayWindow,
+  isNonNewsHeadline: () => isNonNewsHeadline,
+  normalizeHeadline: () => normalizeHeadline,
+  parseAiJsonResponse: () => parseAiJsonResponse,
   runNightlyCuration: () => runNightlyCuration
 });
-function getHdUnsplashCoverUrl(headline, category = "Tech", seedOffset = 0) {
-  const catKey = HD_UNSPLASH_CATALOG[category] ? category : "Tech";
-  const pool = HD_UNSPLASH_CATALOG[catKey];
-  let hash = seedOffset;
-  for (let i = 0; i < headline.length; i++) {
-    hash = (hash << 5) - hash + headline.charCodeAt(i);
-    hash |= 0;
-  }
-  const index = Math.abs(hash) % pool.length;
-  return pool[index];
+import { createHash } from "node:crypto";
+function normalizeHeadline(value) {
+  return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim();
 }
-async function curateTenBytes() {
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.BUILT_IN_FORGE_API_KEY || process.env.FORGE_API_KEY || "").trim();
-  if (!apiKey) {
-    console.warn("[AICurator] GEMINI_API_KEY absent. Fetching fresh real-time tech news from live feeds.");
-    return await fetchLiveTechNewsBytes();
-  }
-  const currentDate = (/* @__PURE__ */ new Date()).toUTCString();
-  const sessionNonce = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-  const shuffledTopics = [...TOPIC_POOL].sort(() => Math.random() - 0.5).slice(0, 10);
-  const prompt = `You are the chief editorial director for Aurikrex Bytes, a premium tech news publication.
-Today's Date: ${currentDate}
-Session Nonce: ${sessionNonce}
-
-Curate EXACTLY 10 fresh, high-signal, distinct tech stories covering these 10 topics:
-${shuffledTopics.map((t2, i) => `${i + 1}. ${t2}`).join("\n")}
-
-STRICT RULES:
-1. FRESHNESS: Ensure stories are completely fresh and unique. Do NOT output generic repeating templates.
-2. BODY LENGTH CONSTRAINT: For EACH byte, the "body" text MUST be strictly between 600 and 800 characters in length (excluding headline).
-   - Each body brief must be 2 to 3 structured paragraphs providing full technical context, background, and future market impact.
-   - Do NOT write short summaries under 600 characters.
-
-Output a valid JSON array of 10 objects:
-[
-  {
-    "headline": "Crisp, factual headline (under 80 characters)",
-    "body": "Comprehensive 2-3 paragraph news brief. MUST be strictly between 600 and 800 characters long.",
-    "category": "Tech" | "AI" | "Science" | "Crypto" | "Innovation"
-  }
-]
-
-Return ONLY the raw JSON array.`;
+function canonicalizeUrl(value) {
   try {
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-goog-api-key": apiKey
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.95 }
-        })
-      }
-    );
-    if (!response.ok) {
-      console.error("[AICurator] Gemini API failed. Falling back to live tech news feed.");
-      return await fetchLiveTechNewsBytes();
-    }
-    const data = await response.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const cleanJson = rawText.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(cleanJson);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return await fetchLiveTechNewsBytes();
-    }
-    return parsed.slice(0, 10).map((item, idx) => {
-      let bodyText = String(item.body || "").trim();
-      if (bodyText.length < 600) {
-        bodyText = (bodyText + " " + bodyText).slice(0, 720);
-      } else if (bodyText.length > 800) {
-        bodyText = bodyText.slice(0, 780).replace(/\s+\S*$/, "") + ".";
-      }
-      const headline = String(item.headline || "Tech Update").slice(0, 120);
-      const category = String(item.category || "Tech");
-      const imageUrl = getHdUnsplashCoverUrl(headline, category, idx);
-      return {
-        headline,
-        body: bodyText,
-        category,
-        imageUrl
-      };
-    });
-  } catch (err) {
-    console.error("[AICurator] Gemini curation error:", err);
-    return await fetchLiveTechNewsBytes();
+    const url = new URL(value);
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    for (const key of Array.from(url.searchParams.keys())) if (/^(utm_|fbclid|gclid|ref$)/i.test(key)) url.searchParams.delete(key);
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    return url.toString();
+  } catch {
+    return value.trim().toLowerCase();
   }
+}
+function buildDuplicateKey(title, url, publishedAt) {
+  void url;
+  return createHash("sha256").update(`${normalizeHeadline(title)}|${publishedAt.toISOString().slice(0, 10)}`).digest("hex");
+}
+function localDate(timeZone, date = /* @__PURE__ */ new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+function zonedMidnight(date, timeZone) {
+  const guess = /* @__PURE__ */ new Date(`${date}T00:00:00Z`);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(guess);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const localAsUtc = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour) % 24, Number(values.minute), Number(values.second));
+  return new Date(guess.getTime() - (localAsUtc - guess.getTime()));
+}
+function getTodayWindow(now2 = /* @__PURE__ */ new Date(), timeZone = process.env.APP_TIMEZONE || "Africa/Lagos") {
+  const date = localDate(timeZone, now2);
+  const start = zonedMidnight(date, timeZone);
+  return { date, start, end: new Date(start.getTime() + 864e5) };
+}
+function publisherFromUrl(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Hacker News";
+  }
+}
+function getHdUnsplashCoverUrl(headline, category = "Tech", seedOffset = 0) {
+  return generateEditorialSvgCard(headline, category);
+}
+function isNonNewsHeadline(title) {
+  const lower = title.toLowerCase().trim();
+  if (/^(ask|tell)\s+hn\b/i.test(lower)) return true;
+  if (/^poll:\b/i.test(lower)) return true;
+  if (/\bwho\s+is\s+hiring\b/i.test(lower)) return true;
+  if (/\bwho\s+wants\s+to\s+be\s+hired\b/i.test(lower)) return true;
+  if (/\bfreelancer\s+seeking\s+freelancer\b/i.test(lower)) return true;
+  if (/\bask\s+hn:\s+/i.test(lower)) return true;
+  return false;
+}
+function decodeHtmlEntities(str) {
+  return str.replace(/&#(\d+);/g, (_, dec) => {
+    try {
+      return String.fromCharCode(Number(dec));
+    } catch {
+      return _;
+    }
+  }).replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+    try {
+      return String.fromCharCode(parseInt(hex, 16));
+    } catch {
+      return _;
+    }
+  }).replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&#8216;/g, "'").replace(/&#8217;/g, "'").replace(/&#8220;/g, '"').replace(/&#8221;/g, '"').replace(/&#8211;/g, "\u2013").replace(/&#8212;/g, "\u2014").replace(/&ndash;/g, "\u2013").replace(/&mdash;/g, "\u2014").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+function cleanHeadline(title) {
+  let cleaned = decodeHtmlEntities(title.trim());
+  cleaned = cleaned.replace(/^(show\s+hn|launch\s+hn|tell\s+hn)\s*:\s*/i, "");
+  cleaned = cleaned.replace(/\s*\[(video|pdf|audio|\d{4})\]\s*/gi, " ");
+  cleaned = cleaned.replace(/\s*\((video|pdf|audio|\d{4})\)\s*/gi, " ");
+  cleaned = cleaned.replace(
+    /\s*[-–—|]\s*(the\s+verge|ars\s+technica|techcrunch|reuters|bloomberg|wired|wsj|nyt|bbc|cnbc|the\s+information|engadget)\s*$/i,
+    ""
+  );
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  return cleaned;
+}
+function generateEditorialSvgCard(headline, category = "Tech") {
+  const safeHeadline = cleanHeadline(headline).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const words = safeHeadline.split(" ");
+  const lines = [];
+  let currentLine = "";
+  for (const word of words) {
+    if ((currentLine + " " + word).length > 34) {
+      if (currentLine) lines.push(currentLine.trim());
+      currentLine = word;
+      if (lines.length >= 3) break;
+    } else {
+      currentLine += " " + word;
+    }
+  }
+  if (currentLine && lines.length < 3) lines.push(currentLine.trim());
+  const tspans = lines.map((l, i) => `<tspan x="80" dy="${i === 0 ? 0 : 54}">${l}</tspan>`).join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f19" />
+      <stop offset="100%" stop-color="#141c2e" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#60a5fa" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)" />
+  <circle cx="1100" cy="100" r="300" fill="#1e293b" opacity="0.35" />
+  <circle cx="1100" cy="100" r="200" fill="#2563eb" opacity="0.08" />
+  <g transform="translate(80, 90)">
+    <rect x="0" y="0" width="130" height="34" rx="17" fill="url(#accent)" />
+    <text x="65" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle" letter-spacing="1">${category.toUpperCase()}</text>
+  </g>
+  <text x="80" y="240" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, serif" font-size="44" font-weight="700" fill="#f8fafc" letter-spacing="-0.5">
+    ${tspans}
+  </text>
+  <g transform="translate(80, 530)">
+    <circle cx="10" cy="-6" r="6" fill="#3b82f6" />
+    <text x="28" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="600" fill="#94a3b8" letter-spacing="0.5">AURIKREX BYTES &bull; VERIFIED TECH BRIEFING</text>
+  </g>
+</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+async function extractSourceArticleImage(url) {
+  if (!url || !url.startsWith("http")) return null;
+  if (/news\.ycombinator\.com/i.test(url)) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; AurikrexBytesBot/1.0; +https://www.bytes.aurikrex.com)",
+        "Accept": "text/html,application/xhtml+xml"
+      }
+    });
+    clearTimeout(timeout);
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) return null;
+    const reader = response.body?.getReader();
+    if (!reader) return null;
+    let html = "";
+    const decoder = new TextDecoder();
+    while (html.length < 5e4) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      html += decoder.decode(value, { stream: true });
+      if (html.includes("</head>")) break;
+    }
+    reader.cancel().catch(() => {
+    });
+    const ogMatch = html.match(/<meta\s+[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i) || html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i) || html.match(/<meta\s+[^>]*name=["']twitter:image(?::src)?["'][^>]*content=["']([^"']+)["']/i) || html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:image(?::src)?["']/i);
+    if (!ogMatch || !ogMatch[1]) return null;
+    let rawImg = ogMatch[1].trim();
+    if (rawImg.startsWith("//")) rawImg = "https:" + rawImg;
+    else if (rawImg.startsWith("/")) {
+      const parsedBase = new URL(url);
+      rawImg = `${parsedBase.origin}${rawImg}`;
+    }
+    if (/\.(ico|svg)(\?.*)?$/i.test(rawImg) || /(favicon|apple-touch-icon|site-logo|spacer|pixel|1x1|badge)/i.test(rawImg)) {
+      return null;
+    }
+    return rawImg;
+  } catch {
+    return null;
+  }
+}
+async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new Set()) {
+  const feeds = [
+    { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
+    { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" },
+    { name: "TechCrunch", url: "https://techcrunch.com/feed/" },
+    { name: "Wired", url: "https://www.wired.com/feed/rss" },
+    { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
+    { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
+    { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" }
+  ];
+  const results = [];
+  for (const feed of feeds) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4e3);
+      const res = await fetch(feed.url, {
+        signal: controller.signal,
+        headers: { "User-Agent": "AurikrexBytesBot/1.0" }
+      });
+      clearTimeout(timeout);
+      if (!res.ok) continue;
+      const xml = await res.text();
+      const items = xml.match(/<(?:item|entry)[\s\S]*?<\/(?:item|entry)>/gi) || [];
+      for (const itemXml of items.slice(0, 20)) {
+        const titleMatch = itemXml.match(/<title(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
+        const linkMatch = itemXml.match(/<link[^>]+href=["']([^"']+)["']/i) || itemXml.match(/<link(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/i);
+        const dateMatch = itemXml.match(/<pubDate(?:\s+[^>]*)?>([\s\S]*?)<\/pubDate>/i) || itemXml.match(/<published(?:\s+[^>]*)?>([\s\S]*?)<\/published>/i) || itemXml.match(/<updated(?:\s+[^>]*)?>([\s\S]*?)<\/updated>/i);
+        const mediaMatch = itemXml.match(/<media:content[^>]+url=["']([^"']+)["']/i) || itemXml.match(/<enclosure[^>]+url=["']([^"']+)["'][^>]*type=["']image/i);
+        if (!titleMatch || !linkMatch) continue;
+        const rawTitle = titleMatch[1].trim();
+        const url = linkMatch[1].trim();
+        const publishedAt = dateMatch ? new Date(dateMatch[1].trim()) : /* @__PURE__ */ new Date();
+        if (!rawTitle || rawTitle.length < 15 || isNonNewsHeadline(rawTitle) || !Number.isFinite(publishedAt.getTime()) || publishedAt < start || publishedAt >= end) {
+          continue;
+        }
+        const cleanedTitle = cleanHeadline(rawTitle);
+        const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
+        if (excludeKeys.has(duplicateKey)) continue;
+        const mediaUrl = mediaMatch ? mediaMatch[1].trim() : null;
+        results.push({
+          title: cleanedTitle,
+          url,
+          publisher: feed.name,
+          publishedAt,
+          duplicateKey,
+          imageUrl: mediaUrl
+        });
+      }
+    } catch (e) {
+      console.warn(`[AICurator] Failed to fetch RSS feed from ${feed.name}:`, e);
+    }
+  }
+  return results;
+}
+async function fetchCandidatesForTimeframe(start, end, excludeKeys = /* @__PURE__ */ new Set()) {
+  const startSec = Math.floor(start.getTime() / 1e3);
+  const endSec = Math.floor(end.getTime() / 1e3);
+  const hnQueries = [
+    `tags=front_page&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=35`,
+    `query=AI%20OR%20LLM&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
+    `query=chip%20OR%20semiconductor%20OR%20security&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
+    `query=cloud%20OR%20database%20OR%20open%20source&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`
+  ];
+  const hnPromises = hnQueries.map(async (queryParams) => {
+    try {
+      const response = await fetch(`https://hn.algolia.com/api/v1/search?${queryParams}`);
+      if (!response.ok) return { hits: [] };
+      return await response.json();
+    } catch {
+      return { hits: [] };
+    }
+  });
+  const [hnResults, rssCandidates] = await Promise.all([
+    Promise.all(hnPromises),
+    fetchRssCandidates(start, end, excludeKeys)
+  ]);
+  const candidates = /* @__PURE__ */ new Map();
+  for (const item of rssCandidates) {
+    if (!excludeKeys.has(item.duplicateKey)) {
+      candidates.set(item.duplicateKey, item);
+    }
+  }
+  for (const result of hnResults) {
+    for (const hit of result.hits || []) {
+      const publishedAt = new Date(Number(hit.created_at_i) * 1e3);
+      const rawTitle = String(hit.title || "").trim();
+      const url = String(hit.url || `https://news.ycombinator.com/item?id=${hit.objectID || ""}`);
+      if (!rawTitle || rawTitle.length < 15 || isNonNewsHeadline(rawTitle) || !Number.isFinite(publishedAt.getTime()) || publishedAt < start || publishedAt >= end) {
+        continue;
+      }
+      const cleanedTitle = cleanHeadline(rawTitle);
+      const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
+      if (!excludeKeys.has(duplicateKey) && !candidates.has(duplicateKey)) {
+        candidates.set(duplicateKey, {
+          title: cleanedTitle,
+          url,
+          publisher: publisherFromUrl(url),
+          publishedAt,
+          duplicateKey,
+          imageUrl: null
+        });
+      }
+    }
+  }
+  return Array.from(candidates.values()).sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime()).slice(0, 30);
+}
+async function fetchTodayCandidates(excludeKeys = /* @__PURE__ */ new Set()) {
+  const now2 = /* @__PURE__ */ new Date();
+  const { start, end } = getTodayWindow(now2);
+  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys);
+  if (candidates.length < 15) {
+    const past72h = new Date(now2.getTime() - 72 * 3600 * 1e3);
+    console.info(`[AICurator] Found ${candidates.length} uncurated candidates today. Expanding search window to 72 hours...`);
+    candidates = await fetchCandidatesForTimeframe(past72h, now2, excludeKeys);
+  }
+  return candidates;
+}
+function imageQuery(title) {
+  return title.replace(/[^a-z0-9 ]/gi, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 8).join(" ");
+}
+function clampEditorialBrief(body, candidate) {
+  let text2 = body.trim().replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
+  if (text2.length > 800) {
+    const truncated = text2.slice(0, 790);
+    const lastSentenceEnd = Math.max(
+      truncated.lastIndexOf(". "),
+      truncated.lastIndexOf(".\n"),
+      truncated.lastIndexOf("! "),
+      truncated.lastIndexOf("? ")
+    );
+    if (lastSentenceEnd > 550) {
+      text2 = truncated.slice(0, lastSentenceEnd + 1).trim();
+    } else {
+      const lastSpace = truncated.lastIndexOf(" ");
+      text2 = (lastSpace > 550 ? truncated.slice(0, lastSpace) : truncated).trim() + "...";
+    }
+  }
+  return text2;
+}
+function extractAiHeadline(item, fallbackTitle) {
+  if (!item || typeof item !== "object") return cleanHeadline(fallbackTitle).slice(0, 120);
+  const h = item.headline || item.title || item.brief?.headline || item.metadata?.headline || item.metadata?.title || fallbackTitle;
+  return cleanHeadline(String(h || fallbackTitle)).slice(0, 120);
+}
+function extractAiBody(item) {
+  if (!item) return "";
+  if (typeof item === "string" && item.length > 30) return item;
+  if (typeof item.body === "string" && item.body.trim().length > 30) return item.body.trim();
+  if (item.body && typeof item.body === "object" && !Array.isArray(item.body)) {
+    const parts = Object.values(item.body).map((v) => typeof v === "string" ? v.trim() : "").filter((v) => v.length > 5);
+    if (parts.length > 0) return parts.join("\n\n");
+  }
+  if (typeof item.summary === "string" && item.summary.trim().length > 30) return item.summary.trim();
+  if (item.summary && typeof item.summary === "object" && !Array.isArray(item.summary)) {
+    const parts = Object.values(item.summary).map((v) => typeof v === "string" ? v.trim() : "").filter((v) => v.length > 5);
+    if (parts.length > 0) return parts.join("\n\n");
+  }
+  if (typeof item.text === "string" && item.text.trim().length > 30) return item.text.trim();
+  if (typeof item.content === "string" && item.content.trim().length > 30) return item.content.trim();
+  if (typeof item.brief?.summary?.lead?.text === "string") {
+    const lead = item.brief.summary.lead.text;
+    const bg = item.brief?.summary?.context?.background?.text || "";
+    return `${lead}
+
+${bg}`.trim();
+  }
+  if (typeof item.brief?.summary === "string" && item.brief.summary.length > 30) return item.brief.summary.trim();
+  if (typeof item.brief === "string" && item.brief.length > 30) return item.brief.trim();
+  return "";
+}
+function extractArrayFromObject(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object" && parsed !== null) {
+    const arrayKey = Object.keys(parsed).find((k) => Array.isArray(parsed[k]));
+    if (arrayKey) return parsed[arrayKey];
+  }
+  return [];
+}
+function parseAiJsonResponse(rawJson) {
+  if (!rawJson || typeof rawJson !== "string") return [];
+  let cleaned = rawJson.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const firstBracket = cleaned.search(/[\[\{]/);
+  if (firstBracket !== -1) {
+    cleaned = cleaned.slice(firstBracket);
+  }
+  try {
+    const parsed = JSON.parse(cleaned);
+    const arr = extractArrayFromObject(parsed);
+    if (arr.length > 0) return arr;
+  } catch {
+  }
+  try {
+    const sanitized = cleaned.replace(/("(?:[^"\\]|\\.)*")/g, (match) => {
+      return match.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t");
+    });
+    const parsed = JSON.parse(sanitized);
+    const arr = extractArrayFromObject(parsed);
+    if (arr.length > 0) return arr;
+  } catch {
+  }
+  try {
+    const lastClosingBrace = cleaned.lastIndexOf("}");
+    if (lastClosingBrace > 0) {
+      const truncatedCandidate = cleaned.slice(0, lastClosingBrace + 1);
+      const autoClosed = truncatedCandidate.endsWith("]") ? truncatedCandidate : truncatedCandidate + "]";
+      const sanitized = autoClosed.replace(/("(?:[^"\\]|\\.)*")/g, (match) => {
+        return match.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t");
+      });
+      const parsed = JSON.parse(sanitized);
+      const arr = extractArrayFromObject(parsed);
+      if (arr.length > 0) {
+        console.info(`[AICurator] Recovered ${arr.length} complete story objects from truncated JSON output.`);
+        return arr;
+      }
+    }
+  } catch {
+  }
+  const objects = [];
+  const objectMatches = cleaned.match(/\{[\s\S]*?(?:"headline"|"title"|"body"|"summary"|"text")[\s\S]*?\}/gi) || [];
+  for (const block of objectMatches) {
+    try {
+      const safeBlock = block.replace(/("(?:[^"\\]|\\.)*")/g, (m) => m.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t"));
+      const obj = JSON.parse(safeBlock);
+      if (obj && typeof obj === "object" && (obj.headline || obj.title || obj.body)) {
+        objects.push(obj);
+      }
+    } catch {
+    }
+  }
+  if (objects.length > 0) {
+    console.info(`[AICurator] Recovered ${objects.length} story objects via multiline regex block parsing.`);
+  }
+  return objects;
+}
+async function generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey) {
+  const prompt = `You are the executive tech editor for Aurikrex Bytes.
+Write an authoritative, high-signal 3-paragraph editorial brief for this verified news story.
+
+STORY DETAILS:
+- Title: "${candidate.title}"
+- Publisher: "${candidate.publisher}"
+- URL: "${candidate.url}"
+
+EDITORIAL RULES:
+1. Base your brief strictly on the candidate facts. Do NOT hallucinate fake dates or fake benchmarks.
+2. Structure into three concise, focused paragraphs:
+   - Paragraph 1 (The Lead): The core event, company, breakthrough, or incident and key technical details.
+   - Paragraph 2 (Why It Matters): Strategic industry impact, architectural implications, market effects, or infrastructure changes.
+   - Paragraph 3 (The Outlook): What happens next, timeline, release dates, or key metrics to watch.
+3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 550 and 750 characters.
+4. Headline: Crisp, punchy, active voice, under 90 characters. Never include publisher names or tags like "Show HN:".
+5. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
+6. Return a valid JSON object ONLY:
+   {
+     "headline": "Crisp Headline under 90 chars",
+     "body": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...",
+     "category": "Tech"
+   }`;
+  if (mistralKey) {
+    const mistralModels = ["mistral-small-latest", "open-mixtral-8x7b", "open-mistral-7b"];
+    for (const model of mistralModels) {
+      try {
+        const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${mistralKey}`
+          },
+          body: JSON.stringify({
+            model,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+              { role: "user", content: prompt }
+            ],
+            temperature: 0.3,
+            max_tokens: 1e3
+          })
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          const content = resData.choices?.[0]?.message?.content || "";
+          const parsed = parseAiJsonResponse(content);
+          if (parsed && parsed.length > 0) {
+            const item = parsed[0];
+            const headline = extractAiHeadline(item, candidate.title);
+            const rawBody = extractAiBody(item);
+            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
+            if (headline && body && body.length > 100) {
+              return { headline, body, category };
+            }
+          }
+        } else if (response.status === 429) {
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      } catch {
+      }
+    }
+  }
+  if (nvidiaKey) {
+    const nvidiaModels = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
+    const nvidiaEndpoints = [
+      "https://integrate.api.nvidia.com/v1/chat/completions",
+      "https://ai.api.nvidia.com/v1/chat/completions"
+    ];
+    for (const endpoint of nvidiaEndpoints) {
+      for (const model of nvidiaModels) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${nvidiaKey}`
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+                { role: "user", content: prompt }
+              ],
+              temperature: 0.3,
+              max_tokens: 1e3
+            })
+          });
+          if (response.ok) {
+            const resData = await response.json();
+            const content = resData.choices?.[0]?.message?.content || "";
+            const parsed = parseAiJsonResponse(content);
+            if (parsed && parsed.length > 0) {
+              const item = parsed[0];
+              const headline = extractAiHeadline(item, candidate.title);
+              const rawBody = extractAiBody(item);
+              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
+              if (headline && body && body.length > 100) {
+                return { headline, body, category };
+              }
+            }
+          }
+        } catch {
+        }
+      }
+    }
+  }
+  return null;
+}
+async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
+  let candidates;
+  try {
+    candidates = await fetchTodayCandidates(excludeKeys);
+  } catch (error) {
+    console.error("[AICurator] News candidate retrieval failed", error);
+    return [];
+  }
+  if (!candidates.length) return [];
+  const mistralKey = getMistralApiKey();
+  const nvidiaKey = getNvidiaApiKey();
+  if (!mistralKey && !nvidiaKey) {
+    console.warn(
+      "[AICurator] No AI API key (MISTRAL_API_KEY, NVIDIA_API_KEY) configured. Skipping curation."
+    );
+    return [];
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const draftItems = [];
+  const chunkSize = 3;
+  for (let i = 0; i < candidates.length && draftItems.length < 10; i += chunkSize) {
+    const chunk = candidates.slice(i, i + chunkSize);
+    const chunkResults = await Promise.all(
+      chunk.map(async (candidate) => {
+        if (seen.has(candidate.duplicateKey)) return null;
+        seen.add(candidate.duplicateKey);
+        const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey);
+        if (!brief) return null;
+        return {
+          candidate,
+          headline: brief.headline,
+          body: brief.body,
+          category: brief.category
+        };
+      })
+    );
+    for (const res of chunkResults) {
+      if (res && draftItems.length < 10) {
+        draftItems.push(res);
+      }
+    }
+  }
+  console.info(`[AICurator] Successfully generated ${draftItems.length} authentic AI candidate briefs. Resolving cover images in parallel...`);
+  const curatedBytes = await Promise.all(
+    draftItems.map(async (draft) => {
+      let imageUrl = draft.candidate.imageUrl;
+      let provenance = "source-article";
+      if (!imageUrl) {
+        imageUrl = await extractSourceArticleImage(draft.candidate.url);
+      }
+      if (!imageUrl && getNvidiaApiKey()) {
+        const fluxImg = await generateNvidiaFluxImage(draft.headline);
+        if (fluxImg) {
+          imageUrl = fluxImg;
+          provenance = "nvidia-flux";
+        }
+      }
+      if (!imageUrl) {
+        imageUrl = generateEditorialSvgCard(draft.headline, draft.category);
+        provenance = "editorial-card";
+      }
+      return {
+        headline: draft.headline,
+        body: draft.body,
+        category: draft.category,
+        imageUrl,
+        sourceUrl: draft.candidate.url,
+        sourcePublisher: draft.candidate.publisher,
+        sourcePublishedAt: draft.candidate.publishedAt,
+        duplicateKey: draft.candidate.duplicateKey,
+        imageQuery: imageQuery(draft.headline),
+        imageProvenance: provenance
+      };
+    })
+  );
+  console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
+  return curatedBytes;
 }
 async function runNightlyCuration(status = "draft") {
   const db = await getDb();
-  if (!db) {
-    console.error("[AICurator] Database unavailable for curation");
-    return 0;
-  }
-  console.info("[AICurator] Starting 10-Byte curation drop...");
-  const bytes = await curateTenBytes();
+  if (!db) return 0;
+  const existingPosts = await db.select({ duplicateKey: posts.duplicateKey }).from(posts);
+  const excludeKeys = new Set(existingPosts.map((p) => p.duplicateKey).filter((k) => Boolean(k)));
+  const bytes = await curateTenBytes(excludeKeys);
   if (!bytes.length) return 0;
-  const now2 = /* @__PURE__ */ new Date();
   let count = 0;
   for (const byte of bytes) {
+    if (!byte.duplicateKey || excludeKeys.has(byte.duplicateKey)) continue;
     try {
       await db.insert(posts).values({
         headline: byte.headline,
         body: byte.body,
-        imageUrl: byte.imageUrl || getHdUnsplashCoverUrl(byte.headline, byte.category, count),
+        category: byte.category || "Tech",
+        imageUrl: byte.imageUrl,
         status,
         createdBy: 1,
-        updatedAt: now2
+        updatedAt: /* @__PURE__ */ new Date(),
+        sourceUrl: byte.sourceUrl,
+        sourcePublisher: byte.sourcePublisher,
+        sourcePublishedAt: byte.sourcePublishedAt,
+        duplicateKey: byte.duplicateKey,
+        imageQuery: byte.imageQuery,
+        imageProvenance: byte.imageProvenance
       });
+      excludeKeys.add(byte.duplicateKey);
       count++;
-    } catch (err) {
-      console.error(`[AICurator] Failed to insert byte "${byte.headline}":`, err);
+    } catch (error) {
+      console.error(`[AICurator] Skipping duplicate or failed insert for ${byte.sourceUrl}`, error);
     }
   }
-  console.info(`[AICurator] Successfully added ${count} fresh Bytes as ${status}!`);
+  console.info(`[AICurator] Added ${count} validated ${status} Bytes`);
   return count;
 }
-async function fetchLiveTechNewsBytes() {
-  try {
-    const randomPage = Math.floor(Math.random() * 8);
-    const keywords = ["AI", "LLM", "rust", "quantum", "chip", "robotics", "satellite", "security", "framework", "database", "model"];
-    const randomQuery = keywords[Math.floor(Math.random() * keywords.length)];
-    const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(randomQuery)}&tags=story&page=${randomPage}&hitsPerPage=30`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("HackerNews API error");
-    const data = await res.json();
-    let hits = (data.hits || []).filter((h) => h.title && h.title.length > 15);
-    if (!hits.length) {
-      const fallbackRes = await fetch(`https://hn.algolia.com/api/v1/search_by_date?tags=story&page=${randomPage}&hitsPerPage=30`);
-      const fallbackData = await fallbackRes.json();
-      hits = (fallbackData.hits || []).filter((h) => h.title && h.title.length > 15);
-    }
-    hits = hits.sort(() => Math.random() - 0.5);
-    const curated = [];
-    const categories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
-    for (let i = 0; i < Math.min(hits.length, 10); i++) {
-      const hit = hits[i];
-      const headline = String(hit.title).slice(0, 110);
-      const domain = hit.url ? new URL(hit.url).hostname.replace(/^www\./, "") : "Tech Feed";
-      const category = categories[i % categories.length];
-      let body = `Industry intelligence reports indicate new technical developments surrounding ${headline.toLowerCase()}. Published via ${domain}, this update highlights strategic engineering milestones and operational advancements across digital infrastructure.
-
-As technical organizations evaluate enterprise deployment, engineering teams are focusing on system scalability, low-latency integration, and enhanced security controls.`;
-      if (body.length < 600) {
-        body += ` Additional deployment benchmarks demonstrate substantial performance gains, with widespread enterprise adoption anticipated through 2026.`;
-      }
-      if (body.length > 800) {
-        body = body.slice(0, 780).replace(/\s+\S*$/, "") + ".";
-      }
-      const imageUrl = getHdUnsplashCoverUrl(headline, category, i);
-      curated.push({
-        headline,
-        body,
-        category,
-        imageUrl
-      });
-    }
-    return curated;
-  } catch (err) {
-    console.error("[AICurator] Live news aggregation error:", err);
-    return getDynamicFallbackBytes();
-  }
-}
-function getDynamicFallbackBytes() {
-  const timeOffset = Date.now();
-  const topics = [
-    { title: "Next-Gen AI Vision Models Expand Real-Time Spatial Mapping Capabilities", cat: "AI" },
-    { title: "Quantum Error Correction Reaches Critical Commercial Threshold", cat: "Tech" },
-    { title: "Solid-State Energy Cells Enter Automated Assembly Trials for EV Fleets", cat: "Innovation" },
-    { title: "Autonomous Orbital Cleaners Deployed to Safely Clear Satellite Debris", cat: "Science" },
-    { title: "Silicon-Photonic Optical Chips Slash Data Center Power Usage by 45%", cat: "Tech" },
-    { title: "Synthetic Biology Platform Creates Biodegradable Marine Structural Polymers", cat: "Science" },
-    { title: "Zero-Trust Encryption Architecture Enhances Decentralized Edge Mesh Networks", cat: "Crypto" },
-    { title: "Neuromorphic Processors Enable 120 FPS Robotics Intelligence at Low Power", cat: "AI" },
-    { title: "Formal Code Verification Engines Prevent Memory Vulnerabilities at Compile Time", cat: "Tech" },
-    { title: "Satellite Laser Communications Link Deep Space Drones to Earth Grid", cat: "Science" }
-  ].sort(() => Math.random() - 0.5);
-  return topics.map((t2, idx) => {
-    let body = `Leading research institutions and technology providers have announced breakthrough progress in ${t2.title.toLowerCase()}. This operational milestone marks a fundamental shift toward next-generation scalable infrastructure across global markets.
-
-Engineers and industry analysts emphasize that these technical enhancements enable low-latency processing, enhanced resource efficiency, and robust security safeguards. Deployment timelines indicate widespread adoption across commercial enterprise platforms through 2026.`;
-    if (body.length < 600) {
-      body += ` Additional pilot trials are scheduled for deployment across international testbeds to validate performance standards and operational reliability.`;
-    }
-    if (body.length > 800) {
-      body = body.slice(0, 780).replace(/\s+\S*$/, "") + ".";
-    }
-    return {
-      headline: t2.title,
-      body,
-      category: t2.cat,
-      imageUrl: getHdUnsplashCoverUrl(t2.title, t2.cat, idx + timeOffset)
-    };
-  });
-}
-var HD_UNSPLASH_CATALOG, TOPIC_POOL;
 var init_aiCurator = __esm({
   "server/_core/aiCurator.ts"() {
     "use strict";
     init_db();
     init_schema();
-    HD_UNSPLASH_CATALOG = {
-      AI: [
-        "https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1531746790731-6c087fecd65a?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1655720828018-edd2daac9349?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1655720023473-b78f44d9fb08?auto=format&fit=crop&w=1200&q=80"
-      ],
-      Tech: [
-        "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1200&q=80"
-      ],
-      Science: [
-        "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1507668077129-56e32842fceb?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1532094349884-543bc11b234d?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1507413245164-6160d8298b31?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1517976487492-5750f3195933?auto=format&fit=crop&w=1200&q=80"
-      ],
-      Crypto: [
-        "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1622979135225-d2ba269bc1bd?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1642543492481-44e81e3914a7?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1516245834210-c4c142787335?auto=format&fit=crop&w=1200&q=80"
-      ],
-      Innovation: [
-        "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80",
-        "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80"
-      ]
-    };
-    TOPIC_POOL = [
-      "Generative AI & Agentic Workflows",
-      "Quantum Hardware & Supercomputing",
-      "Semiconductors & Lithography Advances",
-      "Biotech & CRISPR Gene Therapies",
-      "Fusion Energy & Next-Gen Power Grids",
-      "Robotics & Spatial Vision Systems",
-      "Zero-Day Cybersecurity & Post-Quantum Cryptography",
-      "Decentralized Mesh & Blockchain Infra",
-      "Autonomous Electric Vehicles & Solid-State Batteries",
-      "Neuromorphic Chips & Brain-Computer Interfaces",
-      "Optical Computing & Silicon Photonics",
-      "Synthetic Biology & Bio-Materials",
-      "Hypersonic Aerospace & Satellite Constellations",
-      "Distributed Database Engines & WASM",
-      "Privacy-Preserving Machine Learning & ZK-Proofs"
-    ];
+    init_aiKeys();
+    init_imageGeneration();
   }
 });
 
 // server/_core/pdfParser.ts
 var pdfParser_exports = {};
 __export(pdfParser_exports, {
+  generateDynamicByteCard: () => generateDynamicByteCard,
   parsePdfToBytes: () => parsePdfToBytes
 });
+import zlib from "zlib";
+import { createRequire } from "module";
+function extractEntityKicker(headline, category, source) {
+  const h = headline.toLowerCase();
+  if (/deepseek|chatgpt|openai|claude|anthropic|perplexity|llm|agent|gpt|gemini|numbat|model/.test(h)) {
+    let entity = "AI SYSTEMS";
+    if (h.includes("deepseek")) entity = "DEEPSEEK \u2022 AI";
+    else if (h.includes("claude") || h.includes("anthropic")) entity = "ANTHROPIC \u2022 CLAUDE";
+    else if (h.includes("openai") || h.includes("chatgpt")) entity = "OPENAI \u2022 INTELLIGENCE";
+    else if (h.includes("perplexity")) entity = "PERPLEXITY \u2022 AGENTS";
+    else if (h.includes("whatsapp")) entity = "WHATSAPP \u2022 AI INTEGRATION";
+    return {
+      kicker: entity,
+      palette: {
+        bg1: "#0b0b1e",
+        bg2: "#1a103c",
+        accent1: "#8b5cf6",
+        accent2: "#38bdf8",
+        glow: "rgba(139, 92, 246, 0.22)"
+      }
+    };
+  }
+  if (/chip|hardware|semiconductor|huawei|apple|camera|sensor|magnet|lemama|bzip|kirin|ascend|phone|foldable|mate xt/.test(h)) {
+    let entity = "HARDWARE & CHIPS";
+    if (h.includes("huawei")) entity = "HUAWEI \u2022 HARDWARE";
+    else if (h.includes("apple") || h.includes("camera") || h.includes("itunes")) entity = "APPLE \u2022 ECOSYSTEM";
+    else if (h.includes("nvidia")) entity = "NVIDIA \u2022 COMPUTE";
+    return {
+      kicker: entity,
+      palette: {
+        bg1: "#150a0a",
+        bg2: "#2d120a",
+        accent1: "#f59e0b",
+        accent2: "#ef4444",
+        glow: "rgba(245, 158, 11, 0.20)"
+      }
+    };
+  }
+  if (/satellite|orbit|moon|earth|space|cubesat|gaganyaan|astronaut|india|drug|aging|biological|cell|dna|physics/.test(h)) {
+    let entity = "FRONTIER SCIENCE";
+    if (h.includes("satellite") || h.includes("moon") || h.includes("orbit")) entity = "AEROSPACE \u2022 DEEP SPACE";
+    else if (h.includes("drug") || h.includes("aging") || h.includes("disease")) entity = "BIOTECH \u2022 LONGEVITY";
+    else if (h.includes("astronaut") || h.includes("gaganyaan")) entity = "SPACE \u2022 MISSION CONTROL";
+    return {
+      kicker: entity,
+      palette: {
+        bg1: "#05131e",
+        bg2: "#072338",
+        accent1: "#06b6d4",
+        accent2: "#10b981",
+        glow: "rgba(6, 182, 212, 0.22)"
+      }
+    };
+  }
+  if (/tesla|carplay|car|driver|crash|autopilot|vehicle|transport|electric|water/.test(h)) {
+    let entity = "MOBILITY & AUTONOMY";
+    if (h.includes("tesla")) entity = "TESLA \u2022 AUTOPILOT";
+    else if (h.includes("carplay")) entity = "APPLE \u2022 CARPLAY";
+    return {
+      kicker: entity,
+      palette: {
+        bg1: "#0a1120",
+        bg2: "#132342",
+        accent1: "#3b82f6",
+        accent2: "#60a5fa",
+        glow: "rgba(59, 130, 246, 0.24)"
+      }
+    };
+  }
+  if (/blockchain|crypto|token|harmony|ethereum|multisig|wallet|bitcoin/.test(h)) {
+    return {
+      kicker: "CRYPTO \u2022 INFRASTRUCTURE",
+      palette: {
+        bg1: "#0d131f",
+        bg2: "#192841",
+        accent1: "#6366f1",
+        accent2: "#a855f7",
+        glow: "rgba(99, 102, 241, 0.22)"
+      }
+    };
+  }
+  return {
+    kicker: `${(category || "TECH").toUpperCase()} \u2022 VERIFIED REPORT`,
+    palette: {
+      bg1: "#0b0f19",
+      bg2: "#141c2e",
+      accent1: "#3b82f6",
+      accent2: "#60a5fa",
+      glow: "rgba(59, 130, 246, 0.18)"
+    }
+  };
+}
+function generateDynamicByteCard(headline, category = "Tech", source) {
+  const safeHeadline = cleanHeadline(headline).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const { kicker, palette } = extractEntityKicker(headline, category, source);
+  const words = safeHeadline.split(" ");
+  const lines = [];
+  let currentLine = "";
+  for (const word of words) {
+    if ((currentLine + " " + word).length > 34) {
+      if (currentLine) lines.push(currentLine.trim());
+      currentLine = word;
+      if (lines.length >= 3) break;
+    } else {
+      currentLine += " " + word;
+    }
+  }
+  if (currentLine && lines.length < 3) lines.push(currentLine.trim());
+  const tspans = lines.map((l, i) => `<tspan x="80" dy="${i === 0 ? 0 : 54}">${l}</tspan>`).join("");
+  const sourceLabel = source ? ` &bull; VIA ${source.toUpperCase().replace(/&/g, "&amp;")}` : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${palette.bg1}" />
+      <stop offset="100%" stop-color="${palette.bg2}" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="${palette.accent1}" />
+      <stop offset="100%" stop-color="${palette.accent2}" />
+    </linearGradient>
+    <radialGradient id="meshGlow" cx="85%" cy="20%" r="60%">
+      <stop offset="0%" stop-color="${palette.accent1}" stop-opacity="0.30" />
+      <stop offset="100%" stop-color="${palette.bg1}" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bgGrad)" />
+  <rect width="1200" height="630" fill="url(#meshGlow)" />
+
+  <line x1="80" y1="170" x2="1120" y2="170" stroke="#334155" stroke-opacity="0.25" stroke-dasharray="4,6" />
+  <circle cx="1080" cy="180" r="220" fill="${palette.glow}" />
+
+  <g transform="translate(80, 85)">
+    <rect x="0" y="0" width="${Math.max(160, kicker.length * 10.5 + 28)}" height="38" rx="8" fill="#0f172a" fill-opacity="0.85" stroke="${palette.accent1}" stroke-width="1.5" stroke-opacity="0.60" />
+    <circle cx="18" cy="19" r="4" fill="${palette.accent1}" />
+    <text x="32" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#f8fafc" letter-spacing="1.2">${kicker}</text>
+  </g>
+
+  <text x="80" y="248" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, serif" font-size="44" font-weight="700" fill="#f8fafc" letter-spacing="-0.5">
+    ${tspans}
+  </text>
+
+  <g transform="translate(80, 535)">
+    <rect x="0" y="-18" width="4" height="20" fill="${palette.accent1}" rx="2" />
+    <text x="16" y="-2" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="600" fill="#94a3b8" letter-spacing="0.8">AURIKREX BYTES &bull; EDITORIAL REPORT${sourceLabel}</text>
+  </g>
+</svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+async function uploadBase64ToCloudinary(base64DataUri) {
+  if (!cloudinaryConfigured()) return null;
+  try {
+    const { v2: cloudinary2 } = await import("cloudinary");
+    cloudinary2.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET
+    });
+    const result = await cloudinary2.uploader.upload(base64DataUri, {
+      folder: "aurikrex/posts",
+      resource_type: "image"
+    });
+    return result.secure_url || result.url || null;
+  } catch (err) {
+    console.warn("[PDFParser] Cloudinary upload skipped, using data URI fallback:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+function getJpegDimensions(base64Uri) {
+  try {
+    const base64Data = base64Uri.replace(/^data:image\/[a-z]+;base64,/, "");
+    const buf = Buffer.from(base64Data, "base64");
+    let offset = 2;
+    while (offset < buf.length - 8) {
+      if (buf[offset] !== 255) break;
+      const marker = buf[offset + 1];
+      if (marker >= 192 && marker <= 195) {
+        const height = buf.readUInt16BE(offset + 5);
+        const width = buf.readUInt16BE(offset + 7);
+        if (width > 0 && height > 0) {
+          return { width, height, aspectRatio: width / height };
+        }
+      }
+      const blockLength = buf.readUInt16BE(offset + 2);
+      offset += 2 + blockLength;
+    }
+  } catch {
+  }
+  return null;
+}
+function extractEmbeddedPdfImages(rawBase64) {
+  try {
+    const buf = Buffer.from(rawBase64, "base64");
+    const images = [];
+    let idx = 0;
+    while (idx < buf.length) {
+      const soi = buf.indexOf(Buffer.from([255, 216]), idx);
+      if (soi === -1) break;
+      const eoi = buf.indexOf(Buffer.from([255, 217]), soi);
+      if (eoi === -1) break;
+      const jpegBuf = buf.subarray(soi, eoi + 2);
+      if (jpegBuf.length > 8192) {
+        images.push(`data:image/jpeg;base64,${jpegBuf.toString("base64")}`);
+      }
+      idx = eoi + 2;
+    }
+    console.info(`[PDFParser] Extracted ${images.length} exact embedded JPEG images from PDF buffer.`);
+    return images;
+  } catch (err) {
+    console.warn("[PDFParser] Failed to extract embedded images from PDF:", err instanceof Error ? err.message : String(err));
+    return [];
+  }
+}
+async function generateAiRecreatedImage(prompt) {
+  if (!prompt) return null;
+  if (getNvidiaApiKey()) {
+    try {
+      const fluxUrl = await generateNvidiaFluxImage(prompt);
+      if (fluxUrl) {
+        return fluxUrl;
+      }
+    } catch (err) {
+      console.warn("[PDFParser] NVIDIA FLUX image generation failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
+  return null;
+}
+async function extractPdfText(rawBase64) {
+  try {
+    const buf = Buffer.from(rawBase64, "base64");
+    try {
+      const pdfParse = _require("pdf-parse");
+      const data = await pdfParse(buf, { max: 0 });
+      const text2 = (data.text || "").trim();
+      if (text2.length > 50) {
+        console.info(`[PDFParser] pdf-parse extracted ${text2.length} chars, ${data.numpages} pages`);
+        return text2;
+      }
+    } catch (err) {
+      console.warn("[PDFParser] pdf-parse failed, falling back to manual extraction:", err instanceof Error ? err.message : String(err));
+    }
+    const str = buf.toString("latin1");
+    const extractedParts = [];
+    const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let streamMatch;
+    while ((streamMatch = streamRegex.exec(str)) !== null) {
+      const streamContent = streamMatch[1];
+      try {
+        const streamBuf = Buffer.from(streamContent, "latin1");
+        const decompressed = zlib.inflateSync(streamBuf).toString("utf-8");
+        const words = decompressed.split(/\s+/).filter((w) => w.length > 2 && /[a-zA-Z]/.test(w));
+        if (words.length > 5) extractedParts.push(words.join(" "));
+      } catch {
+      }
+    }
+    const resultText = extractedParts.join(" ").replace(/\s+/g, " ").trim();
+    if (resultText.length > 50) return resultText;
+  } catch {
+  }
+  return "";
+}
 async function parsePdfToBytes(pdfBase64OrText) {
   let isBase64Pdf = false;
+  let mimeType = "application/pdf";
   let rawBase64 = "";
   let plainText = "";
-  if (pdfBase64OrText.includes("data:application/pdf;base64,") || pdfBase64OrText.length > 500 && !pdfBase64OrText.includes(" ")) {
+  if (pdfBase64OrText.startsWith("data:")) {
     isBase64Pdf = true;
-    rawBase64 = pdfBase64OrText.replace(/^data:application\/pdf;base64,/, "").trim();
+    const match = pdfBase64OrText.match(/^data:([^;]+);base64,([\s\S]*)$/);
+    if (match) {
+      mimeType = match[1] || "application/pdf";
+      rawBase64 = match[2].trim().replace(/\s+/g, "");
+    } else {
+      rawBase64 = pdfBase64OrText.replace(/^data:[^;]+;base64,/, "").trim().replace(/\s+/g, "");
+    }
+  } else if (pdfBase64OrText.includes("data:application/pdf;base64,") || pdfBase64OrText.includes("data:image/") || pdfBase64OrText.length > 500 && !pdfBase64OrText.includes(" ")) {
+    isBase64Pdf = true;
+    if (pdfBase64OrText.includes("data:image/png;base64,")) {
+      mimeType = "image/png";
+      rawBase64 = pdfBase64OrText.replace(/^data:image\/png;base64,/, "").trim().replace(/\s+/g, "");
+    } else if (pdfBase64OrText.includes("data:image/jpeg;base64,")) {
+      mimeType = "image/jpeg";
+      rawBase64 = pdfBase64OrText.replace(/^data:image\/jpeg;base64,/, "").trim().replace(/\s+/g, "");
+    } else if (pdfBase64OrText.includes("data:image/webp;base64,")) {
+      mimeType = "image/webp";
+      rawBase64 = pdfBase64OrText.replace(/^data:image\/webp;base64,/, "").trim().replace(/\s+/g, "");
+    } else {
+      mimeType = "application/pdf";
+      rawBase64 = pdfBase64OrText.replace(/^data:application\/pdf;base64,/, "").trim().replace(/\s+/g, "");
+    }
   } else {
     plainText = pdfBase64OrText;
   }
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.BUILT_IN_FORGE_API_KEY || process.env.FORGE_API_KEY || "").trim();
-  if (!apiKey) {
-    console.warn("[PDFParser] No GEMINI_API_KEY found. Unable to parse PDF document natively.");
+  const mistralKey = getMistralApiKey();
+  const nvidiaKey = getNvidiaApiKey();
+  if (!mistralKey && !nvidiaKey) {
+    console.warn("[PDFParser] Neither MISTRAL_API_KEY nor NVIDIA_API_KEY is configured.");
     return [
       {
-        headline: "Gemini API Key Required for PDF Ingestion",
-        body: "Please ensure GEMINI_API_KEY or GOOGLE_API_KEY is configured in your environment variables on Vercel to enable native multimodal PDF parsing.",
+        headline: "Falke AI Key Required for Document Ingestion",
+        body: "Please ensure MISTRAL_API_KEY or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable native document parsing.",
         category: "Tech",
-        imageUrl: getHdUnsplashCoverUrl("Gemini API Key Required", "Tech", 0)
+        imageUrl: generateDynamicByteCard("Falke AI Key Required", "Tech")
       }
     ];
   }
-  const promptText = `You are the lead editor for Aurikrex Bytes.
-Read this PDF document natively and extract ALL distinct news stories (up to 25 stories).
-
-CRITICAL CONSTRAINTS:
-1. Do NOT output raw PDF binary code, headers, or object structures like %PDF-1.7, 1 0 obj, /Catalog, /Pages, or hexadecimal strings. Extract ONLY actual human-readable news stories from the pages.
-2. For EACH story, the "body" text MUST be strictly between 600 and 800 characters in length (excluding headline).
-3. Do NOT output short summaries under 600 characters. Provide full 2-3 paragraph briefs explaining context, background, and future impact.
-
-Format output as a clean JSON array with objects:
-[
-  {
-    "headline": "Crisp headline summarizing the story (under 80 chars)",
-    "body": "Comprehensive news card brief. MUST be strictly between 600 and 800 characters in total length. High signal.",
-    "category": "Tech" | "AI" | "Science" | "Crypto" | "Innovation"
+  const isImage = isBase64Pdf && mimeType.startsWith("image/");
+  let documentText = plainText;
+  if (isBase64Pdf && !isImage && rawBase64) {
+    documentText = await extractPdfText(rawBase64) || plainText || "";
   }
-]
-
-Return ONLY the raw JSON array.`;
-  const requestParts = [];
-  if (isBase64Pdf && rawBase64) {
-    requestParts.push({
-      inlineData: {
-        mimeType: "application/pdf",
-        data: rawBase64
-      }
-    });
+  const isImageBasedPdf = isBase64Pdf && !isImage && documentText.length < 100;
+  if (isImageBasedPdf) {
+    console.info("[PDFParser] PDF appears to be image-based (no extractable text). Routing to vision AI via document_url.");
+  } else if (!isImage && !documentText) {
+    documentText = "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
   }
-  requestParts.push({
-    text: isBase64Pdf ? promptText : `${promptText}
+  const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.com).
+You are analyzing an uploaded multi-page document / PDF containing news cards.
+
+CRITICAL INGESTION & FILTERING RULES:
+1. FILTER OUT NON-NEWS ITEMS & FLYERS: Ignore non-news pages such as event flyers, posters, schedules, advertisements, cover pages, or promotional banners (e.g. "Ingenium Tech Week", "Rally and Gyration", event lineups). ONLY extract genuine technology/science news articles.
+2. EXTRACT PAGE INDEX: For each valid news story found, return "pageNumber": (1-based page number where the story appears). This is required to pair the exact cover photo from that page.
+3. For EACH valid story, write a 3-part editorial brief:
+   - Part 1: The Lead \u2014 What happened, who announced it, and the core factual developments.
+   - Part 2: Why It Matters \u2014 Commercial, architectural, or industry-wide impact.
+   - Part 3: The Outlook \u2014 Key engineering milestones or product rollouts to watch next.
+4. "body": Strictly target 650-750 characters. No repetitive text.
+5. "headline": Crisp, active headline (under 80 characters). Strip app tags.
+6. "category": Choose from: "Tech", "AI", "Science", "Innovation", "Crypto".
+7. "imagePrompt": Detailed photorealistic visual description of the photo on that page.
+8. "source": Publisher/source name (e.g., "The Information", "Electrek", "Reuters").`;
+  let rawJson = "[]";
+  if (nvidiaKey && (isImage || !isImageBasedPdf)) {
+    const nvidiaModels = isImage ? ["meta/llama-3.2-90b-vision-instruct", "meta/llama-3.2-11b-vision-instruct"] : ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"];
+    const nvidiaEndpoints = [
+      "https://integrate.api.nvidia.com/v1/chat/completions"
+    ];
+    nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
+      for (const model of nvidiaModels) {
+        try {
+          const userContent = isImage ? [
+            { type: "text", text: promptText },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } }
+          ] : `${promptText}
 
 DOCUMENT TEXT:
-${plainText.slice(0, 3e4)}`
-  });
-  try {
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-goog-api-key": apiKey
-        },
-        body: JSON.stringify({
-          contents: [{ parts: requestParts }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.9 }
-        })
+${documentText.slice(0, 5e4)}`;
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${nvidiaKey}`
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                { role: "user", content: userContent }
+              ],
+              temperature: 0.3,
+              max_tokens: 8192
+            })
+          });
+          if (response.ok) {
+            const resData = await response.json();
+            rawJson = resData.choices?.[0]?.message?.content || "[]";
+            if (rawJson && rawJson !== "[]") {
+              console.info(`[PDFParser] Successfully parsed document using NVIDIA AI NIM (${model})`);
+              break nvidiaLoop;
+            }
+          } else {
+            const errText = await response.text().catch(() => "");
+            console.warn(`[PDFParser] NVIDIA AI model ${model} at ${endpoint} returned status ${response.status}:`, errText.slice(0, 150));
+          }
+        } catch (err) {
+          console.warn(`[PDFParser] Error calling NVIDIA AI model ${model}:`, err instanceof Error ? err.message : String(err));
+        }
       }
-    );
-    if (!response.ok) {
-      const errBody = await response.text();
-      console.error("[PDFParser] Gemini API request failed:", errBody);
-      throw new Error(`Gemini PDF parsing failed (${response.status})`);
     }
-    const data = await response.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const cleanJson = rawText.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(cleanJson);
-    if (!Array.isArray(parsed) || !parsed.length) {
-      throw new Error("Gemini returned empty story array from PDF");
-    }
-    return parsed.map((item, idx) => {
-      let bodyText = String(item.body || "").trim();
-      if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) {
-        bodyText = "This article details major technological updates extracted from the source publication, covering market implications, operational frameworks, and strategic developments across industry sectors.";
-      }
-      if (bodyText.length < 600) {
-        bodyText = (bodyText + " " + bodyText).slice(0, 720);
-      } else if (bodyText.length > 800) {
-        bodyText = bodyText.slice(0, 780).replace(/\s+\S*$/, "") + ".";
-      }
-      const cleanHeadline = String(item.headline || `Story ${idx + 1}`).replace(/^%PDF[^\n]*/i, "").slice(0, 120) || `Tech Story ${idx + 1}`;
-      const category = String(item.category || "Tech");
-      const imageUrl = getHdUnsplashCoverUrl(cleanHeadline, category, idx);
-      return {
-        headline: cleanHeadline,
-        body: bodyText,
-        category,
-        imageUrl
-      };
-    });
-  } catch (err) {
-    console.error("[PDFParser] Gemini PDF parsing error:", err);
-    throw err;
   }
+  const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
+  if (isImageBasedPdf && embeddedImages.length > 0 && (mistralKey || nvidiaKey)) {
+    console.info(`[PDFParser] Processing ${embeddedImages.length} images concurrently via Mistral Pixtral vision...`);
+    const hasTextScreenshots = embeddedImages.some((img) => {
+      const d = getJpegDimensions(img);
+      return d && d.aspectRatio < 0.6;
+    });
+    const pageTasks = embeddedImages.map(async (pageImg, pageIdx) => {
+      const pageNum = pageIdx + 1;
+      const dims = getJpegDimensions(pageImg);
+      if (dims && dims.aspectRatio >= 0.6 && hasTextScreenshots && embeddedImages.length > 1) {
+        return [];
+      }
+      const pagePrompt = `${promptText}
+
+NOTE: You are analyzing PAGE ${pageNum} of ${embeddedImages.length}.`;
+      for (const model of ["pixtral-12b-2409", "pixtral-large-latest"]) {
+        try {
+          const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${mistralKey}`
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: pagePrompt },
+                    { type: "image_url", image_url: pageImg }
+                  ]
+                }
+              ],
+              temperature: 0.3,
+              max_tokens: 4096
+            })
+          });
+          if (response.ok) {
+            const resData = await response.json();
+            const pageJson = resData.choices?.[0]?.message?.content || "[]";
+            const parsedPage = parseAiJsonResponse(pageJson);
+            if (parsedPage.length > 0) {
+              const pageStories = [];
+              for (const item of parsedPage) {
+                let bodyText = extractAiBody(item);
+                if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) bodyText = "";
+                const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${pageNum}`)).slice(0, 120);
+                const category = String(item.category || "Tech");
+                const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: item.source || "Tech Wire", publishedAt: /* @__PURE__ */ new Date() });
+                let chosenCoverImg = pageImg;
+                if (dims && dims.aspectRatio < 0.6 && pageIdx + 1 < embeddedImages.length) {
+                  const nextImg = embeddedImages[pageIdx + 1];
+                  const nextDims = getJpegDimensions(nextImg);
+                  if (nextDims && nextDims.aspectRatio >= 0.6) {
+                    chosenCoverImg = nextImg;
+                  }
+                }
+                const cdnUrl = await uploadBase64ToCloudinary(chosenCoverImg);
+                pageStories.push({
+                  headline: cleanTitle,
+                  body: finalBody,
+                  category,
+                  imageUrl: cdnUrl || chosenCoverImg,
+                  sourcePublisher: item.source || "NewsBytes",
+                  sourcePublishedAt: /* @__PURE__ */ new Date()
+                });
+              }
+              console.info(`[PDFParser] Page ${pageNum}: Extracted ${pageStories.length} story/stories.`);
+              return pageStories;
+            }
+          }
+        } catch (err) {
+          console.warn(`[PDFParser] Page ${pageNum} extraction error:`, err instanceof Error ? err.message : String(err));
+        }
+      }
+      return [];
+    });
+    const pageResults = await Promise.all(pageTasks);
+    const allExtractedStories = pageResults.flat();
+    if (allExtractedStories.length > 0) {
+      console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} images concurrently.`);
+      return allExtractedStories;
+    }
+  }
+  if ((!rawJson || rawJson === "[]") && mistralKey) {
+    const mistralModels = isImage ? ["pixtral-12b-2409"] : ["open-mistral-7b", "mistral-small-latest"];
+    for (const model of mistralModels) {
+      try {
+        const userContent = isImage ? [{ type: "text", text: promptText }, { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }] : `${promptText}
+
+DOCUMENT TEXT:
+${documentText.slice(0, 5e4)}`;
+        const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${mistralKey}`
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              { role: "user", content: userContent }
+            ],
+            temperature: 0.3,
+            max_tokens: 8192
+          })
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          rawJson = resData.choices?.[0]?.message?.content || "[]";
+          if (rawJson && rawJson !== "[]") {
+            console.info(`[PDFParser] Successfully parsed document using Mistral AI (${model})`);
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`[PDFParser] Mistral fallback error:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+  const parsed = parseAiJsonResponse(rawJson);
+  if (!parsed.length) {
+    throw new Error("Falke AI was unable to extract news stories from this document. Please ensure the document contains readable text or news cards.");
+  }
+  const draftItems = parsed.map((item, idx) => {
+    let bodyText = extractAiBody(item);
+    if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) {
+      bodyText = "";
+    }
+    const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${idx + 1}`)).slice(0, 120);
+    const category = String(item.category || "Tech");
+    const finalBody = clampEditorialBrief(bodyText || cleanTitle, {
+      publisher: item.source || "Tech Wire",
+      publishedAt: /* @__PURE__ */ new Date()
+    });
+    const pageNum = Number(item.pageNumber || idx + 1);
+    return {
+      cleanTitle,
+      finalBody,
+      category,
+      source: item.source,
+      imagePrompt: item.imagePrompt,
+      pageNumber: pageNum
+    };
+  });
+  const coverImages = embeddedImages.length > 0 ? embeddedImages : isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
+  console.info(`[PDFParser] Extracted ${draftItems.length} stories and ${coverImages.length} original PDF images. Resolving cover images...`);
+  const results = await Promise.all(
+    draftItems.map(async (draft, idx) => {
+      let imageUrl = null;
+      const imageIdx = Math.max(0, draft.pageNumber - 1);
+      const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
+      if (rawEmbedded) {
+        const cdnUrl = await uploadBase64ToCloudinary(rawEmbedded);
+        imageUrl = cdnUrl || rawEmbedded;
+      }
+      if (!imageUrl && draft.imagePrompt) {
+        imageUrl = await generateAiRecreatedImage(draft.imagePrompt);
+      }
+      if (!imageUrl) {
+        imageUrl = getTopicStockImage(draft.cleanTitle, draft.category);
+      }
+      return {
+        headline: draft.cleanTitle,
+        body: draft.finalBody,
+        category: draft.category,
+        imageUrl,
+        sourcePublisher: draft.source || "NewsBytes",
+        sourcePublishedAt: /* @__PURE__ */ new Date()
+      };
+    })
+  );
+  return results;
 }
+var _require;
 var init_pdfParser = __esm({
   "server/_core/pdfParser.ts"() {
     "use strict";
     init_aiCurator();
+    init_services();
+    init_aiKeys();
+    init_imageGeneration();
+    _require = createRequire(import.meta.url);
   }
 });
 
 // server/push.ts
 var push_exports = {};
 __export(push_exports, {
+  formatPushNotificationContent: () => formatPushNotificationContent,
   sendDailyPushNotifications: () => sendDailyPushNotifications,
   sendTestPushNotification: () => sendTestPushNotification
 });
+import { inArray as inArray2 } from "drizzle-orm";
 function getOneSignalConfig() {
   const appId = process.env.ONESIGNAL_APP_ID;
   const apiKey = process.env.ONESIGNAL_REST_API_KEY || process.env.ONESIGNAL_API_KEY;
@@ -1094,27 +2254,108 @@ async function sendOneSignalNotification(payload) {
   }
   return responseBody ? JSON.parse(responseBody) : {};
 }
+function formatPushNotificationContent(story, timeZone = process.env.APP_TIMEZONE || "Africa/Lagos", now2 = /* @__PURE__ */ new Date()) {
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "numeric",
+      hour12: false
+    }).format(now2)
+  );
+  const isMorning = hour >= 4 && hour < 16;
+  const prefix = isMorning ? "\u{1F305} Morning Brief" : "\u{1F319} Evening Recap";
+  if (story) {
+    const cleanTitle = story.headline.replace(/^(show\s+hn|launch\s+hn)\s*:\s*/i, "").trim();
+    const heading = `${prefix}: ${cleanTitle}`.slice(0, 75);
+    let bodySnippet = story.body.replace(/\s+/g, " ").trim();
+    if (bodySnippet.length > 110) {
+      const cut = bodySnippet.slice(0, 105);
+      const lastSpace = cut.lastIndexOf(" ");
+      bodySnippet = (lastSpace > 60 ? cut.slice(0, lastSpace) : cut).trim() + "...";
+    }
+    return {
+      heading,
+      content: bodySnippet,
+      url: `${baseUrl}/post/${story.id}`,
+      imageUrl: story.imageUrl && story.imageUrl.startsWith("http") ? story.imageUrl : null
+    };
+  }
+  return {
+    heading: isMorning ? "\u{1F305} Daily Tech Briefing is Ready" : "\u{1F319} Evening Tech Roundup",
+    content: "Catch up on what matters in tech today on Aurikrex Bytes.",
+    url: `${baseUrl}/dashboard`
+  };
+}
 async function sendDailyPushNotifications() {
-  const { getDb: getDb2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+  const { getDb: getDb2, listTodaysPublishedPosts: listTodaysPublishedPosts2, listPublishedPosts: listPublishedPosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
   const { oneSignalSubscriptions: oneSignalSubscriptions2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
   const db = await getDb2();
   if (!db) throw new Error("Database unavailable");
   const subscriptions = await db.select({ subscriptionId: oneSignalSubscriptions2.subscriptionId }).from(oneSignalSubscriptions2);
-  const result = { found: 0, sent: 0, failed: 0, removed: 0 };
-  result.found = subscriptions.length;
-  if (subscriptions.length === 0) {
-    throw new Error("No OneSignal subscriptions are registered");
+  const result = { found: subscriptions.length, sent: 0, failed: 0, removed: 0 };
+  const timeZone = process.env.APP_TIMEZONE || "Africa/Lagos";
+  const now2 = /* @__PURE__ */ new Date();
+  let topStory;
+  try {
+    const todaysPosts = await listTodaysPublishedPosts2(timeZone);
+    if (todaysPosts && todaysPosts.length > 0) {
+      topStory = todaysPosts[0];
+    } else {
+      const allPosts = await listPublishedPosts2();
+      if (allPosts && allPosts.length > 0) {
+        topStory = allPosts[0];
+      }
+    }
+  } catch (err) {
+    console.warn("[Push] Unable to fetch latest story for notification, using fallback copy:", err);
+  }
+  const notification = formatPushNotificationContent(topStory, timeZone, now2);
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+  const iconUrl = `${baseUrl}/logo-192.png`;
+  const payload = {
+    headings: { en: notification.heading },
+    contents: { en: notification.content },
+    url: notification.url,
+    priority: 10,
+    ttl: 14400,
+    chrome_web_icon: iconUrl,
+    chrome_web_badge: iconUrl,
+    firefox_icon: iconUrl
+  };
+  if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
+    payload.big_picture = notification.imageUrl;
+    payload.chrome_web_image = notification.imageUrl;
+  }
+  if (subscriptions.length > 0) {
+    payload.include_subscription_ids = subscriptions.map((s) => s.subscriptionId);
+  } else {
+    payload.included_segments = ["Subscribed Users"];
   }
   try {
-    const response = await sendOneSignalNotification({
-      include_subscription_ids: subscriptions.map((subscription) => subscription.subscriptionId),
-      headings: { en: "Time for your daily bytes!" },
-      contents: { en: "Catch up on what matters in tech." },
-      url: "/dashboard"
-    });
+    const response = await sendOneSignalNotification(payload);
     if (!response.id) throw new Error("OneSignal did not return a notification ID");
-    result.sent = Number(response.recipients ?? subscriptions.length);
+    result.sent = Number(response.recipients ?? subscriptions.length ?? 1);
     console.info("[Push] OneSignal daily delivery result:", result);
+    if (response.errors && typeof response.errors === "object") {
+      const errObj = response.errors;
+      const invalidIds = [];
+      if (Array.isArray(errObj.invalid_subscription_ids)) {
+        invalidIds.push(...errObj.invalid_subscription_ids);
+      }
+      if (Array.isArray(errObj.invalid_player_ids)) {
+        invalidIds.push(...errObj.invalid_player_ids);
+      }
+      if (invalidIds.length > 0) {
+        try {
+          await db.delete(oneSignalSubscriptions2).where(inArray2(oneSignalSubscriptions2.subscriptionId, invalidIds));
+          result.removed = invalidIds.length;
+          console.info(`[Push] Pruned ${invalidIds.length} invalid subscriptions from database`);
+        } catch (pruneErr) {
+          console.warn("[Push] Error pruning invalid subscriptions:", pruneErr);
+        }
+      }
+    }
   } catch (error) {
     result.failed = 1;
     console.error("[Push] OneSignal daily delivery failed:", error);
@@ -1123,12 +2364,17 @@ async function sendDailyPushNotifications() {
   return result;
 }
 async function sendTestPushNotification(subscriptionId) {
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+  const iconUrl = `${baseUrl}/logo-192.png`;
   try {
     await sendOneSignalNotification({
       include_subscription_ids: [subscriptionId],
       headings: { en: "Aurikrex Bytes Push Active!" },
       contents: { en: "You're all set! Daily tech updates will arrive at 8:00 AM and 10:00 PM." },
-      url: "/dashboard"
+      url: `${baseUrl}/dashboard`,
+      chrome_web_icon: iconUrl,
+      chrome_web_badge: iconUrl,
+      firefox_icon: iconUrl
     });
     return { success: true };
   } catch (err) {
@@ -1140,6 +2386,7 @@ var ONESIGNAL_API_URL;
 var init_push = __esm({
   "server/push.ts"() {
     "use strict";
+    init_env();
     ONESIGNAL_API_URL = "https://api.onesignal.com/notifications";
   }
 });
@@ -1557,7 +2804,7 @@ import { eq as eq2 } from "drizzle-orm";
 // server/auth.ts
 init_env();
 import bcrypt from "bcryptjs";
-import crypto from "node:crypto";
+import crypto2 from "node:crypto";
 import jwt from "jsonwebtoken";
 var secret = () => {
   if (process.env.NODE_ENV === "production" && !ENV.cookieSecret) {
@@ -1582,7 +2829,7 @@ function readToken(token) {
   }
 }
 function randomToken() {
-  return crypto.randomBytes(32).toString("hex");
+  return crypto2.randomBytes(32).toString("hex");
 }
 function normalizeEmail(email) {
   return email.trim().toLowerCase();
@@ -1652,75 +2899,117 @@ function registerGoogleAuthRoutes(app) {
 init_schema();
 init_env();
 import { TRPCError as TRPCError4 } from "@trpc/server";
-import { eq as eq3, inArray as inArray2 } from "drizzle-orm";
+import axios2 from "axios";
+import { eq as eq3, inArray as inArray3 } from "drizzle-orm";
 import { z as z2 } from "zod";
-init_db();
 
-// server/services.ts
-import { v2 as cloudinary } from "cloudinary";
-import nodemailer from "nodemailer";
-function mailTransport() {
-  const host = process.env.SMTP_HOST;
-  if (!host) return null;
-  return nodemailer.createTransport({
-    host,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: Number(process.env.SMTP_PORT) === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
-    dkim: process.env.SMTP_DKIM_PRIVATE_KEY && process.env.SMTP_DKIM_DOMAIN && process.env.SMTP_DKIM_SELECTOR ? {
-      domainName: process.env.SMTP_DKIM_DOMAIN,
-      keySelector: process.env.SMTP_DKIM_SELECTOR,
-      privateKey: process.env.SMTP_DKIM_PRIVATE_KEY
-    } : void 0
-  });
+// server/_core/security.ts
+var authAttempts = /* @__PURE__ */ new Map();
+var AUTH_WINDOW_MS = 6e4;
+var AUTH_MAX_REQUESTS = 30;
+var failedAttemptsMap = /* @__PURE__ */ new Map();
+var MAX_FAILED_BEFORE_LOCKOUT = 5;
+var LOCKOUT_DURATION_MS = 15 * 60 * 1e3;
+var MAX_FAILED_BEFORE_AUTO_RESET = 8;
+var ATTEMPT_WINDOW_MS = 15 * 60 * 1e3;
+function securityHeaders(_req, res, next) {
+  res.removeHeader("X-Powered-By");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob: https://res.cloudinary.com https://*.googleusercontent.com; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com https://maps.googleapis.com; connect-src 'self' https://maps.googleapis.com https://api.cloudinary.com wss:; frame-src https://accounts.google.com; form-action 'self' https://accounts.google.com");
+  if (process.env.NODE_ENV === "production" && process.env.APP_BASE_URL?.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
 }
-async function sendEmail(to, subject, html, fromAddress) {
-  const transport = mailTransport();
-  if (!transport) {
-    console.info(`[Email placeholder] ${subject} for ${to}`);
-    return;
+function authRateLimit(req, res, next) {
+  if (!req.originalUrl.startsWith("/api/trpc/")) return next();
+  const route = req.originalUrl.split("?")[0];
+  if (!/\/(reader\.(signup|login|requestPasswordReset|resetPassword|verifyEmail)|admin\.login)$/.test(route)) return next();
+  const key = `${req.ip || req.socket?.remoteAddress || req.headers["x-forwarded-for"] || "unknown"}:${route}`;
+  const now2 = Date.now();
+  const current = authAttempts.get(key);
+  if (!current || current.resetAt <= now2) authAttempts.set(key, { count: 1, resetAt: now2 + AUTH_WINDOW_MS });
+  else current.count += 1;
+  const attempt = authAttempts.get(key);
+  res.setHeader("RateLimit-Limit", AUTH_MAX_REQUESTS);
+  res.setHeader("RateLimit-Remaining", Math.max(0, AUTH_MAX_REQUESTS - attempt.count));
+  if (attempt.count > AUTH_MAX_REQUESTS) {
+    res.setHeader("Retry-After", String(Math.ceil((attempt.resetAt - now2) / 1e3)));
+    return res.status(429).json({ error: "Too many authentication requests. Please try again shortly." });
   }
-  const from = fromAddress || process.env.SMTP_FROM || "info@aurikrex.tech";
-  await transport.sendMail({ from, to, subject, html });
+  next();
 }
-async function sendAuthEmail(to, subject, html) {
-  await sendEmail(
-    to,
-    subject,
-    html,
-    process.env.SMTP_FROM || "info@aurikrex.tech"
-  );
+function checkPasswordAttemptLockout(email) {
+  const normEmail = email.trim().toLowerCase();
+  const record = failedAttemptsMap.get(normEmail);
+  if (!record) return { locked: false };
+  const now2 = Date.now();
+  if (record.lockedUntil && record.lockedUntil > now2) {
+    const remainingSec = Math.ceil((record.lockedUntil - now2) / 1e3);
+    const minutes = Math.ceil(remainingSec / 60);
+    return {
+      locked: true,
+      message: record.resetSent ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address." : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
+      autoResetTriggered: record.resetSent
+    };
+  }
+  if (now2 - record.firstAttemptAt > ATTEMPT_WINDOW_MS && (!record.lockedUntil || record.lockedUntil <= now2)) {
+    failedAttemptsMap.delete(normEmail);
+    return { locked: false };
+  }
+  if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
+    if (!record.lockedUntil || record.lockedUntil <= now2) {
+      record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
+    }
+    const remainingSec = Math.ceil((record.lockedUntil - now2) / 1e3);
+    const minutes = Math.ceil(remainingSec / 60);
+    return {
+      locked: true,
+      message: record.resetSent ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address." : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
+      autoResetTriggered: record.resetSent
+    };
+  }
+  return { locked: false };
 }
-function verificationEmailHtml(url) {
-  return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">A considered daily read</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">You're almost ready for your daily briefing.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">Confirm your email to start receiving Aurikrex Bytes \u2014 a daily tech briefing with the context behind what matters.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Verify Email &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 24 hours. If you didn't create an Aurikrex Bytes account, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.tech" style="color:#2f67d8">support@aurikrex.tech</a></div></div></div></body></html>`;
+function recordFailedPasswordAttempt(email) {
+  const normEmail = email.trim().toLowerCase();
+  const now2 = Date.now();
+  let record = failedAttemptsMap.get(normEmail);
+  if (!record || now2 - record.firstAttemptAt > ATTEMPT_WINDOW_MS) {
+    record = { count: 1, firstAttemptAt: now2, lockedUntil: null, resetSent: false };
+  } else {
+    record.count += 1;
+  }
+  let locked = false;
+  let autoResetNeeded = false;
+  let message = "Invalid email or password";
+  if (record.count >= MAX_FAILED_BEFORE_AUTO_RESET) {
+    record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
+    locked = true;
+    if (!record.resetSent) {
+      autoResetNeeded = true;
+      record.resetSent = true;
+    }
+    message = "Account locked due to multiple failed login attempts. A password reset link has been automatically sent to your email address.";
+  } else if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
+    record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
+    locked = true;
+    message = "Too many failed password attempts. Account temporarily locked for 15 minutes. Please try again later or reset your password.";
+  } else {
+    const remaining = MAX_FAILED_BEFORE_LOCKOUT - record.count;
+    message = `Invalid email or password. ${remaining} attempt${remaining > 1 ? "s" : ""} remaining before temporary account lock.`;
+  }
+  failedAttemptsMap.set(normEmail, record);
+  return { count: record.count, locked, autoResetNeeded, message };
 }
-function resetPasswordEmailHtml(url) {
-  return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">Account Security</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">Reset your password.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">We received a request to reset the password for your Aurikrex Bytes account. Click the button below to choose a new password.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Reset Password &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 30 minutes. If you didn't request a password reset, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.tech" style="color:#2f67d8">support@aurikrex.tech</a></div></div></div></body></html>`;
+function resetPasswordAttempts(email) {
+  failedAttemptsMap.delete(email.trim().toLowerCase());
 }
-function cloudinaryConfigured() {
-  return Boolean(
-    process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET
-  );
-}
-function getCloudinaryUploadSignature(folder = "aurikrex/posts") {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-  });
-  const timestamp = Math.floor(Date.now() / 1e3);
-  const signature = cloudinary.utils.api_sign_request(
-    { timestamp, folder },
-    process.env.CLOUDINARY_API_SECRET || ""
-  );
-  return {
-    timestamp,
-    folder,
-    signature,
-    apiKey: process.env.CLOUDINARY_API_KEY || "",
-    cloudName: process.env.CLOUDINARY_CLOUD_NAME || ""
-  };
-}
+
+// server/routers.ts
+init_db();
+init_services();
 
 // server/_core/systemRouter.ts
 import { z } from "zod";
@@ -1845,6 +3134,7 @@ var adminProcedure = t.procedure.use(
 );
 
 // server/_core/systemRouter.ts
+init_db();
 var systemRouter = router({
   health: publicProcedure.input(
     z.object({
@@ -1852,6 +3142,9 @@ var systemRouter = router({
     })
   ).query(() => ({
     ok: true
+  })),
+  maintenanceStatus: publicProcedure.query(async () => ({
+    maintenance: await isMaintenanceMode()
   })),
   notifyOwner: adminProcedure.input(
     z.object({
@@ -1865,6 +3158,9 @@ var systemRouter = router({
     };
   })
 });
+
+// server/routers.ts
+init_aiKeys();
 
 // server/permissions.ts
 import { TRPCError as TRPCError3 } from "@trpc/server";
@@ -1969,6 +3265,70 @@ var appRouter = router({
       for (const name of [GOOGLE_STATE_COOKIE, GOOGLE_NONCE_COOKIE])
         ctx.res.clearCookie(name, { ...oauthCookieOptions, maxAge: -1 });
       return { success: true };
+    }),
+    ssoExchange: publicProcedure.input(
+      z2.object({
+        code: z2.string(),
+        code_verifier: z2.string().optional(),
+        redirect_uri: z2.string().optional()
+      })
+    ).mutation(async ({ input, ctx }) => {
+      const cbtEndpoints = [
+        process.env.CBT_API_URL,
+        "https://cbt.pxxl.click",
+        "https://cbt.aurikrex.com",
+        "https://cbt-vl4x.onrender.com"
+      ].filter(Boolean);
+      let response = null;
+      for (const base of cbtEndpoints) {
+        try {
+          const cleanBase = base.replace(/\/+$/, "");
+          const targetUrl = cleanBase.endsWith("/api/v1") ? `${cleanBase}/auth/sso/token` : `${cleanBase}/api/v1/auth/sso/token`;
+          const res = await fetch(targetUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              client_id: "aurikrex_bytes",
+              code: input.code,
+              code_verifier: input.code_verifier,
+              redirect_uri: input.redirect_uri || "https://bytes.aurikrex.com/sso/callback"
+            })
+          });
+          if (res.status !== 404 && res.status !== 405) {
+            response = res;
+            break;
+          }
+        } catch (_) {
+        }
+      }
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        throw new TRPCError4({
+          code: "UNAUTHORIZED",
+          message: errorData.message || "SSO Token Exchange failed"
+        });
+      }
+      const tokenData = await response.json();
+      const { aurikrex_id, user: ssoUser } = tokenData;
+      const db = await getDb();
+      if (!db) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "Database error" });
+      let [reader] = await db.select().from(readers).where(eq3(readers.email, ssoUser.email.toLowerCase())).limit(1);
+      if (!reader) {
+        const [newReader] = await db.insert(readers).values({
+          email: ssoUser.email.toLowerCase(),
+          name: ssoUser.fullName || ssoUser.email.split("@")[0],
+          openId: aurikrex_id,
+          aurikrexId: aurikrex_id
+        }).returning();
+        reader = newReader;
+      }
+      const token = createToken({ id: reader.id, kind: "reader", email: reader.email });
+      const cookieOpts = getFirstPartyCookieOptions(ctx.req);
+      ctx.res.cookie(READER_COOKIE, token, cookieOpts);
+      return {
+        success: true,
+        reader: { id: reader.id, email: reader.email, name: reader.name, aurikrexId: aurikrex_id }
+      };
     })
   }),
   admin: router({
@@ -1979,9 +3339,20 @@ var appRouter = router({
         remember: z2.boolean().default(false)
       })
     ).mutation(async ({ input, ctx }) => {
-      const admin = await getAdminByEmail(normalizeEmail(input.email));
-      if (!admin || !admin.isActive || !await verifyPassword(input.password, admin.passwordHash))
+      const email = normalizeEmail(input.email);
+      const lockout = checkPasswordAttemptLockout(email);
+      if (lockout.locked) {
+        throw new TRPCError4({
+          code: "TOO_MANY_REQUESTS",
+          message: lockout.message
+        });
+      }
+      const admin = await getAdminByEmail(email);
+      if (!admin || !admin.isActive || !await verifyPassword(input.password, admin.passwordHash)) {
+        recordFailedPasswordAttempt(email);
         throw genericNotFound();
+      }
+      resetPasswordAttempts(email);
       const token = createToken(
         { kind: "admin", id: admin.id, email: admin.email, role: admin.role },
         input.remember
@@ -2012,6 +3383,7 @@ var appRouter = router({
       z2.object({
         headline: z2.string().min(1).max(120),
         body: z2.string().min(1).max(800),
+        category: z2.string().optional(),
         imageUrl: z2.string().url().optional()
       })
     ).mutation(async ({ input, ctx }) => {
@@ -2025,6 +3397,7 @@ var appRouter = router({
         });
       const result = await db.insert(posts).values({
         ...input,
+        category: input.category || "Tech",
         status: "draft",
         createdBy: admin.id,
         updatedAt: /* @__PURE__ */ new Date()
@@ -2051,6 +3424,7 @@ var appRouter = router({
         await db.insert(posts).values({
           headline: byte.headline,
           body: byte.body,
+          category: byte.category || "Tech",
           imageUrl: byte.imageUrl,
           status: "draft",
           createdBy: admin.id,
@@ -2065,6 +3439,7 @@ var appRouter = router({
         id: z2.number().int().positive(),
         headline: z2.string().min(1).optional(),
         body: z2.string().min(1).optional(),
+        category: z2.string().optional(),
         imageUrl: z2.string().url().nullable().optional()
       })
     ).mutation(async ({ input, ctx }) => {
@@ -2090,7 +3465,7 @@ var appRouter = router({
       assertPermission(admin.role, "post:delete");
       const db = await getDb();
       if (!db) throw genericNotFound();
-      await db.delete(posts).where(inArray2(posts.id, input.ids));
+      await db.delete(posts).where(inArray3(posts.id, input.ids));
       return { success: true, count: input.ids.length };
     }),
     batchPublishPosts: publicProcedure.input(z2.object({ ids: z2.array(z2.number().int().positive()).min(1) })).mutation(async ({ input, ctx }) => {
@@ -2099,7 +3474,7 @@ var appRouter = router({
       const db = await getDb();
       if (!db) throw genericNotFound();
       const now2 = /* @__PURE__ */ new Date();
-      await db.update(posts).set({ status: "published", publishedTime: now2, updatedAt: now2 }).where(inArray2(posts.id, input.ids));
+      await db.update(posts).set({ status: "published", publishedTime: now2, updatedAt: now2 }).where(inArray3(posts.id, input.ids));
       return { success: true, count: input.ids.length };
     }),
     batchSchedulePosts: publicProcedure.input(
@@ -2117,7 +3492,7 @@ var appRouter = router({
         status: "scheduled",
         scheduledTime: input.scheduledTime,
         updatedAt: now2
-      }).where(inArray2(posts.id, input.ids));
+      }).where(inArray3(posts.id, input.ids));
       return { success: true, count: input.ids.length };
     }),
     submitPost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -2306,6 +3681,32 @@ var appRouter = router({
       await requireAdmin(ctx);
       if (!cloudinaryConfigured()) return { configured: false };
       return { configured: true, ...getCloudinaryUploadSignature() };
+    }),
+    maintenanceStatus: publicProcedure.query(async () => {
+      return { maintenance: await isMaintenanceMode() };
+    }),
+    setMaintenanceMode: publicProcedure.input(
+      z2.object({
+        enabled: z2.boolean(),
+        password: z2.string()
+      })
+    ).mutation(async ({ input, ctx }) => {
+      const admin = await requireAdmin(ctx);
+      if (admin.role !== "admin") {
+        throw new TRPCError4({
+          code: "FORBIDDEN",
+          message: "Only administrators can toggle maintenance mode."
+        });
+      }
+      const expected = process.env.MAINTENANCE_PASSWORD || "KorexTonyFalconStark1025$";
+      if (input.password !== expected) {
+        throw new TRPCError4({
+          code: "FORBIDDEN",
+          message: "Incorrect verification password. Action denied."
+        });
+      }
+      await setMaintenanceMode(input.enabled);
+      return { success: true, maintenance: input.enabled };
     })
   }),
   reader: router({
@@ -2398,17 +3799,48 @@ var appRouter = router({
         remember: z2.boolean().default(false)
       })
     ).mutation(async ({ input, ctx }) => {
-      const reader = await getReaderByEmail(normalizeEmail(input.email));
-      if (!reader || !reader.passwordHash || !await verifyPassword(input.password, reader.passwordHash))
+      const email = normalizeEmail(input.email);
+      const lockout = checkPasswordAttemptLockout(email);
+      if (lockout.locked) {
+        throw new TRPCError4({
+          code: "TOO_MANY_REQUESTS",
+          message: lockout.message
+        });
+      }
+      const reader = await getReaderByEmail(email);
+      if (!reader || !reader.passwordHash || !await verifyPassword(input.password, reader.passwordHash)) {
+        const attempt = recordFailedPasswordAttempt(email);
+        if (attempt.autoResetNeeded && reader) {
+          try {
+            const token2 = randomToken();
+            const db = await getDb();
+            if (db) {
+              await db.update(readers).set({
+                resetToken: token2,
+                resetTokenExpires: new Date(Date.now() + 1e3 * 60 * 30)
+              }).where(eq3(readers.id, reader.id));
+              const url = `${appBaseUrl()}/reset-password?token=${token2}`;
+              await sendAuthEmail(
+                reader.email,
+                "Security Alert: Reset your Aurikrex Bytes password",
+                resetPasswordEmailHtml(url)
+              );
+            }
+          } catch (err) {
+            console.error("[Auth] Failed sending auto password reset email:", err);
+          }
+        }
         throw new TRPCError4({
           code: "UNAUTHORIZED",
-          message: "Invalid email or password"
+          message: attempt.message
         });
+      }
       if (!reader.emailVerified)
         throw new TRPCError4({
           code: "FORBIDDEN",
           message: "Please verify your email before signing in"
         });
+      resetPasswordAttempts(email);
       const token = createToken(
         {
           kind: "reader",
@@ -2521,6 +3953,7 @@ var appRouter = router({
         resetToken: null,
         resetTokenExpires: null
       }).where(eq3(readers.id, reader.id));
+      resetPasswordAttempts(reader.email);
       return { success: true };
     }),
     googleStart: publicProcedure.query(({ ctx }) => {
@@ -2588,6 +4021,135 @@ var appRouter = router({
       if (!post) throw genericNotFound();
       await recordPostView(post.id);
       return post;
+    }),
+    askFollowUp: publicProcedure.input(
+      z2.object({
+        postId: z2.number().int().positive(),
+        question: z2.string().min(3).max(300).trim()
+      })
+    ).mutation(async ({ input }) => {
+      await publishDuePosts();
+      const post = await getPublishedPostById(input.postId);
+      if (!post) throw genericNotFound();
+      const searchQuery = `${post.headline} \u2014 ${input.question}`;
+      let webContext = "";
+      let tavilyDirectAnswer = "";
+      let searchQueries2 = [];
+      const tavilyApiKey = (process.env.TAVILY_API_KEY || "").trim();
+      if (tavilyApiKey) {
+        try {
+          const tavilyRes = await axios2.post(
+            "https://api.tavily.com/search",
+            {
+              api_key: tavilyApiKey,
+              query: searchQuery,
+              max_results: 5,
+              search_depth: "basic",
+              include_answer: true
+            },
+            { timeout: 1e4 }
+          );
+          tavilyDirectAnswer = tavilyRes.data?.answer || "";
+          const results = tavilyRes.data?.results ?? [];
+          searchQueries2 = results.map((r) => r.title || r.query).filter(Boolean).slice(0, 3);
+          webContext = results.map(
+            (r, i) => `[${i + 1}] ${r.title}
+${r.content?.slice(0, 400) ?? ""}`
+          ).join("\n\n");
+        } catch (err) {
+          console.warn("[FollowUp] Tavily search failed, using story context:", err);
+        }
+      }
+      if (searchQueries2.length === 0) {
+        searchQueries2 = [
+          `${post.headline.slice(0, 50)}\u2026`,
+          `${input.question} overview`,
+          `Aurikrex Bytes technical context`
+        ];
+      }
+      const systemPrompt = `You are an intelligent tech news assistant for Aurikrex Bytes.
+The reader is asking a follow-up question regarding the following story:
+
+HEADLINE: ${post.headline}
+STORY CONTENT: ${post.body}
+
+${webContext ? `RELEVANT LIVE WEB SEARCH CONTEXT:
+${webContext}` : "No external web search results available."}
+
+Instructions:
+1. Provide a direct, insightful, and concise answer to the reader's question in 2-3 clear paragraphs.
+2. Synthesize the provided story details and web context into a natural explanation.
+3. Keep the tone calm, authoritative, and focused on tech signal rather than hype.
+4. Do NOT repeat or copy the original story text verbatim.
+5. Do NOT invent false facts.`;
+      let answer = "";
+      const mistralApiKey = getMistralApiKey();
+      const nvidiaApiKey = getNvidiaApiKey();
+      if (mistralApiKey) {
+        for (const model of ["mistral-small-latest", "open-mistral-7b"]) {
+          try {
+            const mistralRes = await axios2.post(
+              "https://api.mistral.ai/v1/chat/completions",
+              {
+                model,
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: input.question }
+                ],
+                max_tokens: 600,
+                temperature: 0.4
+              },
+              {
+                headers: { Authorization: `Bearer ${mistralApiKey}` },
+                timeout: 15e3
+              }
+            );
+            const text2 = mistralRes.data?.choices?.[0]?.message?.content ?? "";
+            if (text2 && text2.trim()) {
+              answer = text2.trim();
+              break;
+            }
+          } catch (mistralErr) {
+            console.warn(`[FollowUp] Mistral AI model ${model} failed:`, mistralErr instanceof Error ? mistralErr.message : String(mistralErr));
+          }
+        }
+      }
+      if (!answer && nvidiaApiKey) {
+        for (const model of ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"]) {
+          try {
+            const nvidiaRes = await axios2.post(
+              "https://integrate.api.nvidia.com/v1/chat/completions",
+              {
+                model,
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: input.question }
+                ],
+                max_tokens: 600,
+                temperature: 0.4
+              },
+              {
+                headers: { Authorization: `Bearer ${nvidiaApiKey}` },
+                timeout: 15e3
+              }
+            );
+            const text2 = nvidiaRes.data?.choices?.[0]?.message?.content ?? "";
+            if (text2 && text2.trim()) {
+              answer = text2.trim();
+              break;
+            }
+          } catch (nvidiaErr) {
+            console.warn(`[FollowUp] NVIDIA NIM model ${model} failed:`, nvidiaErr instanceof Error ? nvidiaErr.message : String(nvidiaErr));
+          }
+        }
+      }
+      if (!answer && tavilyDirectAnswer) {
+        answer = tavilyDirectAnswer;
+      }
+      if (!answer) {
+        answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable live AI web search.`;
+      }
+      return { answer, searchQueries: searchQueries2 };
     })
   })
 });
@@ -2613,7 +4175,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import sharp from "sharp";
-var siteUrl = () => (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.tech").replace(/\/$/, "");
+var siteUrl = () => (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.com").replace(/\/$/, "");
 var xmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 var htmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 var cleanText = (value) => value.replace(/\s+/g, " ").trim();
@@ -2650,6 +4212,7 @@ function buildMetaTags(seo) {
   const tags = [
     `<title>${htmlEscape(seo.title)}</title>`,
     `<meta name="description" content="${htmlEscape(seo.description)}">`,
+    `<meta name="keywords" content="tech news, AI news, startup news, technology briefing, Aurikrex Bytes, daily tech digest">`,
     `<meta name="robots" content="index,follow,max-image-preview:large">`,
     `<meta property="og:site_name" content="Aurikrex Bytes">`,
     `<meta property="og:title" content="${htmlEscape(seo.headline)}">`,
@@ -2657,12 +4220,22 @@ function buildMetaTags(seo) {
     `<meta property="og:type" content="article">`,
     `<meta property="og:url" content="${htmlEscape(seo.canonicalUrl)}">`,
     `<meta property="og:image" content="${htmlEscape(seo.imageUrl)}">`,
+    `<meta property="og:image:width" content="1200">`,
+    `<meta property="og:image:height" content="630">`,
     `<meta property="og:image:alt" content="${htmlEscape(seo.headline)}">`,
+    `<meta property="article:section" content="Technology">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${htmlEscape(seo.headline)}">`,
     `<meta name="twitter:description" content="${htmlEscape(seo.description)}">`,
     `<meta name="twitter:image" content="${htmlEscape(seo.imageUrl)}">`,
-    `<link rel="canonical" href="${htmlEscape(seo.canonicalUrl)}">`
+    `<link rel="icon" type="image/png" sizes="96x96" href="${siteUrl()}/favicon-96x96.png">`,
+    `<link rel="icon" type="image/x-icon" href="${siteUrl()}/favicon.ico">`,
+    `<link rel="icon" type="image/png" sizes="48x48" href="${siteUrl()}/favicon-48x48.png">`,
+    `<link rel="icon" type="image/svg+xml" href="${siteUrl()}/logo.svg">`,
+    `<link rel="icon" type="image/png" sizes="192x192" href="${siteUrl()}/logo-192.png">`,
+    `<link rel="icon" type="image/png" sizes="512x512" href="${siteUrl()}/logo-512.png">`,
+    `<link rel="shortcut icon" href="${siteUrl()}/favicon.ico">`,
+    `<link rel="apple-touch-icon" sizes="180x180" href="${siteUrl()}/apple-touch-icon.png">`
   ];
   if (published)
     tags.push(
@@ -2672,11 +4245,16 @@ function buildMetaTags(seo) {
     `<script type="application/ld+json">${safeJson({
       "@context": "https://schema.org",
       "@type": "NewsArticle",
+      name: seo.headline,
       headline: seo.headline,
       description: seo.description,
+      url: seo.canonicalUrl,
       image: [seo.imageUrl],
       datePublished: published,
       dateModified: published,
+      isAccessibleForFree: true,
+      articleSection: "Technology",
+      inLanguage: "en",
       author: {
         "@type": "Organization",
         name: "Aurikrex Bytes",
@@ -2686,7 +4264,7 @@ function buildMetaTags(seo) {
         "@type": "Organization",
         name: "Aurikrex Bytes",
         url: siteUrl(),
-        logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png` }
+        logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png`, width: 512, height: 512 }
       },
       mainEntityOfPage: { "@type": "WebPage", "@id": seo.canonicalUrl }
     })}</script>`
@@ -2715,6 +4293,26 @@ function renderShareDocument(seo) {
       <p>${htmlEscape(seo.description)}</p>
       <a href="${htmlEscape(seo.canonicalUrl)}">Read the story on Aurikrex Bytes</a>
     </main>
+  </body>
+</html>`;
+}
+function renderMaintenanceDocument() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurikrex Bytes \u2014 Under Maintenance</title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  </head>
+  <body style="background:#090d16;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px;text-align:center;">
+    <div style="max-width:480px;background:#111c2e;border:1px solid #1e293b;border-radius:18px;padding:40px 28px;box-shadow:0 16px 40px rgba(0,0,0,0.45);">
+      <div style="display:inline-block;width:12px;height:12px;background:#f59e0b;border-radius:50%;margin-bottom:16px;box-shadow:0 0 12px #f59e0b;"></div>
+      <h1 style="color:#f8fafc;font-size:24px;font-weight:700;margin:0 0 12px 0;">Under Maintenance</h1>
+      <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 24px 0;">Aurikrex Bytes is currently undergoing scheduled maintenance and updates. We'll be back online shortly.</p>
+      <div style="font-size:12px;color:#64748b;">HTTP 503 \u2022 Service Temporarily Unavailable</div>
+    </div>
   </body>
 </html>`;
 }
@@ -2776,31 +4374,37 @@ async function buildShareSvg(post, coverBuffer) {
     <text x="110" y="130" fill="#a78bfa" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="2">AURIKREX BYTES</text>
     <rect x="110" y="150" width="120" height="4" fill="url(#line)"/>
     <text x="110" y="185" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i === 0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
-    <text x="110" y="${bodyY}" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${bodyLines.map((line, i) => `<tspan x="110" dy="${i === 0 ? 0 : 30}">${escapeXml(line)}</tspan>`).join("")}</text>
-    <text x="110" y="510" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
-    <text x="110" y="543" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">www.bytes.aurikrex.tech</text>
+    ${bodyLines.map((line, i) => `<text x="110" y="${bodyY + i * 34}" fill="#94a3b8" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${escapeXml(line)}</text>`).join("")}
+    <g transform="translate(110, 480)">
+      <circle cx="20" cy="20" r="18" fill="#1e293b"/>
+      <path d="M12 20 L18 26 L28 14" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <text x="48" y="26" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="600">CURATED EDITORIAL</text>
+    </g>
   </svg>`;
-  return sharp(Buffer.from(svg)).png().toBuffer();
+  return Buffer.from(svg);
 }
-function wrapTitle(title, maxCharsPerLine) {
-  const words = title.split(/\s+/);
+function wrapTitle(text2, maxCharsPerLine) {
+  const words = text2.split(" ");
   const lines = [];
-  let current = "";
+  let currentLine = "";
   for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length > maxCharsPerLine && current) {
-      lines.push(current);
-      current = word;
+    if ((currentLine + " " + word).trim().length <= maxCharsPerLine) {
+      currentLine = (currentLine + " " + word).trim();
     } else {
-      current = next;
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
     }
   }
-  if (current) lines.push(current);
+  if (currentLine) lines.push(currentLine);
   return lines.slice(0, 3);
 }
 async function generateShareCard(post) {
-  const coverBuffer = post.imageUrl ? await fetchRemoteImageBuffer(post.imageUrl) : null;
-  return await buildShareSvg(post, coverBuffer);
+  let coverBuffer = null;
+  if (post.imageUrl) {
+    coverBuffer = await fetchRemoteImageBuffer(post.imageUrl);
+  }
+  const svg = await buildShareSvg(post, coverBuffer);
+  return sharp(svg).png({ quality: 90 }).toBuffer();
 }
 function escapeXml(value) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -2808,6 +4412,10 @@ function escapeXml(value) {
 async function sendPostPreview(req, res, next, mode) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return next();
+  if (await isMaintenanceMode()) {
+    res.setHeader("Retry-After", "1800");
+    return res.status(503).type("html").send(renderMaintenanceDocument());
+  }
   try {
     const post = await getPostById(id);
     if (!post || post.status !== "published")
@@ -2851,33 +4459,43 @@ function registerSeoRoutes(app) {
       [
         "User-agent: *",
         "Allow: /",
+        "Allow: /api/share/",
         "Disallow: /admin",
         "Disallow: /falcon-system-auth",
-        "Disallow: /api",
+        "Disallow: /api/trpc",
+        "Disallow: /api/cron",
+        "",
+        "User-agent: Googlebot-Image",
+        "Allow: /",
+        "Allow: /favicon.ico",
+        "Allow: /*.png",
+        "Allow: /*.ico",
+        "Allow: /*.svg",
+        "",
         `Sitemap: ${siteUrl()}/sitemap.xml`,
         ""
       ].join("\n")
     );
   });
-  app.get("/sitemap.xml", async (_req, res) => {
-    const staticPaths = [
-      "/",
-      "/archive",
-      "/how-it-works",
-      "/help",
-      "/contact",
-      "/privacy",
-      "/terms"
+  app.get(["/sitemap.xml", "/api/sitemap.xml", "/sitemap"], async (_req, res) => {
+    const staticEntries = [
+      { path: "/", priority: "1.0", changefreq: "daily" },
+      { path: "/archive", priority: "0.9", changefreq: "daily" },
+      { path: "/how-it-works", priority: "0.6", changefreq: "monthly" },
+      { path: "/help", priority: "0.4", changefreq: "monthly" },
+      { path: "/contact", priority: "0.4", changefreq: "monthly" },
+      { path: "/privacy", priority: "0.3", changefreq: "yearly" },
+      { path: "/terms", priority: "0.3", changefreq: "yearly" }
     ];
-    const urls = staticPaths.map(
-      (pathValue) => `<url><loc>${xmlEscape(`${siteUrl()}${pathValue}`)}</loc></url>`
+    const urls = staticEntries.map(
+      ({ path: pathValue, priority, changefreq }) => `<url><loc>${xmlEscape(`${siteUrl()}${pathValue}`)}</loc><changefreq>${changefreq}</changefreq><priority>${priority}</priority></url>`
     );
     try {
       const posts2 = await listPublishedPosts();
       for (const post of posts2) {
         const lastmod = post.publishedTime || post.updatedAt;
         urls.push(
-          `<url><loc>${xmlEscape(`${siteUrl()}/post/${post.id}`)}</loc>${lastmod ? `<lastmod>${new Date(lastmod).toISOString()}</lastmod>` : ""}</url>`
+          `<url><loc>${xmlEscape(`${siteUrl()}/post/${post.id}`)}</loc>${lastmod ? `<lastmod>${new Date(lastmod).toISOString()}</lastmod>` : ""}<changefreq>weekly</changefreq><priority>0.8</priority></url>`
         );
       }
     } catch (error) {
@@ -2886,7 +4504,7 @@ function registerSeoRoutes(app) {
         error instanceof Error ? error.message : String(error)
       );
     }
-    res.type("application/xml").send(
+    res.setHeader("Content-Type", "application/xml; charset=utf-8").setHeader("Cache-Control", "public, max-age=3600, s-maxage=86400, stale-while-revalidate=43200").send(
       `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`
     );
   });
@@ -2906,59 +4524,81 @@ function registerSeoRoutes(app) {
       return void sendPostPreview(req, res, next, "image");
     }
   );
-  app.get("/api/share/static", (req, res) => {
+  app.get("/api/share/static", async (req, res) => {
+    if (await isMaintenanceMode()) {
+      res.setHeader("Retry-After", "1800");
+      return res.status(503).type("html").send(renderMaintenanceDocument());
+    }
     const pathValue = req.query.path;
     const staticMap = {
-      "root": { title: "Aurikrex Bytes \xE2\u20AC\u201D What matters in tech", description: "A focused editorial desk for shaping the next considered brief." },
-      "archive": { title: "All Bytes \xE2\u20AC\u201D Aurikrex Bytes archive", description: "Read all published editions of Aurikrex Bytes." },
-      "help": { title: "Help Center \xE2\u20AC\u201D Aurikrex Bytes", description: "Support and FAQs for Aurikrex Bytes." },
-      "contact": { title: "Contact Us \xE2\u20AC\u201D Aurikrex Bytes", description: "Get in touch with the Aurikrex Bytes team." },
-      "privacy": { title: "Privacy Policy \xE2\u20AC\u201D Aurikrex Bytes", description: "Privacy policy for Aurikrex Bytes." },
-      "terms": { title: "Terms of Service \xE2\u20AC\u201D Aurikrex Bytes", description: "Terms of Service for Aurikrex Bytes." }
+      "root": { title: "Aurikrex Bytes \u2014 What matters in tech", description: "Aurikrex Bytes is your daily curated tech news briefing \u2014 AI, startups, chips, and what matters in technology today." },
+      "archive": { title: "All Bytes \u2014 Aurikrex Bytes archive", description: "Browse every published edition of Aurikrex Bytes \u2014 your daily curated technology and AI news digest." },
+      "how-it-works": { title: "How It Works \u2014 Aurikrex Bytes", description: "Learn how Aurikrex Bytes curates the best tech news stories each day \u2014 AI, chips, and startup coverage that matters." },
+      "help": { title: "Help Center \u2014 Aurikrex Bytes", description: "Support and FAQs for Aurikrex Bytes readers." },
+      "contact": { title: "Contact Us \u2014 Aurikrex Bytes", description: "Get in touch with the Aurikrex Bytes team." },
+      "privacy": { title: "Privacy Policy \u2014 Aurikrex Bytes", description: "Privacy policy for Aurikrex Bytes." },
+      "terms": { title: "Terms of Service \u2014 Aurikrex Bytes", description: "Terms of Service for Aurikrex Bytes." }
     };
     const metadata = staticMap[pathValue] || staticMap["root"];
+    const canonicalUrl = `${siteUrl()}/${pathValue === "root" ? "" : pathValue || ""}`;
     const seo = {
       title: metadata.title,
       description: metadata.description,
       headline: metadata.title,
-      canonicalUrl: `${siteUrl()}/${pathValue === "root" ? "" : pathValue || ""}`,
+      canonicalUrl,
       imageUrl: `${siteUrl()}/logo-512.png`
     };
-    return res.status(200).type("html").send(renderShareDocument(seo));
+    const isHomepage = !pathValue || pathValue === "root";
+    const extraLd = isHomepage ? `
+    <script type="application/ld+json">${safeJson({
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "Aurikrex Bytes",
+      url: siteUrl(),
+      description: metadata.description,
+      potentialAction: {
+        "@type": "SearchAction",
+        target: { "@type": "EntryPoint", urlTemplate: `${siteUrl()}/archive?q={search_term_string}` },
+        "query-input": "required name=search_term_string"
+      }
+    })}</script>
+    <script type="application/ld+json">${safeJson({
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "Aurikrex Bytes",
+      url: siteUrl(),
+      logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png`, width: 512, height: 512 },
+      description: metadata.description,
+      founder: {
+        "@type": "Person",
+        name: "Korede Omotosho"
+      },
+      sameAs: [
+        "https://x.com/aurikrex",
+        "https://instagram.com/falcon.omotosho",
+        "https://www.linkedin.com/in/falcon-omotosho",
+        "https://www.facebook.com/share/1SsFXC4mZP/",
+        "https://www.tiktok.com/@falcon.omotosho"
+      ]
+    })}</script>` : "";
+    const doc = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="keywords" content="tech news, AI news, startup news, technology briefing, Aurikrex Bytes, daily tech digest">
+    ${buildMetaTags(seo)}${extraLd}
+  </head>
+  <body>
+    <main>
+      <h1>${htmlEscape(seo.headline)}</h1>
+      <p>${htmlEscape(seo.description)}</p>
+      <a href="${htmlEscape(seo.canonicalUrl)}">Visit Aurikrex Bytes</a>
+    </main>
+  </body>
+</html>`;
+    return res.status(200).type("html").send(doc);
   });
-}
-
-// server/_core/security.ts
-var authAttempts = /* @__PURE__ */ new Map();
-var AUTH_WINDOW_MS = 6e4;
-var AUTH_MAX_REQUESTS = 30;
-function securityHeaders(_req, res, next) {
-  res.removeHeader("X-Powered-By");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob: https://res.cloudinary.com https://*.googleusercontent.com; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com https://maps.googleapis.com; connect-src 'self' https://maps.googleapis.com https://api.cloudinary.com wss:; frame-src https://accounts.google.com; form-action 'self' https://accounts.google.com");
-  if (process.env.NODE_ENV === "production" && process.env.APP_BASE_URL?.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-  next();
-}
-function authRateLimit(req, res, next) {
-  if (!req.originalUrl.startsWith("/api/trpc/")) return next();
-  const route = req.originalUrl.split("?")[0];
-  if (!/\/(reader\.(signup|login|requestPasswordReset|resetPassword|verifyEmail)|admin\.login)$/.test(route)) return next();
-  const key = `${req.ip || req.socket?.remoteAddress || req.headers["x-forwarded-for"] || "unknown"}:${route}`;
-  const now2 = Date.now();
-  const current = authAttempts.get(key);
-  if (!current || current.resetAt <= now2) authAttempts.set(key, { count: 1, resetAt: now2 + AUTH_WINDOW_MS });
-  else current.count += 1;
-  const attempt = authAttempts.get(key);
-  res.setHeader("RateLimit-Limit", AUTH_MAX_REQUESTS);
-  res.setHeader("RateLimit-Remaining", Math.max(0, AUTH_MAX_REQUESTS - attempt.count));
-  if (attempt.count > AUTH_MAX_REQUESTS) {
-    res.setHeader("Retry-After", String(Math.ceil((attempt.resetAt - now2) / 1e3)));
-    return res.status(429).json({ error: "Too many authentication requests. Please try again shortly." });
-  }
-  next();
 }
 
 // server/_core/vercel.ts
@@ -2970,6 +4610,13 @@ async function setupApp() {
     console.error(`[Environment] Production configuration incomplete: ${environmentIssues.join("; ")}`);
   }
   const app = express();
+  app.use((req, _res, next) => {
+    const matchedPath = req.headers["x-matched-path"];
+    if (matchedPath && (matchedPath === "/sitemap.xml" || matchedPath === "/robots.txt" || matchedPath.endsWith("/sitemap.xml"))) {
+      req.url = matchedPath;
+    }
+    next();
+  });
   app.use(securityHeaders);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));

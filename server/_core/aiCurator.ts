@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { inArray } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { posts } from "../../drizzle/schema.js";
+import { getAiApiKeys, getMistralApiKey, getNvidiaApiKey } from "./aiKeys.js";
+import { generateNvidiaFluxImage } from "./imageGeneration.js";
 
 export interface CuratedByte {
   headline: string;
@@ -93,8 +95,40 @@ export function isNonNewsHeadline(title: string): boolean {
   return false;
 }
 
+export function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&#(\d+);/g, (_, dec) => {
+      try {
+        return String.fromCharCode(Number(dec));
+      } catch {
+        return _;
+      }
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      try {
+        return String.fromCharCode(parseInt(hex, 16));
+      } catch {
+        return _;
+      }
+    })
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#8216;/g, "'")
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8220;/g, '"')
+    .replace(/&#8221;/g, '"')
+    .replace(/&#8211;/g, "–")
+    .replace(/&#8212;/g, "—")
+    .replace(/&ndash;/g, "–")
+    .replace(/&mdash;/g, "—")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
 export function cleanHeadline(title: string): string {
-  let cleaned = title.trim();
+  let cleaned = decodeHtmlEntities(title.trim());
   // Strip leading Show HN: / Launch HN: / Tell HN:
   cleaned = cleaned.replace(/^(show\s+hn|launch\s+hn|tell\s+hn)\s*:\s*/i, "");
   // Strip tags like [video], [pdf], [audio], [YYYY], (YYYY), etc.
@@ -179,7 +213,7 @@ export async function extractSourceArticleImage(url: string): Promise<string | n
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; AurikrexBytesBot/1.0; +https://www.bytes.aurikrex.tech)",
+        "User-Agent": "Mozilla/5.0 (compatible; AurikrexBytesBot/1.0; +https://www.bytes.aurikrex.com)",
         "Accept": "text/html,application/xhtml+xml",
       },
     });
@@ -233,11 +267,15 @@ export async function extractSourceArticleImage(url: string): Promise<string | n
   }
 }
 
-async function fetchRssCandidates(start: Date, end: Date): Promise<NewsCandidate[]> {
+async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
   const feeds = [
     { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
     { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" },
     { name: "TechCrunch", url: "https://techcrunch.com/feed/" },
+    { name: "Wired", url: "https://www.wired.com/feed/rss" },
+    { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
+    { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
+    { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" },
   ];
 
   const results: NewsCandidate[] = [];
@@ -254,10 +292,9 @@ async function fetchRssCandidates(start: Date, end: Date): Promise<NewsCandidate
       if (!res.ok) continue;
 
       const xml = await res.text();
-      // Match item or entry tags
       const items = xml.match(/<(?:item|entry)[\s\S]*?<\/(?:item|entry)>/gi) || [];
 
-      for (const itemXml of items.slice(0, 15)) {
+      for (const itemXml of items.slice(0, 20)) {
         const titleMatch = itemXml.match(/<title(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
         const linkMatch =
           itemXml.match(/<link[^>]+href=["']([^"']+)["']/i) ||
@@ -289,6 +326,8 @@ async function fetchRssCandidates(start: Date, end: Date): Promise<NewsCandidate
 
         const cleanedTitle = cleanHeadline(rawTitle);
         const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
+        if (excludeKeys.has(duplicateKey)) continue;
+
         const mediaUrl = mediaMatch ? mediaMatch[1].trim() : null;
 
         results.push({
@@ -308,12 +347,10 @@ async function fetchRssCandidates(start: Date, end: Date): Promise<NewsCandidate
   return results;
 }
 
-async function fetchTodayCandidates(): Promise<NewsCandidate[]> {
-  const { start, end } = getTodayWindow();
+async function fetchCandidatesForTimeframe(start: Date, end: Date, excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
   const startSec = Math.floor(start.getTime() / 1000);
   const endSec = Math.floor(end.getTime() / 1000);
 
-  // 1. Fetch from Hacker News Algolia API with server-side date & quality filters
   const hnQueries = [
     `tags=front_page&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=35`,
     `query=AI%20OR%20LLM&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
@@ -331,20 +368,19 @@ async function fetchTodayCandidates(): Promise<NewsCandidate[]> {
     }
   });
 
-  // 2. Concurrently fetch primary tech RSS feeds
   const [hnResults, rssCandidates] = await Promise.all([
     Promise.all(hnPromises),
-    fetchRssCandidates(start, end),
+    fetchRssCandidates(start, end, excludeKeys),
   ]);
 
   const candidates = new Map<string, NewsCandidate>();
 
-  // Add RSS candidates first (high journalistic credibility)
   for (const item of rssCandidates) {
-    candidates.set(item.duplicateKey, item);
+    if (!excludeKeys.has(item.duplicateKey)) {
+      candidates.set(item.duplicateKey, item);
+    }
   }
 
-  // Add HN candidates
   for (const result of hnResults) {
     for (const hit of result.hits || []) {
       const publishedAt = new Date(Number(hit.created_at_i) * 1000);
@@ -364,7 +400,7 @@ async function fetchTodayCandidates(): Promise<NewsCandidate[]> {
 
       const cleanedTitle = cleanHeadline(rawTitle);
       const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
-      if (!candidates.has(duplicateKey)) {
+      if (!excludeKeys.has(duplicateKey) && !candidates.has(duplicateKey)) {
         candidates.set(duplicateKey, {
           title: cleanedTitle,
           url,
@@ -382,30 +418,37 @@ async function fetchTodayCandidates(): Promise<NewsCandidate[]> {
     .slice(0, 30);
 }
 
+export async function fetchTodayCandidates(excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
+  const now = new Date();
+  const { start, end } = getTodayWindow(now);
+
+  // 1. Fetch uncurated candidates for today's window
+  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys);
+
+  // 2. If fewer than 15 uncurated candidates in today's window, expand search window to 72 hours
+  if (candidates.length < 15) {
+    const past72h = new Date(now.getTime() - 72 * 3600 * 1000);
+    console.info(`[AICurator] Found ${candidates.length} uncurated candidates today. Expanding search window to 72 hours...`);
+    candidates = await fetchCandidatesForTimeframe(past72h, now, excludeKeys);
+  }
+
+  return candidates;
+}
+
 function imageQuery(title: string): string {
   return title.replace(/[^a-z0-9 ]/gi, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 8).join(" ");
 }
 
 /**
- * Ensures the editorial brief sits strictly within the [600, 800] character envelope.
- * Intelligently trims on sentence boundaries if too long, or extends with journalistic context if too short.
+ * Ensures the editorial brief sits cleanly within a comfortable character boundary.
+ * Surgically trims at clean sentence boundaries if too long.
+ * Never appends generic filler or robotic boilerplate.
  */
-export function clampEditorialBrief(body: string, candidate: NewsCandidate): string {
+export function clampEditorialBrief(
+  body: string,
+  candidate?: { publisher?: string; publishedAt?: Date }
+): string {
   let text = body.trim().replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
-
-  const extensions = [
-    `Verified reporting was originally published by ${candidate.publisher} on ${candidate.publishedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.`,
-    `The announcement highlights strategic shifts in software architecture, distributed systems infrastructure, and production engineering roadmaps.`,
-    `Industry stakeholders and technical engineering leads are tracking these developments closely as additional implementation benchmarks, API specifications, and enterprise rollouts continue to emerge.`,
-    `For engineering organizations evaluating next-generation technology adoption, these developments provide essential context for capital allocation, technical debt remediation, and long-term capability planning.`,
-  ];
-
-  // If shorter than 600 chars, extend with journalistic context until length >= 600
-  let extIdx = 0;
-  while (text.length < 600 && extIdx < extensions.length) {
-    text = (text + " " + extensions[extIdx]).trim();
-    extIdx++;
-  }
 
   // If longer than 800 chars, surgically trim at last clean sentence boundary
   if (text.length > 800) {
@@ -416,236 +459,405 @@ export function clampEditorialBrief(body: string, candidate: NewsCandidate): str
       truncated.lastIndexOf("! "),
       truncated.lastIndexOf("? ")
     );
-    if (lastSentenceEnd > 580) {
+    if (lastSentenceEnd > 550) {
       text = truncated.slice(0, lastSentenceEnd + 1).trim();
     } else {
       // Clean word boundary cut
       const lastSpace = truncated.lastIndexOf(" ");
-      text = (lastSpace > 580 ? truncated.slice(0, lastSpace) : truncated).trim() + "...";
+      text = (lastSpace > 550 ? truncated.slice(0, lastSpace) : truncated).trim() + "...";
     }
   }
 
   return text;
 }
 
-export async function curateTenBytes(): Promise<CuratedByte[]> {
+function extractAiHeadline(item: any, fallbackTitle: string): string {
+  if (!item || typeof item !== "object") return cleanHeadline(fallbackTitle).slice(0, 120);
+  const h =
+    item.headline ||
+    item.title ||
+    item.brief?.headline ||
+    item.metadata?.headline ||
+    item.metadata?.title ||
+    fallbackTitle;
+  return cleanHeadline(String(h || fallbackTitle)).slice(0, 120);
+}
+
+export function extractAiBody(item: any): string {
+  if (!item) return "";
+  if (typeof item === "string" && item.length > 30) return item;
+  if (typeof item.body === "string" && item.body.trim().length > 30) return item.body.trim();
+
+  if (item.body && typeof item.body === "object" && !Array.isArray(item.body)) {
+    const parts = Object.values(item.body)
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .filter((v) => v.length > 5);
+    if (parts.length > 0) return parts.join("\n\n");
+  }
+
+  if (typeof item.summary === "string" && item.summary.trim().length > 30) return item.summary.trim();
+  if (item.summary && typeof item.summary === "object" && !Array.isArray(item.summary)) {
+    const parts = Object.values(item.summary)
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .filter((v) => v.length > 5);
+    if (parts.length > 0) return parts.join("\n\n");
+  }
+
+  if (typeof item.text === "string" && item.text.trim().length > 30) return item.text.trim();
+  if (typeof item.content === "string" && item.content.trim().length > 30) return item.content.trim();
+
+  if (typeof item.brief?.summary?.lead?.text === "string") {
+    const lead = item.brief.summary.lead.text;
+    const bg = item.brief?.summary?.context?.background?.text || "";
+    return `${lead}\n\n${bg}`.trim();
+  }
+  if (typeof item.brief?.summary === "string" && item.brief.summary.length > 30) return item.brief.summary.trim();
+  if (typeof item.brief === "string" && item.brief.length > 30) return item.brief.trim();
+
+  return "";
+}
+
+function extractArrayFromObject(parsed: any): any[] {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object" && parsed !== null) {
+    const arrayKey = Object.keys(parsed).find(k => Array.isArray(parsed[k]));
+    if (arrayKey) return parsed[arrayKey];
+  }
+  return [];
+}
+
+export function parseAiJsonResponse(rawJson: string): any[] {
+  if (!rawJson || typeof rawJson !== "string") return [];
+
+  // Step 1: Strip markdown code block fences and whitespace
+  let cleaned = rawJson.replace(/```json/gi, "").replace(/```/g, "").trim();
+
+  // Step 2: Slice from first '{' or '['
+  const firstBracket = cleaned.search(/[\[\{]/);
+  if (firstBracket !== -1) {
+    cleaned = cleaned.slice(firstBracket);
+  }
+
+  // Step 3: Try standard JSON.parse first
+  try {
+    const parsed = JSON.parse(cleaned);
+    const arr = extractArrayFromObject(parsed);
+    if (arr.length > 0) return arr;
+  } catch {
+    // Continue to repair attempts
+  }
+
+  // Step 4: Repair unescaped literal control characters (\r \n \t) inside double-quoted string values
+  try {
+    const sanitized = cleaned.replace(/("(?:[^"\\]|\\.)*")/g, (match) => {
+      return match.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t");
+    });
+    const parsed = JSON.parse(sanitized);
+    const arr = extractArrayFromObject(parsed);
+    if (arr.length > 0) return arr;
+  } catch {
+    // Continue to truncated recovery
+  }
+
+  // Step 5: Handle truncated JSON arrays (when response hit max_tokens mid-stream)
+  try {
+    const lastClosingBrace = cleaned.lastIndexOf("}");
+    if (lastClosingBrace > 0) {
+      const truncatedCandidate = cleaned.slice(0, lastClosingBrace + 1);
+      const autoClosed = truncatedCandidate.endsWith("]") ? truncatedCandidate : truncatedCandidate + "]";
+      const sanitized = autoClosed.replace(/("(?:[^"\\]|\\.)*")/g, (match) => {
+        return match.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t");
+      });
+      const parsed = JSON.parse(sanitized);
+      const arr = extractArrayFromObject(parsed);
+      if (arr.length > 0) {
+        console.info(`[AICurator] Recovered ${arr.length} complete story objects from truncated JSON output.`);
+        return arr;
+      }
+    }
+  } catch {
+    // Continue to regex block extraction
+  }
+
+  // Step 6: Fallback multiline object extraction for any valid story block
+  const objects: any[] = [];
+  const objectMatches = cleaned.match(/\{[\s\S]*?(?:"headline"|"title"|"body"|"summary"|"text")[\s\S]*?\}/gi) || [];
+  for (const block of objectMatches) {
+    try {
+      const safeBlock = block.replace(/("(?:[^"\\]|\\.)*")/g, (m) => m.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t"));
+      const obj = JSON.parse(safeBlock);
+      if (obj && typeof obj === "object" && (obj.headline || obj.title || obj.body)) {
+        objects.push(obj);
+      }
+    } catch {
+      // Ignore individual corrupted snippet
+    }
+  }
+
+  if (objects.length > 0) {
+    console.info(`[AICurator] Recovered ${objects.length} story objects via multiline regex block parsing.`);
+  }
+
+  return objects;
+}
+
+async function generateSingleCandidateBrief(
+  candidate: NewsCandidate,
+  mistralKey: string,
+  nvidiaKey: string
+): Promise<{ headline: string; body: string; category: string } | null> {
+  const prompt = `You are the executive tech editor for Aurikrex Bytes.
+Write an authoritative, high-signal 3-paragraph editorial brief for this verified news story.
+
+STORY DETAILS:
+- Title: "${candidate.title}"
+- Publisher: "${candidate.publisher}"
+- URL: "${candidate.url}"
+
+EDITORIAL RULES:
+1. Base your brief strictly on the candidate facts. Do NOT hallucinate fake dates or fake benchmarks.
+2. Structure into three concise, focused paragraphs:
+   - Paragraph 1 (The Lead): The core event, company, breakthrough, or incident and key technical details.
+   - Paragraph 2 (Why It Matters): Strategic industry impact, architectural implications, market effects, or infrastructure changes.
+   - Paragraph 3 (The Outlook): What happens next, timeline, release dates, or key metrics to watch.
+3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 550 and 750 characters.
+4. Headline: Crisp, punchy, active voice, under 90 characters. Never include publisher names or tags like "Show HN:".
+5. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
+6. Return a valid JSON object ONLY:
+   {
+     "headline": "Crisp Headline under 90 chars",
+     "body": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...",
+     "category": "Tech"
+   }`;
+
+  // 1. Primary LLM Provider: Mistral AI (mistral-small-latest -> open-mixtral-8x7b -> open-mistral-7b)
+  if (mistralKey) {
+    const mistralModels = ["mistral-small-latest", "open-mixtral-8x7b", "open-mistral-7b"];
+    for (const model of mistralModels) {
+      try {
+        const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${mistralKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+              { role: "user", content: prompt },
+            ],
+            temperature: 0.3,
+            max_tokens: 1000,
+          }),
+        });
+
+        if (response.ok) {
+          const resData = await response.json();
+          const content = resData.choices?.[0]?.message?.content || "";
+          const parsed = parseAiJsonResponse(content);
+          if (parsed && parsed.length > 0) {
+            const item = parsed[0];
+            const headline = extractAiHeadline(item, candidate.title);
+            const rawBody = extractAiBody(item);
+            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
+              ? String(item.category)
+              : "Tech";
+
+            if (headline && body && body.length > 100) {
+              return { headline, body, category };
+            }
+          }
+        } else if (response.status === 429) {
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      } catch {
+        // Fall through to next model
+      }
+    }
+  }
+
+  // 2. Fallback LLM Provider: NVIDIA AI NIM (Developer Credits)
+  if (nvidiaKey) {
+    const nvidiaModels = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-7b-instruct-v0.3"];
+    const nvidiaEndpoints = [
+      "https://integrate.api.nvidia.com/v1/chat/completions",
+      "https://ai.api.nvidia.com/v1/chat/completions",
+    ];
+
+    for (const endpoint of nvidiaEndpoints) {
+      for (const model of nvidiaModels) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${nvidiaKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+                { role: "user", content: prompt },
+              ],
+              temperature: 0.3,
+              max_tokens: 1000,
+            }),
+          });
+
+          if (response.ok) {
+            const resData = await response.json();
+            const content = resData.choices?.[0]?.message?.content || "";
+            const parsed = parseAiJsonResponse(content);
+            if (parsed && parsed.length > 0) {
+              const item = parsed[0];
+              const headline = extractAiHeadline(item, candidate.title);
+              const rawBody = extractAiBody(item);
+              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
+                ? String(item.category)
+                : "Tech";
+
+              if (headline && body && body.length > 100) {
+                return { headline, body, category };
+              }
+            }
+          }
+        } catch {
+          // Fall through to next model
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<CuratedByte[]> {
   let candidates: NewsCandidate[];
   try {
-    candidates = await fetchTodayCandidates();
+    candidates = await fetchTodayCandidates(excludeKeys);
   } catch (error) {
-    console.error("[AICurator] Today-only news retrieval failed", error);
+    console.error("[AICurator] News candidate retrieval failed", error);
     return [];
   }
   if (!candidates.length) return [];
 
-  const apiKey = (
-    process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    process.env.BUILT_IN_FORGE_API_KEY ||
-    process.env.FORGE_API_KEY ||
-    ""
-  ).trim();
+  const mistralKey = getMistralApiKey();
+  const nvidiaKey = getNvidiaApiKey();
 
-  // If no Gemini key is provided, return candidates with high-signal fallback
-  if (!apiKey) {
-    const results: CuratedByte[] = [];
-    for (let i = 0; i < Math.min(candidates.length, 10); i++) {
-      const candidate = candidates[i];
-      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][i % 5];
-      const imageUrl = candidate.imageUrl || (await extractSourceArticleImage(candidate.url)) || generateEditorialSvgCard(candidate.title, category);
-      const brief = clampEditorialBrief(
-        `Major technological developments were announced today regarding ${candidate.title}. Published by ${candidate.publisher}, the report highlights significant architectural, infrastructure, and strategic advancements across the computing ecosystem. Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and long-term capability planning.\n\nKey technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments. As organizations scale next-generation computing infrastructure, developments in this domain will shape operational roadmaps and competitive positioning throughout the industry.`,
-        candidate
-      );
-      results.push({
-        headline: candidate.title.slice(0, 120),
-        body: brief,
-        category,
-        imageUrl,
-        sourceUrl: candidate.url,
-        sourcePublisher: candidate.publisher,
-        sourcePublishedAt: candidate.publishedAt,
-        duplicateKey: candidate.duplicateKey,
-        imageQuery: imageQuery(candidate.title),
-        imageProvenance: candidate.imageUrl ? "source-article" : "editorial-card",
-      });
-    }
-    return results;
+  if (!mistralKey && !nvidiaKey) {
+    console.warn(
+      "[AICurator] No AI API key (MISTRAL_API_KEY, NVIDIA_API_KEY) configured. Skipping curation."
+    );
+    return [];
   }
 
-  // Model cascade: try gemini-1.5-flash first, fallback to gemini-2.0-flash, then gemini-flash-latest
-  const modelCandidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
-  const prompt = `You are the executive tech editor for Aurikrex Bytes.
-Write an authoritative, high-signal editorial brief for up to 10 of these verified candidate news stories.
+  const seen = new Set<string>();
 
-CRITICAL EDITORIAL RULES:
-1. Base your brief strictly on the candidate facts. Do NOT hallucinate fake dates, fake URLs, or nonexistent benchmarks.
-2. Every story brief MUST consist of three concise, focused paragraphs:
-   - Paragraph 1 (The Lead): The core event, company, breakthrough, or incident and key technical details.
-   - Paragraph 2 (Why It Matters): Strategic industry impact, architectural implications, market effects, or infrastructure changes.
-   - Paragraph 3 (The Outlook): What happens next, timeline, release dates, or key metrics to watch.
-3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 650 and 750 characters (excluding headline).
-4. Headline: Crisp, punchy, active voice, under 90 characters. Never include source tags like "Show HN:" or publisher names.
-5. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
-6. Return a valid JSON array of objects with:
-   [
-     {
-       "headline": "...",
-       "body": "...",
-       "category": "Tech",
-       "sourceUrl": "exact match to candidate url"
-     }
-   ]
+  interface DraftStoryItem {
+    candidate: NewsCandidate;
+    headline: string;
+    body: string;
+    category: string;
+  }
 
-CANDIDATES:
-${JSON.stringify(
-    candidates.map(c => ({
-      title: c.title,
-      url: c.url,
-      publisher: c.publisher,
-      publishedAt: c.publishedAt.toISOString(),
-    }))
-  )}`;
+  const draftItems: DraftStoryItem[] = [];
 
-  let rawJson = "[]";
+  // Generate AI briefs for candidates ONE BY ONE in small parallel chunks of 3 for max performance & zero rate limits
+  const chunkSize = 3;
+  for (let i = 0; i < candidates.length && draftItems.length < 10; i += chunkSize) {
+    const chunk = candidates.slice(i, i + chunkSize);
+    const chunkResults = await Promise.all(
+      chunk.map(async (candidate) => {
+        if (seen.has(candidate.duplicateKey)) return null;
+        seen.add(candidate.duplicateKey);
+        const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey);
+        if (!brief) return null;
+        return {
+          candidate,
+          headline: brief.headline,
+          body: brief.body,
+          category: brief.category,
+        };
+      })
+    );
 
-  for (const model of modelCandidates) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-goog-api-key": apiKey,
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              temperature: 0.3,
-            },
-          }),
-        }
-      );
+    for (const res of chunkResults) {
+      if (res && draftItems.length < 10) {
+        draftItems.push(res);
+      }
+    }
+  }
 
-      if (!response.ok) {
-        console.warn(`[AICurator] Gemini model ${model} failed (${response.status}), trying next...`);
-        continue;
+  console.info(`[AICurator] Successfully generated ${draftItems.length} authentic AI candidate briefs. Resolving cover images in parallel...`);
+
+  // Resolve cover images for all 10 stories in parallel
+  const curatedBytes: CuratedByte[] = await Promise.all(
+    draftItems.map(async (draft) => {
+      let imageUrl = draft.candidate.imageUrl;
+      let provenance = "source-article";
+
+      if (!imageUrl) {
+        imageUrl = await extractSourceArticleImage(draft.candidate.url);
       }
 
-      const resData = await response.json();
-      rawJson = resData.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-      if (rawJson && rawJson !== "[]") break;
-    } catch (err) {
-      console.warn(`[AICurator] Error calling ${model}:`, err);
-    }
-  }
+      if (!imageUrl && getNvidiaApiKey()) {
+        const fluxImg = await generateNvidiaFluxImage(draft.headline);
+        if (fluxImg) {
+          imageUrl = fluxImg;
+          provenance = "nvidia-flux";
+        }
+      }
 
-  let parsed: any[] = [];
-  try {
-    parsed = JSON.parse(rawJson.replace(/```json|```/g, "").trim());
-    if (!Array.isArray(parsed)) parsed = [];
-  } catch {
-    parsed = [];
-  }
+      if (!imageUrl) {
+        imageUrl = generateEditorialSvgCard(draft.headline, draft.category);
+        provenance = "editorial-card";
+      }
 
-  const byUrl = new Map(candidates.map(candidate => [canonicalizeUrl(candidate.url), candidate]));
-  const seen = new Set<string>();
-  const curatedBytes: CuratedByte[] = [];
-
-  for (let i = 0; i < parsed.length && curatedBytes.length < 10; i++) {
-    const item = parsed[i];
-    const candidate = byUrl.get(canonicalizeUrl(String(item.sourceUrl || "")));
-    if (!candidate || seen.has(candidate.duplicateKey)) continue;
-    seen.add(candidate.duplicateKey);
-
-    const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-      ? String(item.category)
-      : ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
-
-    // Priority 1: Image already provided in RSS
-    // Priority 2: Extract authentic OpenGraph image from source article
-    // Priority 3: Generate clean, publication-grade editorial SVG typography card
-    let imageUrl = candidate.imageUrl;
-    let provenance = "source-article";
-
-    if (!imageUrl) {
-      imageUrl = await extractSourceArticleImage(candidate.url);
-    }
-    if (!imageUrl) {
-      imageUrl = generateEditorialSvgCard(item.headline || candidate.title, category);
-      provenance = "editorial-card";
-    }
-
-    const rawBody = String(item.body || "").trim();
-    const clampedBody = clampEditorialBrief(rawBody, candidate);
-    const cleanedHeadline = cleanHeadline(String(item.headline || candidate.title)).slice(0, 120);
-
-    curatedBytes.push({
-      headline: cleanedHeadline,
-      body: clampedBody,
-      category,
-      imageUrl,
-      sourceUrl: candidate.url,
-      sourcePublisher: candidate.publisher,
-      sourcePublishedAt: candidate.publishedAt,
-      duplicateKey: candidate.duplicateKey,
-      imageQuery: imageQuery(cleanedHeadline),
-      imageProvenance: provenance,
-    });
-  }
-
-  // If Gemini produced fewer than 10, backfill with high-signal candidate briefs
-  if (curatedBytes.length < 10) {
-    for (const candidate of candidates) {
-      if (curatedBytes.length >= 10) break;
-      if (seen.has(candidate.duplicateKey)) continue;
-      seen.add(candidate.duplicateKey);
-
-      const category = ["Tech", "AI", "Science", "Innovation", "Crypto"][curatedBytes.length % 5];
-      let imageUrl = candidate.imageUrl || (await extractSourceArticleImage(candidate.url)) || generateEditorialSvgCard(candidate.title, category);
-
-      const brief = clampEditorialBrief(
-        `Major technological developments were announced today regarding ${candidate.title}. Published by ${candidate.publisher}, the report highlights significant architectural, infrastructure, and strategic advancements across the computing ecosystem. Engineering teams and technology leaders are assessing the implications of these changes on existing deployment patterns, developer workflows, and long-term capability planning.\n\nKey technical considerations involve integration reliability, performance benchmarks, and ecosystem compatibility across distributed environments. As organizations scale next-generation computing infrastructure, developments in this domain will shape operational roadmaps and competitive positioning throughout the industry.`,
-        candidate
-      );
-
-      curatedBytes.push({
-        headline: candidate.title.slice(0, 120),
-        body: brief,
-        category,
+      return {
+        headline: draft.headline,
+        body: draft.body,
+        category: draft.category,
         imageUrl,
-        sourceUrl: candidate.url,
-        sourcePublisher: candidate.publisher,
-        sourcePublishedAt: candidate.publishedAt,
-        duplicateKey: candidate.duplicateKey,
-        imageQuery: imageQuery(candidate.title),
-        imageProvenance: candidate.imageUrl ? "source-article" : "editorial-card",
-      });
-    }
-  }
+        sourceUrl: draft.candidate.url,
+        sourcePublisher: draft.candidate.publisher,
+        sourcePublishedAt: draft.candidate.publishedAt,
+        duplicateKey: draft.candidate.duplicateKey,
+        imageQuery: imageQuery(draft.headline),
+        imageProvenance: provenance,
+      };
+    })
+  );
 
+  console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
   return curatedBytes;
 }
 
 export async function runNightlyCuration(status: "draft" | "published" = "draft"): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
-  const bytes = await curateTenBytes();
+
+  // 1. Fetch all existing duplicate keys from database to exclude prior curated stories
+  const existingPosts = await db.select({ duplicateKey: posts.duplicateKey }).from(posts);
+  const excludeKeys = new Set(existingPosts.map(p => p.duplicateKey).filter((k): k is string => Boolean(k)));
+
+  // 2. Curate 10 uncurated Bytes
+  const bytes = await curateTenBytes(excludeKeys);
   if (!bytes.length) return 0;
-  const duplicateKeys = bytes.map(byte => byte.duplicateKey).filter((key): key is string => Boolean(key));
-  const existing = duplicateKeys.length
-    ? await db.select({ duplicateKey: posts.duplicateKey }).from(posts).where(inArray(posts.duplicateKey, duplicateKeys))
-    : [];
-  const used = new Set(existing.map(post => post.duplicateKey).filter(Boolean));
+
   let count = 0;
   for (const byte of bytes) {
-    if (!byte.duplicateKey || used.has(byte.duplicateKey)) continue;
+    if (!byte.duplicateKey || excludeKeys.has(byte.duplicateKey)) continue;
     try {
       await db.insert(posts).values({
         headline: byte.headline,
         body: byte.body,
+        category: byte.category || "Tech",
         imageUrl: byte.imageUrl,
         status,
         createdBy: 1,
@@ -657,7 +869,7 @@ export async function runNightlyCuration(status: "draft" | "published" = "draft"
         imageQuery: byte.imageQuery,
         imageProvenance: byte.imageProvenance,
       });
-      used.add(byte.duplicateKey);
+      excludeKeys.add(byte.duplicateKey);
       count++;
     } catch (error) {
       console.error(`[AICurator] Skipping duplicate or failed insert for ${byte.sourceUrl}`, error);

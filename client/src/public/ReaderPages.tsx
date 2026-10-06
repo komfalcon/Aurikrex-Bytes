@@ -3,12 +3,15 @@ import { createPortal } from "react-dom";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
+  Bell,
   Bookmark,
   BookOpen,
+  Bot,
   Camera,
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   CircleHelp,
   Clock3,
   Facebook,
@@ -16,6 +19,7 @@ import {
   Flame,
   Instagram,
   Info,
+  Layers,
   Linkedin,
   LogOut,
   Mail,
@@ -26,17 +30,26 @@ import {
   Share2,
   ShieldCheck,
   Sparkles,
+  Square,
+  SquarePen,
   Sun,
+  TrendingUp,
   Upload,
   User,
+  Workflow,
   X,
+  XCircle,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { PushSubscribeButton } from "@/components/PushSubscribeButton";
+import { AurikrexAppsSwitcher } from "@/components/AurikrexAppsSwitcher";
+import { AuriCoinBadge } from "@/components/AuriCoinBadge";
 import { useTheme } from "@/contexts/ThemeContext";
 import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
 import Seo from "@/components/Seo";
+import { FormattedBody, FormattedInlineText } from "@/components/FormattedBody";
 
 const getInitial = (nameOrEmail?: string | null) => {
   if (!nameOrEmail) return "U";
@@ -309,7 +322,9 @@ export function SiteHeader() {
         <Link href="/how-it-works">About</Link>
       </nav>
       <div className="header-actions">
+        <AuriCoinBadge className="header-coin-badge" />
         <PushSubscribeButton variant="header" />
+        <AurikrexAppsSwitcher currentAppId="bytes" />
         <ThemeToggle />
         {signedIn && (
           <button
@@ -362,6 +377,13 @@ export function SiteHeader() {
               <Link href="/how-it-works" onClick={() => setMenu(false)}><Info size={16} /> About</Link>
               <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>
               <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>
+            </div>
+            <div className="mobile-nav-section mobile-nav-preferences">
+              <span className="mobile-nav-label">Preferences</span>
+              <div className="mobile-nav-preference-row">
+                <span>Appearance</span>
+                <ThemeToggle />
+              </div>
             </div>
             <div className="mobile-nav-section mobile-nav-legal">
               <span className="mobile-nav-label">Legal</span>
@@ -505,7 +527,7 @@ export function PublicLayout({
 }
 function ShareButton({ post }: { post: any }) {
   const [open, setOpen] = useState(false);
-  const shareUrl = `https://www.bytes.aurikrex.tech/post/${post.id}`;
+  const shareUrl = `https://www.bytes.aurikrex.com/post/${post.id}`;
   const share = async () => {
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
       const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
@@ -784,8 +806,8 @@ function TodayCompletionCard({
   const isFullyRead = totalCount > 0 && readCount >= totalCount;
 
   const handleShare = () => {
-    const text = `I just completed today's tech briefing on Aurikrex Bytes! 🔥 ${streak}-day streak active.`;
-    const url = "https://www.bytes.aurikrex.tech/";
+    const text = `I just completed today's tech briefing on Aurikrex Bytes! ${streak}-day streak active.`;
+    const url = "https://www.bytes.aurikrex.com/";
     if (typeof navigator !== "undefined" && navigator.share) {
       navigator.share({ title: "Aurikrex Bytes Briefing Complete", text, url }).catch(() => undefined);
     } else if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -800,7 +822,7 @@ function TodayCompletionCard({
         <CheckCircle2 size={40} />
       </div>
       <h3 className="today-completion-title">
-        {isFullyRead ? "Nice! You've finished today's Bytes. 🎉" : "You've reached the end of today's drop! 👍"}
+        {isFullyRead ? "Nice! You've finished today's Bytes." : "You've reached the end of today's drop!"}
       </h3>
       <p className="today-completion-subtitle">
         {isFullyRead
@@ -822,8 +844,8 @@ function TodayCompletionCard({
         </Link>
       </div>
 
-      <p style={{ fontSize: "13px", color: "var(--muted, #64748b)", marginTop: "8px", marginBottom: 0 }}>
-        ⏰ See you tomorrow at 8:00 AM for your next briefing drop.
+      <p style={{ fontSize: "13px", color: "var(--muted, #64748b)", marginTop: "8px", marginBottom: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+        <Clock3 size={14} /> See you tomorrow at 8:00 AM for your next briefing drop.
       </p>
     </div>
   );
@@ -852,6 +874,9 @@ function PostCard({
               alt={post.headline}
               loading="lazy"
               decoding="async"
+              onError={event => {
+                event.currentTarget.style.display = "none";
+              }}
             />
           ) : (
             <div className="image-placeholder">
@@ -872,7 +897,7 @@ function PostCard({
             )}
           </div>
           <h2>{post.headline}</h2>
-          <p>{excerpt(post.body)}</p>
+          <p><FormattedInlineText text={excerpt(post.body)} /></p>
           <span className="read-more">
             {isRead ? "Read again" : "Read story"} <ArrowRight size={15} />
           </span>
@@ -882,9 +907,17 @@ function PostCard({
     </article>
   );
 }
-function PublishedStoryCarousel() {
+function PublishedStoryCarousel({ featured = false }: { featured?: boolean }) {
   const archive = trpc.publicPosts.carousel.useQuery();
-  const posts = archive.data?.posts ?? [];
+  const posts = useMemo(
+    () =>
+      [...(archive.data?.posts ?? [])].sort((a, b) => {
+        const publishedTimeDifference =
+          new Date(b.publishedTime ?? 0).getTime() - new Date(a.publishedTime ?? 0).getTime();
+        return publishedTimeDifference || b.id - a.id;
+      }).slice(0, 12),
+    [archive.data?.posts],
+  );
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -917,14 +950,22 @@ function PublishedStoryCarousel() {
     resumeTimerRef.current = setTimeout(() => setPaused(false), 5500);
   };
 
-  const fallback = {
-    headline: "The quiet shift changing how teams build with AI",
-    body: "A considered look at the tools, habits, and decisions shaping the next chapter of work.",
-    imageUrl: null,
-    publishedTime: null,
-    id: null,
-  };
-  const slides = posts.length ? posts : [fallback];
+  const slides = posts;
+
+  if (!slides.length && archive.isLoading) return null;
+
+  if (!slides.length) {
+    return (
+      <div className="sample-card sample-card-carousel sample-card-empty" aria-label="Latest published Bytes">
+        <div className="sample-card-empty-copy">
+          <span className="eyebrow">Latest published Byte</span>
+          <h2>{archive.isLoading ? "Loading the latest Byte…" : "No published Bytes yet"}</h2>
+          <p>The newest published story will appear here as soon as it is available.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`sample-card sample-card-carousel ${paused ? "is-paused" : ""}`}
@@ -937,16 +978,9 @@ function PublishedStoryCarousel() {
       <div className="sample-card-slides">
         {slides.map((post: any, index: number) => {
           const isActive = index === activeIndex;
-          return posts.length ? (
-            <div key={post.id} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive}>
-              <PostCard post={post} />
-            </div>
-          ) : (
-            <div key="fallback" className="sample-card-slide is-active">
-              <article className="post-card">
-                <div className="card-image"><div className="image-placeholder"><Sparkles size={22} /><span>Preview</span></div></div>
-                <div className="post-card-body"><div className="post-meta"><span>Today</span><span>·</span><span>4 min read</span></div><h2>{fallback.headline}</h2><p>{fallback.body}</p><span className="read-more">Explore the archive <ArrowRight size={15} /></span></div>
-              </article>
+          return (
+            <div key={post.id || index} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive}>
+              <PostCard post={post} featured={featured} />
             </div>
           );
         })}
@@ -994,6 +1028,250 @@ function EmptyToday() {
     </div>
   );
 }
+
+
+function FeaturePillarsGrid() {
+  const pillars = [
+    {
+      icon: <Bot size={22} />,
+      badge: "AI INTELLIGENCE",
+      title: "Falke AI Follow-Up",
+      description: "Ask follow-up questions directly on any story. Gets live web search context and synthesizes clear technical answers."
+    },
+    {
+      icon: <Flame size={22} />,
+      badge: "HABIT TRACKING",
+      title: "Daily Reading Streaks",
+      description: "Build a lasting 5-minute morning ritual. Gain streak flames and track your daily learning consistency."
+    },
+    {
+      icon: <Layers size={22} />,
+      badge: "CUSTOM READING",
+      title: "Dual Reading Modes",
+      description: "Switch seamlessly between immersive Editorial story cards and rapid Compact grid scanning on desktop & mobile."
+    },
+    {
+      icon: <Bell size={22} />,
+      badge: "AUTOMATED DROPS",
+      title: "Morning & Evening Briefings",
+      description: "Get clean web push drops at 8:00 AM and 10:00 PM. Stay informed without doom-scrolling social media feeds."
+    }
+  ];
+
+  return (
+    <section className="section container landing-pillars">
+      <div className="section-heading text-center">
+        <div>
+          <span className="eyebrow">Everything you need in tech</span>
+          <h2>Built for signal. Designed for focus.</h2>
+          <p className="section-subtitle">Four core pillars that transform how you stay ahead in technology.</p>
+        </div>
+      </div>
+      <div className="pillars-grid">
+        {pillars.map(p => (
+          <div key={p.title} className="pillar-card">
+            <div className="pillar-icon-wrap">{p.icon}</div>
+            <span className="pillar-badge">{p.badge}</span>
+            <h3>{p.title}</h3>
+            <p>{p.description}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function NoiseVsSignalSection() {
+  const [activeTab, setActiveTab] = useState<"signal" | "noise">("signal");
+
+  const signalPoints = [
+    {
+      icon: <Layers size={18} className="text-blue" />,
+      title: "5 to 10 Curated Stories Daily",
+      desc: "Only high-signal tech developments, zero fluff or repetitive posts."
+    },
+    {
+      icon: <Workflow size={18} className="text-blue" />,
+      title: "Verified 3-Part Briefs",
+      desc: "Clear structure: The Lead, Why It Matters, and Industry Outlook."
+    },
+    {
+      icon: <Clock3 size={18} className="text-blue" />,
+      title: "Finished in 5 Quiet Minutes",
+      desc: "Predictable morning & evening drops (8 AM & 10 PM)."
+    },
+    {
+      icon: <ShieldCheck size={18} className="text-blue" />,
+      title: "100% Ad-Free & Distraction-Free",
+      desc: "Zero sponsored posts, clickbait headlines, or algorithmic rage bait."
+    },
+    {
+      icon: <Sparkles size={18} className="text-blue" />,
+      title: "Built-in Falke AI Assistance",
+      desc: "Ask live follow-up questions directly on any story in real time."
+    },
+  ];
+
+  const noisePoints = [
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "100+ Unverified Feed Items",
+      desc: "Overwhelming noise, duplicate rumors, and unvetted hot takes."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "Clickbait Headline Loops",
+      desc: "Manipulative headlines designed to generate outrage clicks."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "Endless Infinite Scrolling",
+      desc: "Addictive design loops that waste 45+ minutes of your day."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "Intrusive Ads & Sponsored Content",
+      desc: "Promoted ads disguised as authentic technical recommendations."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "No Technical Depth or Context",
+      desc: "Shallow surface text with no interactive follow-up capability."
+    },
+  ];
+
+  return (
+    <section className="section container noise-signal-section">
+      <div className="section-heading text-center">
+        <div>
+          <span className="eyebrow">The Difference</span>
+          <h2>Why traditional tech feeds fail you</h2>
+        </div>
+      </div>
+
+      <div className="mobile-comparison-toggle" role="tablist" aria-label="Choose comparison view">
+        <button
+          type="button"
+          id="comparison-tab-signal"
+          className={activeTab === "signal" ? "active" : ""}
+          role="tab"
+          aria-selected={activeTab === "signal"}
+          aria-controls="comparison-panel-signal"
+          onClick={() => setActiveTab("signal")}
+        >
+          <CheckCircle2 size={15} className="text-blue" /> Aurikrex Bytes
+        </button>
+        <button
+          type="button"
+          id="comparison-tab-noise"
+          className={activeTab === "noise" ? "active" : ""}
+          role="tab"
+          aria-selected={activeTab === "noise"}
+          aria-controls="comparison-panel-noise"
+          onClick={() => setActiveTab("noise")}
+        >
+          <XCircle size={15} className="text-red" /> Social Feeds
+        </button>
+      </div>
+
+      <div className="comparison-container" role="group" aria-label="Aurikrex Bytes versus social feeds">
+        <div
+          id="comparison-panel-noise"
+          className={`comparison-col comparison-noise ${activeTab === "noise" ? "show-mobile" : ""}`}
+          role="tabpanel"
+          aria-labelledby="comparison-tab-noise"
+        >
+          <div className="col-header">
+            <div className="col-header-badge red-badge">
+              <XCircle size={14} /> TRADITIONAL FEEDS
+            </div>
+            <h3>Social Media Feeds</h3>
+            <p>Clickbait & Algorithmic Noise</p>
+          </div>
+          <div className="structured-points-list">
+            {noisePoints.map((pt, idx) => (
+              <div key={idx} className="structured-point-card point-noise">
+                <div className="point-icon">{pt.icon}</div>
+                <div className="point-body">
+                  <h4>{pt.title}</h4>
+                  <p>{pt.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div
+          id="comparison-panel-signal"
+          className={`comparison-col comparison-signal ${activeTab === "signal" ? "show-mobile" : ""}`}
+          role="tabpanel"
+          aria-labelledby="comparison-tab-signal"
+        >
+          <div className="col-header">
+            <div className="col-header-badge blue-badge">
+              <CheckCircle2 size={14} /> 5-MINUTE DAILY SIGNAL
+            </div>
+            <h3>Aurikrex Bytes</h3>
+            <p>Focused Daily Curation + Falke AI</p>
+          </div>
+          <div className="structured-points-list">
+            {signalPoints.map((pt, idx) => (
+              <div key={idx} className="structured-point-card point-signal">
+                <div className="point-icon">{pt.icon}</div>
+                <div className="point-body">
+                  <h4>{pt.title}</h4>
+                  <p>{pt.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FloatingMobileCta() {
+  const [visible, setVisible] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 450 && !dismissed) {
+        setVisible(true);
+      } else {
+        setVisible(false);
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [dismissed]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="floating-mobile-cta">
+      <span className="floating-mobile-cta-copy">Get your 8 AM tech briefing</span>
+      <div className="floating-mobile-cta-actions">
+        <Link href="/signup" className="button button-small">
+          Join Free <ArrowRight size={14} />
+        </Link>
+        <button
+          type="button"
+          className="floating-mobile-cta-dismiss"
+          aria-label="Dismiss briefing sign-up banner"
+          onClick={() => {
+            setDismissed(true);
+            setVisible(false);
+          }}
+        >
+          <X size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Home() {
   const [, navigate] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
@@ -1002,81 +1280,47 @@ export function Home() {
   }, [navigate, session.data]);
   return (
     <PublicLayout>
-        <main className="landing-page">
-        <section className="hero container">
+      <main className="landing-page">
+        <section className="hero container landing-hero-grid">
           <div className="hero-copy">
             <span className="eyebrow">
               <span className="live-dot" />
-              The daily tech briefing
+              The 5-Minute Daily Tech Briefing
             </span>
             <h1>
               Aurikrex Bytes —<br />
               <em>what matters.</em>
             </h1>
             <p>
-              Five to ten considered technology stories, curated and edited for
-              a better start to your day. A useful daily ritual, delivered at
-              8:00 AM.
+              Five to ten considered technology stories curated with AI context. A focused morning ritual delivered at 8:00 AM.
             </p>
             <div className="hero-actions">
-              <Link className="button" href="/signup">
+              <Link className="button button-hero" href="/signup">
                 Start reading free <ArrowRight size={16} />
               </Link>
-              <Link className="text-link" href="/how-it-works">
-                How it works <ArrowRight size={15} />
+              <Link className="text-link" href="/archive">
+                Browse archive <ArrowRight size={15} />
               </Link>
             </div>
-          </div>
-          <div className="hero-note">
-            <span>08:00</span>
-            <strong>Every morning</strong>
-            <p>
-              One calm drop. The context behind what is changing. No endless
-              scroll required.
-            </p>
-          </div>
-        </section>
-        <section className="section container">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">The format</span>
-              <h2>Three steps to better context.</h2>
+            <div className="hero-trust-badges">
+              <span><Check size={13} className="check-icon" /> Free forever</span>
+              <span><Check size={13} className="check-icon" /> 30-second sign up</span>
+              <span><Check size={13} className="check-icon" /> No credit card</span>
             </div>
           </div>
-          <div className="steps-grid">
-            <div>
-              <span>01</span>
-              <h3>Daily curation</h3>
-              <p>
-                We read widely and select the stories that will shape the day
-                ahead.
-              </p>
-            </div>
-            <div>
-              <span>02</span>
-              <h3>8 AM drop</h3>
-              <p>
-                Our edited briefing arrives as a focused set of branded story
-                cards.
-              </p>
-            </div>
-            <div>
-              <span>03</span>
-              <h3>Read your way</h3>
-              <p>
-                Browse Today's Bytes or search the complete archive whenever you
-                need it.
-              </p>
-            </div>
+          <div className="hero-side-showcase">
+            <PublishedStoryCarousel featured={true} />
           </div>
         </section>
+
+        <FeaturePillarsGrid />
+
         <section className="section container sample-section">
           <div className="sample-copy">
             <span className="eyebrow">A Byte, up close</span>
             <h2>News you can actually use.</h2>
             <p>
-              Each card gives you a clear headline, the useful context behind
-              it, and a few quiet minutes to understand what matters.
+              Each card gives you a clear headline, the useful context behind it, and a few quiet minutes to understand what matters.
             </p>
             <ProtectedLink className="text-link" href="/archive">
               See the archive <ArrowRight size={15} />
@@ -1084,42 +1328,9 @@ export function Home() {
           </div>
           <PublishedStoryCarousel />
         </section>
-        <section className="section why-section">
-          <div className="container">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">Why Bytes</span>
-                <h2>Less noise. More signal.</h2>
-              </div>
-            </div>
-            <div className="why-grid">
-              <div>
-                <h3>Edited by a person</h3>
-                <p>
-                  Not an algorithmic firehose. A real editorial choice about
-                  what deserves your attention.
-                </p>
-              </div>
-              <div>
-                <h3>A daily ritual</h3>
-                <p>
-                  Five to ten stories at 8:00 AM, so staying informed has a
-                  beginning and an end.
-                </p>
-              </div>
-              <div>
-                <h3>Built to return to</h3>
-                <p>
-                  A searchable archive that makes the useful stories easy to
-                  find again.
-                </p>
-              </div>
-            </div>
-            <Link className="button" href="/signup">
-              Join Aurikrex Bytes <ArrowRight size={16} />
-            </Link>
-          </div>
-        </section>
+
+        <NoiseVsSignalSection />
+
         <section className="manifesto">
           <div className="container manifesto-inner">
             <Sparkles size={24} />
@@ -1127,15 +1338,15 @@ export function Home() {
               <span className="eyebrow">The Bytes promise</span>
               <h2>Make room for what matters.</h2>
               <p>
-                Start tomorrow’s briefing with a free reader account, or explore
-                the archive first.
+                Start tomorrow’s briefing with a free reader account, or explore the archive first.
               </p>
             </div>
             <Link className="button" href="/signup">
-              Get started <ArrowRight size={15} />
+              Get started free <ArrowRight size={15} />
             </Link>
           </div>
         </section>
+        <FloatingMobileCta />
       </main>
     </PublicLayout>
   );
@@ -1344,7 +1555,7 @@ export function Archive() {
       seo={{
         title: "All Bytes — Aurikrex Bytes archive",
         description:
-          "Search every considered Aurikrex Bytes technology story by brand, topic, or company trend.",
+          "Browse and search every published edition of Aurikrex Bytes — your daily curated technology, AI, startup, and software engineering news archive.",
         path: page > 1 ? `/archive?page=${page}` : "/archive",
         prev: page > 1 ? `/archive?page=${page - 1}` : null,
         next: archive.data?.nextPage
@@ -1454,6 +1665,275 @@ export function Archive() {
     </PublicLayout>
   );
 }
+function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline: string }) {
+  const [question, setQuestion] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [searchQueries, setSearchQueries] = useState<string[]>([]);
+  const [asked, setAsked] = useState<string | null>(null);
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const answerRef = useRef<HTMLDivElement>(null);
+
+  const followUp = trpc.publicPosts.askFollowUp.useMutation({
+    onSuccess: (data) => {
+      setAnswer(data.answer);
+      setSearchQueries(data.searchQueries || []);
+      setTimeout(() => answerRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80);
+    },
+    onError: (err) => {
+      setAnswer(`Sorry, could not get response: ${err.message}`);
+    },
+  });
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    const q = question.trim();
+    if (!q || followUp.isPending) return;
+    setAsked(q);
+    setAnswer(null);
+    setSearchQueries([]);
+    setIsSearchExpanded(false);
+    setIsOpen(true);
+    followUp.mutate({ postId, question: q });
+    setQuestion("");
+  };
+
+  return (
+    <>
+      {/* Pinned Bottom Bar (Default state on story page) */}
+      <div className="followup-bottom-bar" role="region" aria-label="Ask follow-up bar">
+        <form className="followup-bottom-pill-form" onSubmit={handleSubmit}>
+          <input
+            type="text"
+            className="followup-bottom-input"
+            placeholder="Ask follow-up…"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            maxLength={300}
+            aria-label="Ask follow-up"
+          />
+          <button
+            type="submit"
+            className="followup-bottom-send-btn"
+            disabled={!question.trim() || followUp.isPending}
+            aria-label="Submit question"
+          >
+            {followUp.isPending ? <Square size={13} fill="currentColor" /> : <Search size={16} />}
+          </button>
+        </form>
+      </div>
+
+      {/* Full-Screen Workspace Overlay */}
+      {isOpen && typeof document !== "undefined" && createPortal(
+        <div className="followup-fullscreen-view" role="dialog" aria-modal="true" aria-label="Follow-up thread">
+          {/* Top Left Close Button */}
+          <div className="followup-fullscreen-topbar">
+            <button
+              type="button"
+              className="followup-close-circle-btn"
+              onClick={() => setIsOpen(false)}
+              aria-label="Close follow-up view"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          <div className="followup-fullscreen-content">
+            {/* Context Card: "Follow up to" */}
+            <div className="followup-context-card">
+              <div className="followup-context-kicker">
+                <Workflow size={15} />
+                <span>Follow up to</span>
+              </div>
+              <p className="followup-context-headline">{postHeadline}</p>
+            </div>
+
+            {/* User Message Bubble */}
+            {asked && (
+              <div className="followup-user-bubble-wrap">
+                <div className="followup-user-bubble">
+                  <span>{asked}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Falke AI Response or Thinking State */}
+            {followUp.isPending ? (
+              <div className="followup-thinking-block">
+                <div className="followup-thinking-header">
+                  <Sparkles size={18} className="followup-thinking-icon" />
+                  <strong>Falke AI is thinking…</strong>
+                </div>
+                <p className="followup-thinking-sub">Falke AI is searching live sources to bring you clear details</p>
+
+                {/* Collapsed by default Claude-style summary bar */}
+                <button
+                  type="button"
+                  className="followup-summary-bar"
+                  onClick={() => setIsSearchExpanded((prev) => !prev)}
+                  aria-expanded={isSearchExpanded}
+                  title="Click to toggle search sources summary"
+                >
+                  <div className="followup-summary-bar-left">
+                    <Clock3 size={15} className="followup-summary-icon" />
+                    <span className="followup-summary-text">
+                      Exploring context for "{asked ? excerpt(asked, 36) : excerpt(postHeadline, 36)}"
+                    </span>
+                  </div>
+                  <ChevronRight size={15} className={`followup-summary-chevron ${isSearchExpanded ? "is-open" : ""}`} />
+                </button>
+
+                {isSearchExpanded && (
+                  <div className="followup-summary-expanded-card">
+                    <div className="followup-summary-card-header">
+                      <strong>Summary</strong>
+                      <button
+                        type="button"
+                        className="followup-summary-close-btn"
+                        onClick={() => setIsSearchExpanded(false)}
+                        aria-label="Collapse summary"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    <div className="followup-summary-timeline">
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Exploring context for "{postHeadline}"</span>
+                      </div>
+                      <div className="followup-timeline-item">
+                        <Search size={14} className="followup-timeline-globe" />
+                        <span className="followup-timeline-text">Searching web for "{asked || postHeadline}"</span>
+                      </div>
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Synthesizing response with Falke AI</span>
+                      </div>
+                    </div>
+
+                    <div className="followup-searching-section">
+                      <span className="followup-searching-label">SEARCHING</span>
+                      <div className="followup-searching-pills">
+                        <div className="followup-search-pill"><Search size={14} /> <span>{asked ? `${asked.slice(0, 35)}…` : "Searching live web…"}</span></div>
+                        <div className="followup-search-pill"><Search size={14} /> <span>{postHeadline.slice(0, 38)}…</span></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : answer ? (
+              <div className="followup-response-block" ref={answerRef}>
+                <div className="followup-thinking-header" style={{ marginBottom: "12px" }}>
+                  <Sparkles size={18} className="followup-thinking-icon" />
+                  <strong>Falke AI Explanation</strong>
+                </div>
+
+                {/* Collapsed by default Claude-style summary bar */}
+                <button
+                  type="button"
+                  className="followup-summary-bar"
+                  onClick={() => setIsSearchExpanded((prev) => !prev)}
+                  aria-expanded={isSearchExpanded}
+                  title="Click to toggle search sources summary"
+                >
+                  <div className="followup-summary-bar-left">
+                    <Clock3 size={15} className="followup-summary-icon" />
+                    <span className="followup-summary-text">
+                      {searchQueries.length > 0
+                        ? `Searched ${searchQueries.length} web source${searchQueries.length > 1 ? "s" : ""} for "${asked ? excerpt(asked, 35) : excerpt(postHeadline, 35)}"`
+                        : `Explored context for "${asked ? excerpt(asked, 35) : excerpt(postHeadline, 35)}"`}
+                    </span>
+                  </div>
+                  <ChevronRight size={15} className={`followup-summary-chevron ${isSearchExpanded ? "is-open" : ""}`} />
+                </button>
+
+                {isSearchExpanded && (
+                  <div className="followup-summary-expanded-card">
+                    <div className="followup-summary-card-header">
+                      <strong>Summary</strong>
+                      <button
+                        type="button"
+                        className="followup-summary-close-btn"
+                        onClick={() => setIsSearchExpanded(false)}
+                        aria-label="Collapse summary"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    <div className="followup-summary-timeline">
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Exploring context for "{postHeadline}"</span>
+                      </div>
+
+                      {searchQueries.map((qStr, idx) => (
+                        <div key={idx} className="followup-timeline-item">
+                          <Search size={14} className="followup-timeline-globe" />
+                          <span className="followup-timeline-text">Searched for "{qStr}"</span>
+                        </div>
+                      ))}
+
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Synthesized explanation using Falke AI</span>
+                      </div>
+                    </div>
+
+                    {searchQueries.length > 0 && (
+                      <div className="followup-searching-section">
+                        <span className="followup-searching-label">SEARCHED</span>
+                        <div className="followup-searching-pills">
+                          {searchQueries.map((qStr, idx) => (
+                            <div key={idx} className="followup-search-pill">
+                              <Search size={14} />
+                              <span>{qStr}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="followup-answer-text">
+                  <FormattedBody body={answer} className="followup-answer-body" />
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Bottom Floating Bar inside Full-Screen View */}
+          <div className="followup-bottom-bar followup-bottom-bar-fullscreen">
+            <form className="followup-bottom-pill-form" onSubmit={handleSubmit}>
+              <input
+                type="text"
+                className="followup-bottom-input"
+                placeholder="Ask follow-up…"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                maxLength={300}
+                disabled={followUp.isPending}
+                aria-label="Ask follow-up"
+              />
+              <button
+                type="submit"
+                className="followup-bottom-send-btn"
+                disabled={!question.trim() || followUp.isPending}
+                aria-label="Submit question"
+              >
+                {followUp.isPending ? <Square size={13} fill="currentColor" /> : <Search size={16} />}
+              </button>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 export function PostDetail() {
   const [, params] = useRoute("/post/:id");
   const id = Number(params?.id);
@@ -1495,9 +1975,19 @@ export function PostDetail() {
           <div className="detail-loading" />
         ) : post.data ? (
           <article>
-            <Link className="back-link" href="/archive">
-              ← Back to all bytes
-            </Link>
+            <button
+              type="button"
+              className="back-link text-button"
+              onClick={() => {
+                if (typeof window !== "undefined" && window.history.length > 1) {
+                  window.history.back();
+                } else {
+                  window.location.href = "/archive";
+                }
+              }}
+            >
+              ← Back
+            </button>
             <div className="detail-meta">
               <span className="eyebrow">Aurikrex Bytes</span>
               <span>{formatDate(post.data.publishedTime)} · 4 min read</span>
@@ -1512,14 +2002,9 @@ export function PostDetail() {
                 fetchPriority="high"
               />
             )}
-            <div className="detail-body">
-              {post.data.body
-                .split(/\n+/)
-                .map((paragraph: string, i: number) => (
-                  <p key={i}>{paragraph}</p>
-                ))}
-            </div>
+            <FormattedBody body={post.data.body} className="detail-body" />
             <div className="detail-actions"><EngagementActions post={detailPost || post.data} /></div>
+            <FollowUpPanel postId={post.data.id} postHeadline={post.data.headline} />
           </article>
         ) : (
           <div className="empty-state">
@@ -1618,11 +2103,11 @@ export function HelpCenter() {
     ],
     [
       "How do I report an incorrect or outdated story?",
-      "Email support@aurikrex.tech with the story link and the correction you believe is needed. Include a source where possible so the editorial team can review it quickly.",
+      "Email support@aurikrex.com with the story link and the correction you believe is needed. Include a source where possible so the editorial team can review it quickly.",
     ],
     [
       "How do I contact support?",
-      "Email support@aurikrex.tech for account, editorial, or accessibility help. We aim to respond during normal business hours.",
+      "Email support@aurikrex.com for account, editorial, or accessibility help. We aim to respond during normal business hours.",
     ],
   ];
   return (
@@ -1679,8 +2164,8 @@ export function Contact() {
             <p>
               For account support, editorial feedback, or partnership enquiries.
             </p>
-            <a className="inline-link" href="mailto:support@aurikrex.tech">
-              support@aurikrex.tech <ArrowRight size={15} />
+            <a className="inline-link" href="mailto:support@aurikrex.com">
+              support@aurikrex.com <ArrowRight size={15} />
             </a>
           </div>
           <div className="contact-card">
@@ -1799,12 +2284,12 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
               We retain account and usage data for as long as your account is
               active. We delete account and usage data within a reasonable period
               after you request account deletion. Send access, correction, or
-              deletion requests to support@aurikrex.tech. We will verify requests
+              deletion requests to support@aurikrex.com. We will verify requests
               before acting on them and explain any information we must retain
               for security or legal reasons.
             </ArticleSection>
             <ArticleSection title="Contact">
-              For privacy questions or requests, contact support@aurikrex.tech.
+              For privacy questions or requests, contact support@aurikrex.com.
               This policy applies to the free Aurikrex Bytes reader experience
               and may be updated as the service changes.
             </ArticleSection>
@@ -1845,7 +2330,7 @@ export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
               stories accurate and current but cannot guarantee that every card
               is complete or error-free. To the extent permitted by law,
               Aurikrex is not liable for decisions made solely from a Byte.
-              Questions about these terms can be sent to support@aurikrex.tech.
+              Questions about these terms can be sent to support@aurikrex.com.
             </ArticleSection>
           </>
         )}
@@ -2296,6 +2781,14 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                     >
                       <GoogleIcon />
                       <span>Continue with Google</span>
+                    </a>
+                    <a
+                      className="google-button"
+                      style={{ marginTop: '0.5rem', backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc' }}
+                      href={`https://cbt.pxxl.click/api/v1/auth/sso/authorize?client_id=aurikrex_bytes&redirect_uri=${encodeURIComponent(window.location.origin + '/sso/callback')}`}
+                    >
+                      <img src="/aurikrex-logo.png" alt="Aurikrex ID" style={{ width: 18, height: 18, objectFit: 'contain' }} />
+                      <span>Sign in with Aurikrex ID</span>
                     </a>
                     <div className="auth-links">
                       {mode === "login" ? (

@@ -2,11 +2,10 @@ import type { Express, NextFunction, Request, Response } from "express";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import sharp from "sharp";
-import { getPostById, listPublishedPosts } from "../db.js";
+import { getPostById, listPublishedPosts, isMaintenanceMode } from "../db.js";
 
 const siteUrl = () =>
-  (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.tech").replace(/\/$/, "");
+  (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.com").replace(/\/$/, "");
 const xmlEscape = (value: string) =>
   value
     .replace(/&/g, "&amp;")
@@ -90,6 +89,7 @@ function buildMetaTags(seo: PostSeo) {
   const tags = [
     `<title>${htmlEscape(seo.title)}</title>`,
     `<meta name="description" content="${htmlEscape(seo.description)}">`,
+    `<meta name="keywords" content="tech news, AI news, startup news, technology briefing, Aurikrex Bytes, daily tech digest">`,
     `<meta name="robots" content="index,follow,max-image-preview:large">`,
     `<meta property="og:site_name" content="Aurikrex Bytes">`,
     `<meta property="og:title" content="${htmlEscape(seo.headline)}">`,
@@ -97,12 +97,22 @@ function buildMetaTags(seo: PostSeo) {
     `<meta property="og:type" content="article">`,
     `<meta property="og:url" content="${htmlEscape(seo.canonicalUrl)}">`,
     `<meta property="og:image" content="${htmlEscape(seo.imageUrl)}">`,
+    `<meta property="og:image:width" content="1200">`,
+    `<meta property="og:image:height" content="630">`,
     `<meta property="og:image:alt" content="${htmlEscape(seo.headline)}">`,
+    `<meta property="article:section" content="Technology">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${htmlEscape(seo.headline)}">`,
     `<meta name="twitter:description" content="${htmlEscape(seo.description)}">`,
     `<meta name="twitter:image" content="${htmlEscape(seo.imageUrl)}">`,
-    `<link rel="canonical" href="${htmlEscape(seo.canonicalUrl)}">`,
+    `<link rel="icon" type="image/png" sizes="96x96" href="${siteUrl()}/favicon-96x96.png">`,
+    `<link rel="icon" type="image/x-icon" href="${siteUrl()}/favicon.ico">`,
+    `<link rel="icon" type="image/png" sizes="48x48" href="${siteUrl()}/favicon-48x48.png">`,
+    `<link rel="icon" type="image/svg+xml" href="${siteUrl()}/logo.svg">`,
+    `<link rel="icon" type="image/png" sizes="192x192" href="${siteUrl()}/logo-192.png">`,
+    `<link rel="icon" type="image/png" sizes="512x512" href="${siteUrl()}/logo-512.png">`,
+    `<link rel="shortcut icon" href="${siteUrl()}/favicon.ico">`,
+    `<link rel="apple-touch-icon" sizes="180x180" href="${siteUrl()}/apple-touch-icon.png">`,
   ];
   if (published)
     tags.push(
@@ -112,11 +122,16 @@ function buildMetaTags(seo: PostSeo) {
     `<script type="application/ld+json">${safeJson({
       "@context": "https://schema.org",
       "@type": "NewsArticle",
+      name: seo.headline,
       headline: seo.headline,
       description: seo.description,
+      url: seo.canonicalUrl,
       image: [seo.imageUrl],
       datePublished: published,
       dateModified: published,
+      isAccessibleForFree: true,
+      articleSection: "Technology",
+      inLanguage: "en",
       author: {
         "@type": "Organization",
         name: "Aurikrex Bytes",
@@ -126,7 +141,7 @@ function buildMetaTags(seo: PostSeo) {
         "@type": "Organization",
         name: "Aurikrex Bytes",
         url: siteUrl(),
-        logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png` },
+        logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png`, width: 512, height: 512 },
       },
       mainEntityOfPage: { "@type": "WebPage", "@id": seo.canonicalUrl },
     })}</script>`
@@ -163,6 +178,27 @@ function renderShareDocument(seo: PostSeo) {
       <p>${htmlEscape(seo.description)}</p>
       <a href="${htmlEscape(seo.canonicalUrl)}">Read the story on Aurikrex Bytes</a>
     </main>
+  </body>
+</html>`;
+}
+
+function renderMaintenanceDocument() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurikrex Bytes — Under Maintenance</title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  </head>
+  <body style="background:#090d16;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px;text-align:center;">
+    <div style="max-width:480px;background:#111c2e;border:1px solid #1e293b;border-radius:18px;padding:40px 28px;box-shadow:0 16px 40px rgba(0,0,0,0.45);">
+      <div style="display:inline-block;width:12px;height:12px;background:#f59e0b;border-radius:50%;margin-bottom:16px;box-shadow:0 0 12px #f59e0b;"></div>
+      <h1 style="color:#f8fafc;font-size:24px;font-weight:700;margin:0 0 12px 0;">Under Maintenance</h1>
+      <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 24px 0;">Aurikrex Bytes is currently undergoing scheduled maintenance and updates. We'll be back online shortly.</p>
+      <div style="font-size:12px;color:#64748b;">HTTP 503 • Service Temporarily Unavailable</div>
+    </div>
   </body>
 </html>`;
 }
@@ -232,34 +268,47 @@ async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
     <text x="110" y="130" fill="#a78bfa" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="2">AURIKREX BYTES</text>
     <rect x="110" y="150" width="120" height="4" fill="url(#line)"/>
     <text x="110" y="185" fill="#eef2ff" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">${titleLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 58}">${escapeXml(line)}</tspan>`).join("")}</text>
-    <text x="110" y="${bodyY}" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${bodyLines.map((line, i) => `<tspan x="110" dy="${i===0 ? 0 : 30}">${escapeXml(line)}</tspan>`).join("")}</text>
-    <text x="110" y="510" fill="#8b5cf6" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">READ THE STORY</text>
-    <text x="110" y="543" fill="#7dd3fc" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="500">www.bytes.aurikrex.tech</text>
+    ${bodyLines.map((line, i) => `<text x="110" y="${bodyY + i * 34}" fill="#94a3b8" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400">${escapeXml(line)}</text>`).join("")}
+    <g transform="translate(110, 480)">
+      <circle cx="20" cy="20" r="18" fill="#1e293b"/>
+      <path d="M12 20 L18 26 L28 14" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <text x="48" y="26" fill="#cbd5e1" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="600">CURATED EDITORIAL</text>
+    </g>
   </svg>`;
-
-  return sharp(Buffer.from(svg)).png().toBuffer();
+  return Buffer.from(svg);
 }
 
-function wrapTitle(title: string, maxCharsPerLine: number) {
-  const words = title.split(/\s+/);
+function wrapTitle(text: string, maxCharsPerLine: number): string[] {
+  const words = text.split(" ");
   const lines: string[] = [];
-  let current = "";
+  let currentLine = "";
+
   for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length > maxCharsPerLine && current) {
-      lines.push(current);
-      current = word;
+    if ((currentLine + " " + word).trim().length <= maxCharsPerLine) {
+      currentLine = (currentLine + " " + word).trim();
     } else {
-      current = next;
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
     }
   }
-  if (current) lines.push(current);
-  return lines.slice(0, 3);
+  if (currentLine) lines.push(currentLine);
+  return lines.slice(0, 3); // max 3 lines for card aesthetic
 }
 
-async function generateShareCard(post: SeoPost) {
-  const coverBuffer = post.imageUrl ? await fetchRemoteImageBuffer(post.imageUrl) : null;
-  return await buildShareSvg(post, coverBuffer);
+async function generateShareCard(post: SeoPost): Promise<Buffer> {
+  let coverBuffer: Buffer | null = null;
+  if (post.imageUrl) {
+    coverBuffer = await fetchRemoteImageBuffer(post.imageUrl);
+  }
+  const svg = await buildShareSvg(post, coverBuffer);
+  try {
+    // @ts-ignore
+    const sharpMod = await import("sharp");
+    const sharp = sharpMod.default || sharpMod;
+    return await sharp(svg).png({ quality: 90 }).toBuffer();
+  } catch {
+    return Buffer.from(svg);
+  }
 }
 
 function escapeXml(value: string) {
@@ -279,6 +328,11 @@ async function sendPostPreview(
 ) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return next();
+
+  if (await isMaintenanceMode()) {
+    res.setHeader("Retry-After", "1800");
+    return res.status(503).type("html").send(renderMaintenanceDocument());
+  }
 
   try {
     const post = await getPostById(id);
@@ -332,35 +386,46 @@ export function registerSeoRoutes(app: Express) {
         [
           "User-agent: *",
           "Allow: /",
+          "Allow: /api/share/",
           "Disallow: /admin",
           "Disallow: /falcon-system-auth",
-          "Disallow: /api",
+          "Disallow: /api/trpc",
+          "Disallow: /api/cron",
+          "",
+          "User-agent: Googlebot-Image",
+          "Allow: /",
+          "Allow: /favicon.ico",
+          "Allow: /*.png",
+          "Allow: /*.ico",
+          "Allow: /*.svg",
+          "",
           `Sitemap: ${siteUrl()}/sitemap.xml`,
           "",
         ].join("\n")
       );
   });
 
-  app.get("/sitemap.xml", async (_req: Request, res: Response) => {
-    const staticPaths = [
-      "/",
-      "/archive",
-      "/how-it-works",
-      "/help",
-      "/contact",
-      "/privacy",
-      "/terms",
+  app.get(["/sitemap.xml", "/api/sitemap.xml", "/sitemap"], async (_req: Request, res: Response) => {
+    type StaticEntry = { path: string; priority: string; changefreq: string };
+    const staticEntries: StaticEntry[] = [
+      { path: "/",             priority: "1.0", changefreq: "daily" },
+      { path: "/archive",      priority: "0.9", changefreq: "daily" },
+      { path: "/how-it-works", priority: "0.6", changefreq: "monthly" },
+      { path: "/help",         priority: "0.4", changefreq: "monthly" },
+      { path: "/contact",      priority: "0.4", changefreq: "monthly" },
+      { path: "/privacy",      priority: "0.3", changefreq: "yearly" },
+      { path: "/terms",        priority: "0.3", changefreq: "yearly" },
     ];
-    const urls = staticPaths.map(
-      pathValue =>
-        `<url><loc>${xmlEscape(`${siteUrl()}${pathValue}`)}</loc></url>`
+    const urls = staticEntries.map(
+      ({ path: pathValue, priority, changefreq }) =>
+        `<url><loc>${xmlEscape(`${siteUrl()}${pathValue}`)}</loc><changefreq>${changefreq}</changefreq><priority>${priority}</priority></url>`
     );
     try {
       const posts = await listPublishedPosts();
       for (const post of posts) {
         const lastmod = post.publishedTime || post.updatedAt;
         urls.push(
-          `<url><loc>${xmlEscape(`${siteUrl()}/post/${post.id}`)}</loc>${lastmod ? `<lastmod>${new Date(lastmod).toISOString()}</lastmod>` : ""}</url>`
+          `<url><loc>${xmlEscape(`${siteUrl()}/post/${post.id}`)}</loc>${lastmod ? `<lastmod>${new Date(lastmod).toISOString()}</lastmod>` : ""}<changefreq>weekly</changefreq><priority>0.8</priority></url>`
         );
       }
     } catch (error) {
@@ -370,7 +435,8 @@ export function registerSeoRoutes(app: Express) {
       );
     }
     res
-      .type("application/xml")
+      .setHeader("Content-Type", "application/xml; charset=utf-8")
+      .setHeader("Cache-Control", "public, max-age=3600, s-maxage=86400, stale-while-revalidate=43200")
       .send(
         `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`
       );
@@ -400,25 +466,82 @@ export function registerSeoRoutes(app: Express) {
     }
   );
 
-  app.get("/api/share/static", (req: Request, res: Response) => {
+  app.get("/api/share/static", async (req: Request, res: Response) => {
+    if (await isMaintenanceMode()) {
+      res.setHeader("Retry-After", "1800");
+      return res.status(503).type("html").send(renderMaintenanceDocument());
+    }
     const pathValue = req.query.path as string;
     const staticMap: Record<string, { title: string; description: string }> = {
-      "root": { title: "Aurikrex Bytes â€” What matters in tech", description: "A focused editorial desk for shaping the next considered brief." },
-      "archive": { title: "All Bytes â€” Aurikrex Bytes archive", description: "Read all published editions of Aurikrex Bytes." },
-      "help": { title: "Help Center â€” Aurikrex Bytes", description: "Support and FAQs for Aurikrex Bytes." },
-      "contact": { title: "Contact Us â€” Aurikrex Bytes", description: "Get in touch with the Aurikrex Bytes team." },
-      "privacy": { title: "Privacy Policy â€” Aurikrex Bytes", description: "Privacy policy for Aurikrex Bytes." },
-      "terms": { title: "Terms of Service â€” Aurikrex Bytes", description: "Terms of Service for Aurikrex Bytes." }
+      "root": { title: "Aurikrex Bytes — What matters in tech", description: "Aurikrex Bytes is your daily curated tech news briefing — AI, startups, chips, and what matters in technology today." },
+      "archive": { title: "All Bytes — Aurikrex Bytes archive", description: "Browse every published edition of Aurikrex Bytes — your daily curated technology and AI news digest." },
+      "how-it-works": { title: "How It Works — Aurikrex Bytes", description: "Learn how Aurikrex Bytes curates the best tech news stories each day — AI, chips, and startup coverage that matters." },
+      "help": { title: "Help Center — Aurikrex Bytes", description: "Support and FAQs for Aurikrex Bytes readers." },
+      "contact": { title: "Contact Us — Aurikrex Bytes", description: "Get in touch with the Aurikrex Bytes team." },
+      "privacy": { title: "Privacy Policy — Aurikrex Bytes", description: "Privacy policy for Aurikrex Bytes." },
+      "terms": { title: "Terms of Service — Aurikrex Bytes", description: "Terms of Service for Aurikrex Bytes." }
     };
     const metadata = staticMap[pathValue] || staticMap["root"];
+    const canonicalUrl = `${siteUrl()}/${pathValue === "root" ? "" : pathValue || ""}`;
     const seo: PostSeo = {
       title: metadata.title,
       description: metadata.description,
       headline: metadata.title,
-      canonicalUrl: `${siteUrl()}/${pathValue === "root" ? "" : pathValue || ""}`,
+      canonicalUrl,
       imageUrl: `${siteUrl()}/logo-512.png`
     };
-    return res.status(200).type("html").send(renderShareDocument(seo));
+
+    // Inject WebSite + Organization JSON-LD on the homepage for Google brand Knowledge Panel
+    const isHomepage = !pathValue || pathValue === "root";
+    const extraLd = isHomepage ? `
+    <script type="application/ld+json">${safeJson({
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "Aurikrex Bytes",
+      url: siteUrl(),
+      description: metadata.description,
+      potentialAction: {
+        "@type": "SearchAction",
+        target: { "@type": "EntryPoint", urlTemplate: `${siteUrl()}/archive?q={search_term_string}` },
+        "query-input": "required name=search_term_string"
+      }
+    })}</script>
+    <script type="application/ld+json">${safeJson({
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "Aurikrex Bytes",
+      url: siteUrl(),
+      logo: { "@type": "ImageObject", url: `${siteUrl()}/logo-512.png`, width: 512, height: 512 },
+      description: metadata.description,
+      founder: {
+        "@type": "Person",
+        name: "Korede Omotosho"
+      },
+      sameAs: [
+        "https://x.com/aurikrex",
+        "https://instagram.com/falcon.omotosho",
+        "https://www.linkedin.com/in/falcon-omotosho",
+        "https://www.facebook.com/share/1SsFXC4mZP/",
+        "https://www.tiktok.com/@falcon.omotosho"
+      ]
+    })}</script>` : "";
+
+    const doc = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="keywords" content="tech news, AI news, startup news, technology briefing, Aurikrex Bytes, daily tech digest">
+    ${buildMetaTags(seo)}${extraLd}
+  </head>
+  <body>
+    <main>
+      <h1>${htmlEscape(seo.headline)}</h1>
+      <p>${htmlEscape(seo.description)}</p>
+      <a href="${htmlEscape(seo.canonicalUrl)}">Visit Aurikrex Bytes</a>
+    </main>
+  </body>
+</html>`;
+    return res.status(200).type("html").send(doc);
   });
 }
-

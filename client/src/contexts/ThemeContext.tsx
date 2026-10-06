@@ -15,7 +15,33 @@ export function ThemeProvider({ children, defaultTheme = "light", switchable = t
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("aurikrex-theme", theme);
   }, [theme]);
-  return <ThemeContext.Provider value={{ theme, switchable, toggleTheme: () => setTheme((current) => current === "light" ? "dark" : "light") }}>{children}</ThemeContext.Provider>;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (e: MediaQueryListEvent) => {
+      if (!window.localStorage.getItem("aurikrex-theme")) {
+        setTheme(e.matches ? "dark" : "light");
+      }
+    };
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, []);
+
+  return (
+    <ThemeContext.Provider
+      value={{
+        theme,
+        switchable,
+        toggleTheme: () => {
+          if (!switchable) return;
+          setTheme((current) => (current === "light" ? "dark" : "light"));
+        },
+      }}
+    >
+      {children}
+    </ThemeContext.Provider>
+  );
 }
 export function useTheme() {
   const context = useContext(ThemeContext);

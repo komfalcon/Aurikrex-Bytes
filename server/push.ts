@@ -48,7 +48,7 @@ export function formatPushNotificationContent(
   timeZone = process.env.APP_TIMEZONE || "Africa/Lagos",
   now = new Date()
 ): FormattedNotification {
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.tech";
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const hour = Number(
     new Intl.DateTimeFormat("en-US", {
       timeZone,
@@ -57,7 +57,7 @@ export function formatPushNotificationContent(
     }).format(now)
   );
   const isMorning = hour >= 4 && hour < 16;
-  const prefix = isMorning ? "🌅 Morning Brief" : "🌙 Evening Recap";
+  const prefix = isMorning ? "Morning Brief" : "Evening Recap";
 
   if (story) {
     const cleanTitle = story.headline.replace(/^(show\s+hn|launch\s+hn)\s*:\s*/i, "").trim();
@@ -80,7 +80,7 @@ export function formatPushNotificationContent(
   }
 
   return {
-    heading: isMorning ? "🌅 Daily Tech Briefing is Ready" : "🌙 Evening Tech Roundup",
+    heading: isMorning ? "Daily Tech Briefing is Ready" : "Evening Tech Roundup",
     content: "Catch up on what matters in tech today on Aurikrex Bytes.",
     url: `${baseUrl}/dashboard`,
   };
@@ -119,7 +119,7 @@ export async function sendDailyPushNotifications(): Promise<PushDeliveryResult> 
   }
 
   const notification = formatPushNotificationContent(topStory, timeZone, now);
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.tech";
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const iconUrl = `${baseUrl}/logo-192.png`;
 
   const payload: Record<string, unknown> = {
@@ -186,7 +186,7 @@ export async function sendDailyPushNotifications(): Promise<PushDeliveryResult> 
 }
 
 export async function sendTestPushNotification(subscriptionId: string) {
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.tech";
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const iconUrl = `${baseUrl}/logo-192.png`;
 
   try {

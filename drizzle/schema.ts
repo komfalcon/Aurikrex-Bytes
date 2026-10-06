@@ -11,6 +11,7 @@ export const ADMIN_ROLES = ["admin", "editor"] as const;
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  aurikrexId: text("aurikrex_id").unique(),
   openId: text("open_id").notNull().unique(),
   name: text("name"),
   email: text("email"),
@@ -40,6 +41,7 @@ export const posts = sqliteTable("posts", {
   imageProvenance: text("image_provenance"),
   headline: text("headline").notNull(),
   body: text("body").notNull(),
+  category: text("category").notNull().default("Tech"),
   status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
   scheduledTime: integer("scheduled_time", { mode: "timestamp_ms" }),
   publishedTime: integer("published_time", { mode: "timestamp_ms" }),
@@ -146,3 +148,14 @@ export const oneSignalSubscriptions = sqliteTable("onesignal_subscriptions", {
   subscriptionId: text("subscription_id").notNull().unique(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
 });
+
+export const systemSettings = sqliteTable("system_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(now),
+});
+
+export type SystemSetting = typeof systemSettings.$inferSelect;
+

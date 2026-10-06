@@ -12,9 +12,11 @@ import {
   searchQueries,
   users,
   pushSubscriptions,
+  systemSettings,
 } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
 import { updateDailyStreak } from "./streak.js";
+import { hashToken } from "./auth.js";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _schemaRepair: Promise<void> | null = null;
@@ -85,6 +87,7 @@ async function repairVerifiedNewsSchema(db: ReturnType<typeof drizzle>) {
     ["duplicate_key", "text"],
     ["image_query", "text"],
     ["image_provenance", "text"],
+    ["category", "text DEFAULT 'Tech' NOT NULL"],
   ] as const;
   for (const [name, definition] of repairs) {
     if (names.has(name)) continue;
@@ -92,6 +95,19 @@ async function repairVerifiedNewsSchema(db: ReturnType<typeof drizzle>) {
     console.info(`[Database] Applied missing posts.${name} column`);
   }
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS posts_duplicate_key_unique ON posts (duplicate_key)"));
+}
+
+async function repairSystemSettingsSchema(db: ReturnType<typeof drizzle>) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS system_settings (
+    key text PRIMARY KEY NOT NULL,
+    value text NOT NULL,
+    updated_at integer NOT NULL
+  )`));
+}
+
+async function cleanupTemplatedPosts(db: ReturnType<typeof drizzle>) {
+  // No-op to prevent auto-deleting created posts
+  return;
 }
 
 export async function getDb() {
@@ -103,7 +119,13 @@ export async function getDb() {
           authToken: process.env.TURSO_AUTH_TOKEN,
         })
       );
-      _schemaRepair = Promise.all([repairReaderSchema(_db), repairEngagementSchema(_db), repairVerifiedNewsSchema(_db)]).then(() => undefined).catch(error => {
+      _schemaRepair = Promise.all([
+        repairReaderSchema(_db),
+        repairEngagementSchema(_db),
+        repairVerifiedNewsSchema(_db),
+        repairSystemSettingsSchema(_db),
+        cleanupTemplatedPosts(_db),
+      ]).then(() => undefined).catch(error => {
         console.error("[Database] Schema repair failed:", error);
         throw error;
       });
@@ -176,10 +198,11 @@ export async function getAdminById(id: number) {
 export async function getAdminByRememberToken(token: string) {
   const db = await getDb();
   if (!db) return undefined;
+  const hashed = hashToken(token);
   const result = await db
     .select()
     .from(adminUsers)
-    .where(eq(adminUsers.rememberDeviceToken, token))
+    .where(eq(adminUsers.rememberDeviceToken, hashed))
     .limit(1);
   return result[0];
 }
@@ -286,7 +309,8 @@ export async function listPublishedPostsForCarousel() {
     .select()
     .from(posts)
     .where(eq(posts.status, "published"))
-    .orderBy(desc(posts.publishedTime), desc(posts.id));
+    .orderBy(desc(posts.publishedTime), desc(posts.id))
+    .limit(12);
 }
 export async function getPostById(id: number) {
   const db = await getDb();
@@ -482,7 +506,9 @@ export async function searchPublishedPosts(
   const search = normalizedQuery
     ? or(
       like(posts.headline, `%${normalizedQuery}%`),
-      like(posts.body, `%${normalizedQuery}%`)
+      like(posts.body, `%${normalizedQuery}%`),
+      like(posts.category, `%${normalizedQuery}%`),
+      like(posts.sourcePublisher, `%${normalizedQuery}%`)
     )
     : undefined;
   const where = search
@@ -612,4 +638,33 @@ export async function createIngestedPost(input: {
     })
     .returning();
   return created;
+}
+
+export async function getSystemSetting(key: string): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(systemSettings).where(eq(systemSettings.key, key)).limit(1);
+  return rows[0] ? rows[0].value : null;
+}
+
+export async function setSystemSetting(key: string, value: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  const now = new Date();
+  await db
+    .insert(systemSettings)
+    .values({ key, value, updatedAt: now })
+    .onConflictDoUpdate({
+      target: systemSettings.key,
+      set: { value, updatedAt: now },
+    });
+}
+
+export async function isMaintenanceMode(): Promise<boolean> {
+  const val = await getSystemSetting("maintenance_mode");
+  return val === "true";
+}
+
+export async function setMaintenanceMode(enabled: boolean): Promise<void> {
+  await setSystemSetting("maintenance_mode", enabled ? "true" : "false");
 }

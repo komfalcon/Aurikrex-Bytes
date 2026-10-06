@@ -23,7 +23,7 @@ jobs:
           response="$(curl --fail --show-error --silent --write-out '\n%{http_code}' \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "Accept: application/json" \
-            "https://www.bytes.aurikrex.tech/api/cron/curate")"
+            "https://www.bytes.aurikrex.com/api/cron/curate")"
           status="$(echo "$response" | tail -n 1)"
           body="$(echo "$response" | sed '$d')"
           echo "HTTP status: $status"

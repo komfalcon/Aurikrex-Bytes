@@ -11,10 +11,13 @@ export function registerGoogleAuthRoutes(app: Express) {
   app.get("/api/auth/google/callback", async (req, res) => {
     const code = typeof req.query.code === "string" ? req.query.code : "";
     const state = typeof req.query.state === "string" ? req.query.state : "";
-    const cookieValue = (name: string) => (req.headers.cookie || "").split(";").map(value => value.trim()).find(value => value.startsWith(`${name}=`))?.split("=")[1] || "";
+    const cookieValue = (name: string) => {
+      const match = (req.headers.cookie || "").split(";").map(v => v.trim()).find(v => v.startsWith(`${name}=`));
+      return match ? decodeURIComponent(match.slice(name.length + 1)) : "";
+    };
     const storedState = cookieValue("aurikrex_google_state");
     const storedNonce = cookieValue("aurikrex_google_nonce");
-    if (!code || !state || !storedState || state !== decodeURIComponent(storedState) || !storedNonce || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return res.redirect("/login?error=oauth");
+    if (!code || !state || !storedState || state !== storedState || !storedNonce || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return res.redirect("/login?error=oauth");
     res.clearCookie("aurikrex_google_state", { ...getSessionCookieOptions(req), maxAge: -1 });
     res.clearCookie("aurikrex_google_nonce", { ...getSessionCookieOptions(req), maxAge: -1 });
     try {

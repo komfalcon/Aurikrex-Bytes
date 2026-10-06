@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import axios from "axios";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { adminUsers, oneSignalSubscriptions, posts, readers, pushSubscriptions } from "../drizzle/schema.js";
@@ -6,12 +7,18 @@ import { ENV } from "./_core/env.js";
 import {
   createToken,
   hashPassword,
+  hashToken,
   isValidPassword,
   normalizeEmail,
   randomToken,
   readToken,
   verifyPassword,
 } from "./auth.js";
+import {
+  checkPasswordAttemptLockout,
+  recordFailedPasswordAttempt,
+  resetPasswordAttempts,
+} from "./_core/security.js";
 import {
   getAdminByEmail,
   getAdminById,
@@ -40,6 +47,8 @@ import {
   togglePostBookmark,
   togglePostReaction,
   updateReaderFeedPreference,
+  isMaintenanceMode,
+  setMaintenanceMode,
 } from "./db.js";
 import {
   cloudinaryConfigured,
@@ -55,6 +64,7 @@ import {
 } from "./_core/cookies.js";
 import { systemRouter } from "./_core/systemRouter.js";
 import { publicProcedure, router } from "./_core/trpc.js";
+import { getMistralApiKey, getNvidiaApiKey } from "./_core/aiKeys.js";
 import {
   assertActiveAdmin,
   assertPermission,
@@ -135,6 +145,86 @@ export const appRouter = router({
         ctx.res.clearCookie(name, { ...oauthCookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+    ssoExchange: publicProcedure
+      .input(
+        z.object({
+          code: z.string(),
+          code_verifier: z.string().optional(),
+          redirect_uri: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const cbtEndpoints = [
+          process.env.CBT_API_URL,
+          'https://cbt.pxxl.click',
+          'https://cbt.aurikrex.com',
+          'https://cbt-vl4x.onrender.com',
+        ].filter(Boolean);
+
+        let response: Response | null = null;
+
+        for (const base of cbtEndpoints) {
+          try {
+            const cleanBase = base!.replace(/\/+$/, '');
+            const targetUrl = cleanBase.endsWith('/api/v1') ? `${cleanBase}/auth/sso/token` : `${cleanBase}/api/v1/auth/sso/token`;
+            const res = await fetch(targetUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                client_id: 'aurikrex_bytes',
+                code: input.code,
+                code_verifier: input.code_verifier,
+                redirect_uri: input.redirect_uri || 'https://bytes.aurikrex.com/sso/callback',
+              }),
+            });
+
+            if (res.status !== 404 && res.status !== 405) {
+              response = res;
+              break;
+            }
+          } catch (_) {}
+        }
+
+        if (!response || !response.ok) {
+          const errorData = response ? await response.json().catch(() => ({})) : {};
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: errorData.message || 'SSO Token Exchange failed',
+          });
+        }
+
+        const tokenData = await response.json();
+        const { aurikrex_id, user: ssoUser } = tokenData;
+
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database error' });
+
+        let [reader] = await db
+          .select()
+          .from(readers)
+          .where(eq(readers.email, ssoUser.email.toLowerCase()))
+          .limit(1);
+
+        if (!reader) {
+          const [newReader] = await db
+            .insert(readers)
+            .values({
+              email: ssoUser.email.toLowerCase(),
+              name: ssoUser.fullName || ssoUser.email.split('@')[0],
+            })
+            .returning();
+          reader = newReader;
+        }
+
+        const token = createToken({ id: reader.id, kind: 'reader', email: reader.email });
+        const cookieOpts = getFirstPartyCookieOptions(ctx.req);
+        ctx.res.cookie(READER_COOKIE, token, cookieOpts);
+
+        return {
+          success: true,
+          reader: { id: reader.id, email: reader.email, name: reader.name, aurikrexId: aurikrex_id },
+        };
+      }),
   }),
   admin: router({
     login: publicProcedure
@@ -146,13 +236,26 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input, ctx }) => {
-        const admin = await getAdminByEmail(normalizeEmail(input.email));
+        const email = normalizeEmail(input.email);
+        const lockout = checkPasswordAttemptLockout(email);
+        if (lockout.locked) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: lockout.message,
+          });
+        }
+
+        const admin = await getAdminByEmail(email);
         if (
           !admin ||
           !admin.isActive ||
           !(await verifyPassword(input.password, admin.passwordHash))
-        )
+        ) {
+          recordFailedPasswordAttempt(email);
           throw genericNotFound();
+        }
+
+        resetPasswordAttempts(email);
         const token = createToken(
           { kind: "admin", id: admin.id, email: admin.email, role: admin.role },
           input.remember
@@ -162,7 +265,7 @@ export const appRouter = router({
         if (db && deviceToken)
           await db
             .update(adminUsers)
-            .set({ rememberDeviceToken: deviceToken })
+            .set({ rememberDeviceToken: hashToken(deviceToken) })
             .where(eq(adminUsers.id, admin.id));
         setSession(ctx, ADMIN_COOKIE, token, input.remember);
         if (deviceToken)
@@ -189,6 +292,7 @@ export const appRouter = router({
         z.object({
           headline: z.string().min(1).max(120),
           body: z.string().min(1).max(800),
+          category: z.string().optional(),
           imageUrl: z.string().url().optional(),
         })
       )
@@ -203,6 +307,7 @@ export const appRouter = router({
           });
         const result = await db.insert(posts).values({
           ...input,
+          category: input.category || "Tech",
           status: "draft",
           createdBy: admin.id,
           updatedAt: new Date(),
@@ -231,6 +336,7 @@ export const appRouter = router({
           await db.insert(posts).values({
             headline: byte.headline,
             body: byte.body,
+            category: byte.category || "Tech",
             imageUrl: byte.imageUrl,
             status: "draft",
             createdBy: admin.id,
@@ -246,6 +352,7 @@ export const appRouter = router({
           id: z.number().int().positive(),
           headline: z.string().min(1).optional(),
           body: z.string().min(1).optional(),
+          category: z.string().optional(),
           imageUrl: z.string().url().nullable().optional(),
         })
       )
@@ -548,27 +655,57 @@ export const appRouter = router({
       if (!cloudinaryConfigured()) return { configured: false };
       return { configured: true, ...getCloudinaryUploadSignature() };
     }),
+    maintenanceStatus: publicProcedure.query(async () => {
+      return { maintenance: await isMaintenanceMode() };
+    }),
+    setMaintenanceMode: publicProcedure
+      .input(
+        z.object({
+          enabled: z.boolean(),
+          password: z.string(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const admin = await requireAdmin(ctx);
+        if (admin.role !== "admin") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Only administrators can toggle maintenance mode.",
+          });
+        }
+        const expected = process.env.MAINTENANCE_PASSWORD;
+        if (!expected) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "MAINTENANCE_PASSWORD is not configured in environment variables.",
+          });
+        }
+        if (input.password !== expected) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Incorrect verification password. Action denied.",
+          });
+        }
+        await setMaintenanceMode(input.enabled);
+        return { success: true, maintenance: input.enabled };
+      }),
   }),
   reader: router({
     oneSignalAppId: publicProcedure.query(() => ENV.oneSignalAppId),
     registerOneSignalSubscription: publicProcedure
       .input(z.object({ subscriptionId: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {
-        let readerId: number | null = null;
-        try {
-          readerId = (await requireReader(ctx)).id;
-        } catch {
-          // Guest subscription without active session
-        }
+        const session = await requireReader(ctx);
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-        await db.delete(oneSignalSubscriptions).where(eq(oneSignalSubscriptions.subscriptionId, input.subscriptionId));
-        await db.insert(oneSignalSubscriptions).values({ readerId, subscriptionId: input.subscriptionId });
+        await db.delete(oneSignalSubscriptions).where(and(eq(oneSignalSubscriptions.subscriptionId, input.subscriptionId), eq(oneSignalSubscriptions.readerId, session.id)));
+        await db.insert(oneSignalSubscriptions).values({ readerId: session.id, subscriptionId: input.subscriptionId });
         return { success: true };
       }),
     sendTestPush: publicProcedure
       .input(z.object({ subscriptionId: z.string().min(1) }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await requireAdmin(ctx);
         const { sendTestPushNotification } = await import("./push.js");
         return await sendTestPushNotification(input.subscriptionId);
       }),
@@ -659,21 +796,58 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input, ctx }) => {
-        const reader = await getReaderByEmail(normalizeEmail(input.email));
+        const email = normalizeEmail(input.email);
+        const lockout = checkPasswordAttemptLockout(email);
+        if (lockout.locked) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: lockout.message,
+          });
+        }
+
+        const reader = await getReaderByEmail(email);
         if (
           !reader ||
           !reader.passwordHash ||
           !(await verifyPassword(input.password, reader.passwordHash))
-        )
+        ) {
+          const attempt = recordFailedPasswordAttempt(email);
+          if (attempt.autoResetNeeded && reader) {
+            try {
+              const token = randomToken();
+              const db = await getDb();
+              if (db) {
+                await db
+                  .update(readers)
+                  .set({
+                    resetToken: token,
+                    resetTokenExpires: new Date(Date.now() + 1000 * 60 * 30),
+                  })
+                  .where(eq(readers.id, reader.id));
+                const url = `${appBaseUrl()}/reset-password?token=${token}`;
+                await sendAuthEmail(
+                  reader.email,
+                  "Security Alert: Reset your Aurikrex Bytes password",
+                  resetPasswordEmailHtml(url)
+                );
+              }
+            } catch (err) {
+              console.error("[Auth] Failed sending auto password reset email:", err);
+            }
+          }
           throw new TRPCError({
             code: "UNAUTHORIZED",
-            message: "Invalid email or password",
+            message: attempt.message,
           });
+        }
+
         if (!reader.emailVerified)
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Please verify your email before signing in",
           });
+
+        resetPasswordAttempts(email);
         const token = createToken(
           {
             kind: "reader",
@@ -810,6 +984,7 @@ export const appRouter = router({
             resetTokenExpires: null,
           })
           .where(eq(readers.id, reader.id));
+        resetPasswordAttempts(reader.email);
         return { success: true };
       }),
     googleStart: publicProcedure.query(({ ctx }) => {
@@ -881,6 +1056,151 @@ export const appRouter = router({
         if (!post) throw genericNotFound();
         await recordPostView(post.id);
         return post;
+      }),
+    askFollowUp: publicProcedure
+      .input(
+        z.object({
+          postId: z.number().int().positive(),
+          question: z.string().min(3).max(300).trim(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        await publishDuePosts();
+        const post = await getPublishedPostById(input.postId);
+        if (!post) throw genericNotFound();
+
+        const searchQuery = `${post.headline} — ${input.question}`;
+        let webContext = "";
+        let tavilyDirectAnswer = "";
+
+        let searchQueries: string[] = [];
+        const tavilyApiKey = (process.env.TAVILY_API_KEY || "").trim();
+        if (tavilyApiKey) {
+          try {
+            const tavilyRes = await axios.post(
+              "https://api.tavily.com/search",
+              {
+                api_key: tavilyApiKey,
+                query: searchQuery,
+                max_results: 5,
+                search_depth: "basic",
+                include_answer: true,
+              },
+              { timeout: 10_000 }
+            );
+            tavilyDirectAnswer = tavilyRes.data?.answer || "";
+            const results: any[] = tavilyRes.data?.results ?? [];
+            searchQueries = results.map((r: any) => r.title || r.query).filter(Boolean).slice(0, 3);
+            webContext = results
+              .map(
+                (r: any, i: number) =>
+                  `[${i + 1}] ${r.title}\n${r.content?.slice(0, 400) ?? ""}`
+              )
+              .join("\n\n");
+          } catch (err) {
+            console.warn("[FollowUp] Tavily search failed, using story context:", err);
+          }
+        }
+
+        if (searchQueries.length === 0) {
+          searchQueries = [
+            `${post.headline.slice(0, 50)}…`,
+            `${input.question} overview`,
+            `Aurikrex Bytes technical context`
+          ];
+        }
+
+        const systemPrompt = `You are an intelligent tech news assistant for Aurikrex Bytes.
+The reader is asking a follow-up question regarding the following story:
+
+HEADLINE: ${post.headline}
+STORY CONTENT: ${post.body}
+
+${webContext ? `RELEVANT LIVE WEB SEARCH CONTEXT:\n${webContext}` : "No external web search results available."}
+
+Instructions:
+1. Provide a direct, insightful, and concise answer to the reader's question in 2-3 clear paragraphs.
+2. Synthesize the provided story details and web context into a natural explanation.
+3. Keep the tone calm, authoritative, and focused on tech signal rather than hype.
+4. Do NOT repeat or copy the original story text verbatim.
+5. Do NOT invent false facts.`;
+
+        let answer = "";
+        const mistralApiKey = getMistralApiKey();
+        const nvidiaApiKey = getNvidiaApiKey();
+
+        // 1. Primary: Try Mistral AI models
+        if (mistralApiKey) {
+          for (const model of ["mistral-small-latest", "open-mistral-7b"]) {
+            try {
+              const mistralRes = await axios.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                {
+                  model,
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: input.question },
+                  ],
+                  max_tokens: 600,
+                  temperature: 0.4,
+                },
+                {
+                  headers: { Authorization: `Bearer ${mistralApiKey}` },
+                  timeout: 15_000,
+                }
+              );
+              const text = mistralRes.data?.choices?.[0]?.message?.content ?? "";
+              if (text && text.trim()) {
+                answer = text.trim();
+                break;
+              }
+            } catch (mistralErr) {
+              console.warn(`[FollowUp] Mistral AI model ${model} failed:`, mistralErr instanceof Error ? mistralErr.message : String(mistralErr));
+            }
+          }
+        }
+
+        // 2. Secondary: Fall back to NVIDIA NIM if Mistral failed
+        if (!answer && nvidiaApiKey) {
+          for (const model of ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"]) {
+            try {
+              const nvidiaRes = await axios.post(
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                {
+                  model,
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: input.question },
+                  ],
+                  max_tokens: 600,
+                  temperature: 0.4,
+                },
+                {
+                  headers: { Authorization: `Bearer ${nvidiaApiKey}` },
+                  timeout: 15_000,
+                }
+              );
+              const text = nvidiaRes.data?.choices?.[0]?.message?.content ?? "";
+              if (text && text.trim()) {
+                answer = text.trim();
+                break;
+              }
+            } catch (nvidiaErr) {
+              console.warn(`[FollowUp] NVIDIA NIM model ${model} failed:`, nvidiaErr instanceof Error ? nvidiaErr.message : String(nvidiaErr));
+            }
+          }
+        }
+
+        // 3. Fallback to Tavily direct web answer if AI endpoints failed
+        if (!answer && tavilyDirectAnswer) {
+          answer = tavilyDirectAnswer;
+        }
+
+        if (!answer) {
+          answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable live AI web search.`;
+        }
+
+        return { answer, searchQueries };
       }),
   }),
 });

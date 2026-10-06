@@ -136,7 +136,7 @@ export default function PWAInstallPrompt() {
       </div>
       <div className="install-prompt-copy">
         <strong>Install Aurikrex Bytes</strong>
-        <span className="install-prompt-domain">bytes.aurikrex.tech</span>
+        <span className="install-prompt-domain">bytes.aurikrex.com</span>
         {helperMessage && <p>{helperMessage}</p>}
       </div>
       <div className="install-prompt-actions">
