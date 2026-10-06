@@ -1,0 +1,47 @@
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+
+const CENTRAL_API_URL = process.env.CENTRAL_API_URL || 'https://aurikrex-central.pxxl.click';
+const S2S_SECRET = process.env.AURIKREX_CENTRAL_S2S_SECRET || 'aurikrex-s2s-master-key-2026';
+
+const jwksUrl = new URL(`${CENTRAL_API_URL}/.well-known/jwks.json`);
+const JWKS = createRemoteJWKSet(jwksUrl);
+
+export async function verifyCentralToken(token: string) {
+  try {
+    const { payload } = await jwtVerify(token, JWKS, {
+      algorithms: ['RS256'],
+    });
+    return payload;
+  } catch (err) {
+    console.error('Failed to verify central token:', err);
+    return null;
+  }
+}
+
+export async function deductCoins(userId: string | number, amount: number) {
+  try {
+    const response = await fetch(`${CENTRAL_API_URL}/api/v1/coins/deduct`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Central-Api-Key': S2S_SECRET,
+      },
+      body: JSON.stringify({
+        userId,
+        aurikrex_id: userId, // Assuming it could be passed as aurikrex_id as well
+        amount,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Coin deduction failed:', response.status, errorText);
+      return false;
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Coin deduction error:', error);
+    return false;
+  }
+}

@@ -277,6 +277,31 @@ function ProfileLightboxModal({
         <div className="whatsapp-profile-info">
           <h3>{name}</h3>
           <p>{sessionData?.email}</p>
+          
+          <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
+            <span 
+              onClick={() => {
+                const akxId = (sessionData as any)?.aurikrexId || `AKX-${String(sessionData?.id || '0').padStart(6, '0')}`;
+                navigator.clipboard.writeText(akxId);
+                toast.success("Aurikrex ID copied to clipboard!");
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '4px 12px',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                color: '#3b82f6',
+                borderRadius: '9999px',
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s'
+              }}
+              title="Click to copy Aurikrex ID"
+            >
+              Aurikrex ID: <strong style={{ fontFamily: 'monospace' }}>{(sessionData as any)?.aurikrexId || `AKX-${String(sessionData?.id || '0').padStart(6, '0')}`}</strong>
+            </span>
+          </div>
         </div>
 
         <div className="whatsapp-profile-actions">

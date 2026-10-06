@@ -747,6 +747,14 @@ export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<C
   }
   if (!candidates.length) return [];
 
+  // S2S Coin Deduction (AI Curator costs 5 coins)
+  const { deductCoins } = await import("./central.js");
+  const deductionSuccessful = await deductCoins(0, 5); // Using 0 or a generic system ID
+  if (!deductionSuccessful) {
+    console.error("[AICurator] Insufficient coins or deduction failed. Skipping curation.");
+    return [];
+  }
+
   const mistralKey = getMistralApiKey();
   const nvidiaKey = getNvidiaApiKey();
 

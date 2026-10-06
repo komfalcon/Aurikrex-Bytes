@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer, type Server } from "http";
 import net from "net";
+import cors from "cors";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth.js";
 import { registerStorageProxy } from "./storageProxy.js";
@@ -46,6 +47,10 @@ async function setupApp() {
   }
   // Configure body parser with 50mb limit to support multi-page screenshot PDF uploads
   app.use(securityHeaders);
+  app.use(cors({
+    origin: ["https://bytes.aurikrex.com", "https://www.bytes.aurikrex.com", "https://cbt.aurikrex.com", "https://aurikrex.com", "https://aurikrex-central.pxxl.click", "https://bytes.pxxl.click"],
+    credentials: true,
+  }));
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);

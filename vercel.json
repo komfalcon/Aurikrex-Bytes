@@ -58,19 +58,19 @@
   "redirects": [
     {
       "source": "/(.*)",
-      "has": [{ "type": "host", "value": "bytes.aurikrex.tech" }],
+      "has": [{ "type": "host", "value": "bytes.aurikrex.com" }],
       "destination": "https://www.bytes.aurikrex.com/$1",
       "statusCode": 301
     },
     {
       "source": "/(.*)",
-      "has": [{ "type": "host", "value": "aurikrex.tech" }],
+      "has": [{ "type": "host", "value": "aurikrex.com" }],
       "destination": "https://www.bytes.aurikrex.com/$1",
       "statusCode": 301
     },
     {
       "source": "/(.*)",
-      "has": [{ "type": "host", "value": "www.aurikrex.tech" }],
+      "has": [{ "type": "host", "value": "www.aurikrex.com" }],
       "destination": "https://www.bytes.aurikrex.com/$1",
       "statusCode": 301
     },
