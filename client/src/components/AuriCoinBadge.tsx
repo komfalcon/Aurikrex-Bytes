@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { trpc } from '@/lib/trpc';
 
 export interface CoinBalanceData {
   balance: number;
@@ -10,48 +11,22 @@ export interface CoinBalanceData {
 
 export function AuriCoinBadge({ className = '', compact = false }: { className?: string; compact?: boolean }) {
   const [balanceData, setBalanceData] = useState<CoinBalanceData | null>(null);
-  const [loading, setLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const getToken = () => {
-    if (typeof window === 'undefined') return null;
-    return (
-      localStorage.getItem('accessToken') ||
-      localStorage.getItem('token') ||
-      localStorage.getItem('aurikrex:bytes-token') ||
-      localStorage.getItem('aurikrex:vault-token') ||
-      sessionStorage.getItem('aurikrex:library-session-token') ||
-      sessionStorage.getItem('accessToken') ||
-      sessionStorage.getItem('token')
-    );
-  };
-  const token = getToken();
-
-  const fetchBalance = async () => {
-    if (!token) return;
-    try {
-      setLoading(true);
-      const centralUrl = import.meta.env.VITE_CENTRAL_URL || 'https://aurikrex-central.pxxl.click';
-      const res = await fetch(`${centralUrl}/api/v1/coins/balance`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setBalanceData(data);
-      }
-    } catch (err) {
-      console.warn('Failed to fetch Auri Coin balance', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const coinsQuery = trpc.auth.coinsBalance.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: true,
+    staleTime: 10000,
+  });
 
   useEffect(() => {
-    fetchBalance();
+    if (coinsQuery.data) {
+      setBalanceData(coinsQuery.data as CoinBalanceData);
+    }
+  }, [coinsQuery.data]);
+
+  useEffect(() => {
     const handleCoinsUpdated = (event: Event) => {
       const customEv = event as CustomEvent<{ remainingCoins?: number; nextResetDate?: string }>;
       if (typeof customEv.detail?.remainingCoins === 'number') {
@@ -61,19 +36,17 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
             : { balance: customEv.detail.remainingCoins!, allowance: 5000, costPerRequest: 5, lastResetDate: new Date().toISOString(), nextResetDate: customEv.detail.nextResetDate || new Date().toISOString() }
         );
       } else {
-        fetchBalance();
+        coinsQuery.refetch();
       }
     };
 
     window.addEventListener('aurikrex:coins-updated', handleCoinsUpdated);
-    window.addEventListener('auricobadge:refresh', fetchBalance);
-    const interval = setInterval(fetchBalance, 60000);
+    window.addEventListener('auricobadge:refresh', () => coinsQuery.refetch());
     return () => {
       window.removeEventListener('aurikrex:coins-updated', handleCoinsUpdated);
-      window.removeEventListener('auricobadge:refresh', fetchBalance);
-      clearInterval(interval);
+      window.removeEventListener('auricobadge:refresh', () => coinsQuery.refetch());
     };
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -111,7 +84,7 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
         aria-label={`Auri Coin balance: ${balance.toLocaleString()} coins`}
       >
         <span className="text-sm" aria-hidden="true">🪙</span>
-        <span className="tabular-nums">{loading && !balanceData ? '...' : balance.toLocaleString()}</span>
+        <span className="tabular-nums">{coinsQuery.isLoading && !balanceData ? '...' : balance.toLocaleString()}</span>
         <span className={`${compact ? 'hidden xl:inline' : ''} text-[10px] opacity-75 font-normal`}>AuriCoins</span>
       </button>
 

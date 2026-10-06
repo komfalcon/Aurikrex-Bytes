@@ -127,6 +127,40 @@ async function requireReader(ctx: { req: any }) {
 export const appRouter = router({
   system: systemRouter,
   auth: router({
+    coinsBalance: publicProcedure.query(async ({ ctx }) => {
+      try {
+        const token = cookies(ctx.req)[READER_COOKIE];
+        const payload = token ? readToken(token) : null;
+        if (payload && payload.kind === "reader") {
+          let email = payload.email;
+          if (!email) {
+            const r = await getReaderById(payload.id);
+            email = r?.email;
+          }
+          if (email) {
+            const centralUrl = process.env.CENTRAL_API_URL || "https://aurikrex-central.pxxl.click";
+            const secret = process.env.AURIKREX_CENTRAL_S2S_SECRET || "aurikrex-s2s-master-key-2026";
+            const res = await fetch(`${centralUrl}/api/v1/coins/balance?userId=${encodeURIComponent(email)}`, {
+              headers: {
+                "X-Central-Api-Key": secret,
+              },
+            });
+            if (res.ok) {
+              return await res.json();
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[Coins] Failed to query coins balance from Central:", err);
+      }
+      return {
+        balance: 5000,
+        allowance: 5000,
+        costPerRequest: 5,
+        lastResetDate: new Date().toISOString(),
+        nextResetDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+      };
+    }),
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
       const firstPartyCookieOptions = getFirstPartyCookieOptions(ctx.req);
@@ -1073,13 +1107,20 @@ export const appRouter = router({
         let nextResetDate: string | undefined;
 
         try {
-          const reader = await requireReader(ctx).catch(() => null);
-          if (reader) {
-            const { deductCoins } = await import("./_core/central.js");
-            const res = await deductCoins(reader.id, "aurikrex_bytes", "ai_summary");
-            if (res && typeof res.remainingCoins === "number") {
-              remainingCoins = res.remainingCoins;
-              nextResetDate = res.nextResetDate;
+          const readerPayload = await requireReader(ctx).catch(() => null);
+          if (readerPayload) {
+            let readerEmail = readerPayload.email;
+            if (!readerEmail) {
+              const r = await getReaderById(readerPayload.id);
+              readerEmail = r?.email;
+            }
+            if (readerEmail) {
+              const { deductCoins } = await import("./_core/central.js");
+              const res = await deductCoins(readerEmail, "aurikrex_bytes", "ai_summary");
+              if (res && typeof res.remainingCoins === "number") {
+                remainingCoins = res.remainingCoins;
+                nextResetDate = res.nextResetDate;
+              }
             }
           }
         } catch (_) {}
