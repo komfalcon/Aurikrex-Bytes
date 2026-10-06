@@ -132,7 +132,7 @@ export const appRouter = router({
         const token = cookies(ctx.req)[READER_COOKIE];
         const payload = token ? readToken(token) : null;
         if (payload && payload.kind === "reader") {
-          let email = payload.email;
+          let email: string | undefined = payload.email;
           if (!email) {
             const r = await getReaderById(payload.id);
             email = r?.email;
@@ -1109,7 +1109,7 @@ export const appRouter = router({
         try {
           const readerPayload = await requireReader(ctx).catch(() => null);
           if (readerPayload) {
-            let readerEmail = readerPayload.email;
+            let readerEmail: string | undefined = readerPayload.email;
             if (!readerEmail) {
               const r = await getReaderById(readerPayload.id);
               readerEmail = r?.email;
