@@ -66,9 +66,11 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
     };
 
     window.addEventListener('aurikrex:coins-updated', handleCoinsUpdated);
+    window.addEventListener('auricoins:updated', handleCoinsUpdated);
     window.addEventListener('auricobadge:refresh', () => coinsQuery.refetch());
     return () => {
       window.removeEventListener('aurikrex:coins-updated', handleCoinsUpdated);
+      window.removeEventListener('auricoins:updated', handleCoinsUpdated);
       window.removeEventListener('auricobadge:refresh', () => coinsQuery.refetch());
     };
   }, []);
