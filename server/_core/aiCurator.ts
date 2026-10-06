@@ -749,7 +749,7 @@ export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<C
 
   // S2S Coin Deduction (AI Curator costs 5 coins)
   const { deductCoins } = await import("./central.js");
-  const deductionSuccessful = await deductCoins(0, 5); // Using 0 or a generic system ID
+  const deductionSuccessful = await deductCoins("system_curator", "aurikrex_bytes", "ai_curator");
   if (!deductionSuccessful) {
     console.error("[AICurator] Insufficient coins or deduction failed. Skipping curation.");
     return [];

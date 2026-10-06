@@ -1064,10 +1064,25 @@ export const appRouter = router({
           question: z.string().min(3).max(300).trim(),
         })
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         await publishDuePosts();
         const post = await getPublishedPostById(input.postId);
         if (!post) throw genericNotFound();
+
+        let remainingCoins: number | undefined;
+        let nextResetDate: string | undefined;
+
+        try {
+          const reader = await requireReader(ctx).catch(() => null);
+          if (reader) {
+            const { deductCoins } = await import("./_core/central.js");
+            const res = await deductCoins(reader.id, "aurikrex_bytes", "ai_summary");
+            if (res && typeof res.remainingCoins === "number") {
+              remainingCoins = res.remainingCoins;
+              nextResetDate = res.nextResetDate;
+            }
+          }
+        } catch (_) {}
 
         const searchQuery = `${post.headline} — ${input.question}`;
         let webContext = "";
@@ -1200,7 +1215,7 @@ Instructions:
           answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable live AI web search.`;
         }
 
-        return { answer, searchQueries };
+        return { answer, searchQueries, remainingCoins, nextResetDate };
       }),
   }),
 });

@@ -1700,9 +1700,16 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
   const answerRef = useRef<HTMLDivElement>(null);
 
   const followUp = trpc.publicPosts.askFollowUp.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       setAnswer(data.answer);
       setSearchQueries(data.searchQueries || []);
+      if (typeof data.remainingCoins === 'number') {
+        window.dispatchEvent(
+          new CustomEvent('aurikrex:coins-updated', {
+            detail: { remainingCoins: data.remainingCoins, nextResetDate: data.nextResetDate },
+          })
+        );
+      }
       setTimeout(() => answerRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80);
     },
     onError: (err) => {

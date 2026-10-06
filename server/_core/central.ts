@@ -18,7 +18,7 @@ export async function verifyCentralToken(token: string) {
   }
 }
 
-export async function deductCoins(userId: string | number, amount: number) {
+export async function deductCoins(userId: string | number, appId: string = 'aurikrex_bytes', featureName: string = 'ai_summary') {
   try {
     const response = await fetch(`${CENTRAL_API_URL}/api/v1/coins/deduct`, {
       method: 'POST',
@@ -27,21 +27,22 @@ export async function deductCoins(userId: string | number, amount: number) {
         'X-Central-Api-Key': S2S_SECRET,
       },
       body: JSON.stringify({
-        userId,
-        aurikrex_id: userId, // Assuming it could be passed as aurikrex_id as well
-        amount,
+        userId: String(userId),
+        appId,
+        featureName,
+        idempotencyKey: `bytes_${featureName}_${userId}_${Date.now()}_${Math.random().toString(36).substring(7)}`,
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Coin deduction failed:', response.status, errorText);
-      return false;
+      return null;
     }
     
     return await response.json();
   } catch (error) {
     console.error('Coin deduction error:', error);
-    return false;
+    return null;
   }
 }
