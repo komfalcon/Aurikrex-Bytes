@@ -1,0 +1,29 @@
+{
+  "routes": [
+    { "path": "/", "title": "Home" },
+    { "path": "/dashboard", "title": "Dashboard" },
+    { "path": "/saved", "title": "Saved Bytes" },
+    { "path": "/archive", "title": "All Bytes" },
+    { "path": "/post/:id", "title": "Byte" },
+    { "path": "/how-it-works", "title": "How it works" },
+    { "path": "/help", "title": "Help center" },
+    { "path": "/contact", "title": "Contact" },
+    { "path": "/privacy", "title": "Privacy" },
+    { "path": "/terms", "title": "Terms" },
+    { "path": "/login", "title": "Sign in" },
+    { "path": "/sso/callback", "title": "SSO callback" },
+    { "path": "/sso/login", "title": "SSO login" },
+    { "path": "/signup", "title": "Join free" },
+    { "path": "/forgot-password", "title": "Forgot password" },
+    { "path": "/reset-password", "title": "Reset password" },
+    { "path": "/verify-email", "title": "Verify email" },
+    { "path": "/falcon-system-auth", "title": "Newsroom access" },
+    { "path": "/admin", "title": "Newsroom" },
+    { "path": "/admin/new", "title": "New post" },
+    { "path": "/admin/new/:id", "title": "Edit post" },
+    { "path": "/admin/preview/:draftId", "title": "Preview post" },
+    { "path": "/admin/team", "title": "Team management" },
+    { "path": "/admin/analytics", "title": "Analytics" },
+    { "path": "/404", "title": "Not found" }
+  ]
+}

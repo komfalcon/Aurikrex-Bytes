@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { notifyOwner } from "./notification";
-import { adminProcedure, publicProcedure, router } from "./trpc";
+import { notifyOwner } from "./notification.js";
+import { adminProcedure, publicProcedure, router } from "./trpc.js";
+import { isMaintenanceMode } from "../db.js";
 
 export const systemRouter = router({
   health: publicProcedure
@@ -12,6 +13,10 @@ export const systemRouter = router({
     .query(() => ({
       ok: true,
     })),
+
+  maintenanceStatus: publicProcedure.query(async () => ({
+    maintenance: await isMaintenanceMode(),
+  })),
 
   notifyOwner: adminProcedure
     .input(

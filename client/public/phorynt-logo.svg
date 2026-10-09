@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Phorynt icon">
+  <defs>
+    <linearGradient id="cyanFold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#18A9E3"/>
+    </linearGradient>
+    <linearGradient id="royalFold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2F74EE"/>
+      <stop offset="100%" stop-color="#2563EB"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="124" fill="#07111F"/>
+  <!-- folded cyan knowledge plane -->
+  <path d="M128 190 242 84h150c20 0 31 24 17 38L236 295l-91 91c-32-12-55-43-55-80V224c0-13 5-25 15-34l23-22Z" fill="url(#cyanFold)"/>
+  <!-- royal counter-plane creates the forward fold -->
+  <path d="m274 190 83-82 91 82c10 9 15 21 15 34v87c0 37-23 68-55 80l-135-96-45-32 46-46Z" fill="url(#royalFold)"/>
+  <!-- light negative-space diamond, the knowledge token at the fold -->
+  <path d="m256 206 61 61-61 61-61-61 61-61Z" fill="#E2E8F0"/>
+</svg>

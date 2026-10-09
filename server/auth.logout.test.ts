@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { appRouter } from "./routers";
-import { COOKIE_NAME } from "../shared/const";
-import type { TrpcContext } from "./_core/context";
+import { appRouter } from "./routers.js";
+import { COOKIE_NAME } from "../shared/const.js";
+import type { TrpcContext } from "./_core/context.js";
 
 type CookieCall = {
   name: string;
@@ -49,9 +49,22 @@ describe("auth.logout", () => {
     const result = await caller.auth.logout();
 
     expect(result).toEqual({ success: true });
-    expect(clearedCookies).toHaveLength(1);
-    expect(clearedCookies[0]?.name).toBe(COOKIE_NAME);
+    expect(clearedCookies.map(cookie => cookie.name)).toEqual([
+      COOKIE_NAME,
+      "aurikrex_admin_session",
+      "aurikrex_admin_device",
+      "aurikrex_reader_session",
+      "aurikrex_google_state",
+      "aurikrex_google_nonce",
+    ]);
     expect(clearedCookies[0]?.options).toMatchObject({
+      maxAge: -1,
+      secure: true,
+      sameSite: "lax",
+      httpOnly: true,
+      path: "/",
+    });
+    expect(clearedCookies[4]?.options).toMatchObject({
       maxAge: -1,
       secure: true,
       sameSite: "none",
