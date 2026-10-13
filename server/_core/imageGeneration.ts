@@ -17,63 +17,68 @@
  */
 import { storagePut } from "server/storage";
 import { ENV } from "./env.js";
-import { getNvidiaApiKey, getCloudflareAiConfig } from "./aiKeys.js";
+import { getNvidiaApiKey, getCloudflareAiConfig, getCloudflareAiConfigs } from "./aiKeys.js";
 import { cloudinaryConfigured } from "../services.js";
 
 /**
  * Generates photorealistic 16:9 images using Cloudflare Workers AI (FLUX.1-schnell).
+ * Automatically cascades across multiple configured Cloudflare accounts if primary fails.
  */
 export async function generateCloudflareFluxImage(prompt: string): Promise<string | null> {
-  const cf = getCloudflareAiConfig();
-  if (!cf || !prompt) return null;
+  const configs = getCloudflareAiConfigs();
+  if (!configs.length || !prompt) return null;
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
+  for (const cf of configs) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
 
-    const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/@cf/black-forest-labs/flux-1-schnell`;
-    const response = await fetch(url, {
-      signal: controller.signal,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${cf.apiToken}`,
-      },
-      body: JSON.stringify({
-        prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
-      }),
-    });
+      const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/@cf/black-forest-labs/flux-1-schnell`;
+      const response = await fetch(url, {
+        signal: controller.signal,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${cf.apiToken}`,
+        },
+        body: JSON.stringify({
+          prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
+        }),
+      });
 
-    clearTimeout(timeout);
-    if (response.ok) {
-      const data = await response.json();
-      const b64 = data.result?.image;
-      if (b64) {
-        const dataUri = `data:image/jpeg;base64,${b64}`;
-        if (cloudinaryConfigured()) {
-          try {
-            const { v2: cloudinary } = await import("cloudinary");
-            cloudinary.config({
-              cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-              api_key: process.env.CLOUDINARY_API_KEY,
-              api_secret: process.env.CLOUDINARY_API_SECRET,
-            });
-            const uploadRes = await cloudinary.uploader.upload(dataUri, {
-              folder: "aurikrex/posts",
-              resource_type: "image",
-            });
-            if (uploadRes.secure_url || uploadRes.url) {
-              return uploadRes.secure_url || uploadRes.url;
+      clearTimeout(timeout);
+      if (response.ok) {
+        const data = await response.json();
+        const b64 = data.result?.image;
+        if (b64) {
+          const dataUri = `data:image/jpeg;base64,${b64}`;
+          if (cloudinaryConfigured()) {
+            try {
+              const { v2: cloudinary } = await import("cloudinary");
+              cloudinary.config({
+                cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+                api_key: process.env.CLOUDINARY_API_KEY,
+                api_secret: process.env.CLOUDINARY_API_SECRET,
+              });
+              const uploadRes = await cloudinary.uploader.upload(dataUri, {
+                folder: "aurikrex/posts",
+                resource_type: "image",
+              });
+              if (uploadRes.secure_url || uploadRes.url) {
+                return uploadRes.secure_url || uploadRes.url;
+              }
+            } catch {
+              // Cloudinary fallback to dataUri
             }
-          } catch {
-            // Cloudinary fallback to dataUri
           }
+          return dataUri;
         }
-        return dataUri;
+      } else {
+        console.warn(`[Cloudflare FLUX] Account failed with status ${response.status}. Trying next fallback account if available.`);
       }
+    } catch (err) {
+      console.warn("[Cloudflare FLUX] Generation failed with account:", err instanceof Error ? err.message : String(err));
     }
-  } catch (err) {
-    console.warn("[Cloudflare FLUX] Generation failed:", err instanceof Error ? err.message : String(err));
   }
   return null;
 }

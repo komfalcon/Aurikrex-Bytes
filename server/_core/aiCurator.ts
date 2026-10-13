@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { inArray } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { posts } from "../../drizzle/schema.js";
-import { getAiApiKeys, getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig } from "./aiKeys.js";
+import { getAiApiKeys, getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig, getCloudflareAiConfigs } from "./aiKeys.js";
 import { generateNvidiaFluxImage } from "./imageGeneration.js";
 
 export interface CuratedByte {
@@ -734,48 +734,50 @@ EDITORIAL RULES:
     }
   }
 
-  // 3. Fallback LLM Provider: Cloudflare Workers AI
-  const cf = getCloudflareAiConfig();
-  if (cf) {
+  // 3. Fallback LLM Provider: Cloudflare Workers AI (with multi-account fallback)
+  const cfConfigs = getCloudflareAiConfigs();
+  if (cfConfigs.length > 0) {
     const cfModels = ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"];
-    for (const model of cfModels) {
-      try {
-        const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${cf.apiToken}`,
-          },
-          body: JSON.stringify({
-            messages: [
-              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
-              { role: "user", content: prompt },
-            ],
-            max_tokens: 1000,
-          }),
-        });
+    for (const cf of cfConfigs) {
+      for (const model of cfModels) {
+        try {
+          const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${cf.apiToken}`,
+            },
+            body: JSON.stringify({
+              messages: [
+                { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+                { role: "user", content: prompt },
+              ],
+              max_tokens: 1000,
+            }),
+          });
 
-        if (response.ok) {
-          const resData = await response.json();
-          const content = resData.result?.response || resData.result?.text || "";
-          const parsed = parseAiJsonResponse(content);
-          if (parsed && parsed.length > 0) {
-            const item = parsed[0];
-            const headline = extractAiHeadline(item, candidate.title);
-            const rawBody = extractAiBody(item);
-            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-              ? String(item.category)
-              : "Tech";
+          if (response.ok) {
+            const resData = await response.json();
+            const content = resData.result?.response || resData.result?.text || "";
+            const parsed = parseAiJsonResponse(content);
+            if (parsed && parsed.length > 0) {
+              const item = parsed[0];
+              const headline = extractAiHeadline(item, candidate.title);
+              const rawBody = extractAiBody(item);
+              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
+                ? String(item.category)
+                : "Tech";
 
-            if (headline && body && body.length > 100) {
-              return { headline, body, category };
+              if (headline && body && body.length > 100) {
+                return { headline, body, category };
+              }
             }
           }
+        } catch {
+          // Fall through to next model / fallback account
         }
-      } catch {
-        // Fall through to next model
       }
     }
   }
@@ -803,9 +805,9 @@ export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<C
 
   const mistralKey = getMistralApiKey();
   const nvidiaKey = getNvidiaApiKey();
-  const cfConfig = getCloudflareAiConfig();
+  const cfConfigs = getCloudflareAiConfigs();
 
-  if (!mistralKey && !nvidiaKey && !cfConfig) {
+  if (!mistralKey && !nvidiaKey && cfConfigs.length === 0) {
     console.warn(
       "[AICurator] No AI API key (MISTRAL_API_KEY, NVIDIA_API_KEY, CLOUDFLARE_API_TOKEN) configured. Skipping curation."
     );

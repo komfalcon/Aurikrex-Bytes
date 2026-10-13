@@ -1,6 +1,6 @@
 import { CuratedByte, cleanHeadline, clampEditorialBrief, parseAiJsonResponse, extractAiBody } from "./aiCurator.js";
 import { cloudinaryConfigured } from "../services.js";
-import { getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig } from "./aiKeys.js";
+import { getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig, getCloudflareAiConfigs } from "./aiKeys.js";
 import { generateNvidiaFluxImage, getTopicStockImage } from "./imageGeneration.js";
 import zlib from "zlib";
 import { createRequire } from "module";
@@ -377,9 +377,9 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
 
   const mistralKey = getMistralApiKey();
   const nvidiaKey = getNvidiaApiKey();
-  const cfConfig = getCloudflareAiConfig();
+  const cfConfigs = getCloudflareAiConfigs();
 
-  if (!mistralKey && !nvidiaKey && !cfConfig) {
+  if (!mistralKey && !nvidiaKey && cfConfigs.length === 0) {
     console.warn("[PDFParser] Neither MISTRAL_API_KEY, NVIDIA_API_KEY, nor CLOUDFLARE_API_TOKEN is configured.");
     return [
       {
@@ -624,38 +624,41 @@ CRITICAL INGESTION & FILTERING RULES:
     }
   }
 
-  // 3. Tertiary Provider: Cloudflare Workers AI (Text/Single Prompt fallback)
-  if ((!rawJson || rawJson === "[]") && cfConfig && !isImage) {
+  // 3. Tertiary Provider: Cloudflare Workers AI (Text/Single Prompt fallback with multi-account cascade)
+  if ((!rawJson || rawJson === "[]") && cfConfigs.length > 0 && !isImage) {
     const cfModels = ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"];
-    for (const model of cfModels) {
-      try {
-        const url = `https://api.cloudflare.com/client/v4/accounts/${cfConfig.accountId}/ai/run/${model}`;
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${cfConfig.apiToken}`,
-          },
-          body: JSON.stringify({
-            messages: [
-              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
-              { role: "user", content: `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}` },
-            ],
-            max_tokens: 4096,
-          }),
-        });
+    for (const cf of cfConfigs) {
+      for (const model of cfModels) {
+        try {
+          const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${cf.apiToken}`,
+            },
+            body: JSON.stringify({
+              messages: [
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                { role: "user", content: `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}` },
+              ],
+              max_tokens: 4096,
+            }),
+          });
 
-        if (response.ok) {
-          const resData = await response.json();
-          rawJson = resData.result?.response || resData.result?.text || "[]";
-          if (rawJson && rawJson !== "[]") {
-            console.info(`[PDFParser] Successfully parsed document using Cloudflare Workers AI (${model})`);
-            break;
+          if (response.ok) {
+            const resData = await response.json();
+            rawJson = resData.result?.response || resData.result?.text || "[]";
+            if (rawJson && rawJson !== "[]") {
+              console.info(`[PDFParser] Successfully parsed document using Cloudflare Workers AI (${model})`);
+              break;
+            }
           }
+        } catch (err) {
+          console.warn(`[PDFParser] Cloudflare AI fallback error:`, err instanceof Error ? err.message : String(err));
         }
-      } catch (err) {
-        console.warn(`[PDFParser] Cloudflare AI fallback error:`, err instanceof Error ? err.message : String(err));
       }
+      if (rawJson && rawJson !== "[]") break;
     }
   }
 

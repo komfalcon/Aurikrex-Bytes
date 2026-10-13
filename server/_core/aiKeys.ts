@@ -48,7 +48,7 @@ export function hasAiApiKey(): boolean {
     getAiApiKeys().length > 0 ||
     Boolean(getMistralApiKey()) ||
     Boolean(getNvidiaApiKey()) ||
-    Boolean(getCloudflareAiConfig())
+    getCloudflareAiConfigs().length > 0
   );
 }
 
@@ -60,9 +60,45 @@ export function getNvidiaApiKey(): string {
   return (process.env.NVIDIA_API_KEY || process.env.NVIDIA_KEY || "").trim();
 }
 
-export function getCloudflareAiConfig(): { accountId: string; apiToken: string } | null {
-  const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
-  const apiToken = (process.env.CLOUDFLARE_API_TOKEN || "").trim();
-  if (!accountId || !apiToken) return null;
-  return { accountId, apiToken };
+export interface CloudflareAiConfig {
+  accountId: string;
+  apiToken: string;
 }
+
+export function getCloudflareAiConfigs(): CloudflareAiConfig[] {
+  const configs: CloudflareAiConfig[] = [];
+
+  // Account 1 (Primary)
+  const id1 = (process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || "").trim();
+  const token1 = (process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN || "").trim();
+  if (id1 && token1) {
+    configs.push({ accountId: id1, apiToken: token1 });
+  }
+
+  // Account 2 (Secondary / Backup Fallback)
+  const id2 = (
+    process.env.CLOUDFLARE_ACCOUNT_ID_2 ||
+    process.env.CLOUDFLARE_ACCOUNT_ID_SECONDARY ||
+    process.env.CLOUDFLARE_ACCOUNT_ID_BACKUP ||
+    process.env.CF_ACCOUNT_ID_2 ||
+    ""
+  ).trim();
+  const token2 = (
+    process.env.CLOUDFLARE_API_TOKEN_2 ||
+    process.env.CLOUDFLARE_API_TOKEN_SECONDARY ||
+    process.env.CLOUDFLARE_API_TOKEN_BACKUP ||
+    process.env.CF_API_TOKEN_2 ||
+    ""
+  ).trim();
+  if (id2 && token2 && (id2 !== id1 || token2 !== token1)) {
+    configs.push({ accountId: id2, apiToken: token2 });
+  }
+
+  return configs;
+}
+
+export function getCloudflareAiConfig(): CloudflareAiConfig | null {
+  const configs = getCloudflareAiConfigs();
+  return configs[0] || null;
+}
+

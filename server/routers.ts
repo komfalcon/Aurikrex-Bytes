@@ -64,7 +64,7 @@ import {
 } from "./_core/cookies.js";
 import { systemRouter } from "./_core/systemRouter.js";
 import { publicProcedure, router } from "./_core/trpc.js";
-import { getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig } from "./_core/aiKeys.js";
+import { getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig, getCloudflareAiConfigs } from "./_core/aiKeys.js";
 import {
   assertActiveAdmin,
   assertPermission,
@@ -1247,10 +1247,10 @@ Instructions:
           }
         }
 
-        // 3. Tertiary: Fall back to Cloudflare Workers AI if Mistral and NVIDIA failed
+        // 3. Tertiary: Fall back to Cloudflare Workers AI if Mistral and NVIDIA failed (multi-account cascade)
         if (!answer) {
-          const cf = getCloudflareAiConfig();
-          if (cf) {
+          const cfConfigs = getCloudflareAiConfigs();
+          for (const cf of cfConfigs) {
             for (const model of ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"]) {
               try {
                 const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
@@ -1280,6 +1280,7 @@ Instructions:
                 console.warn(`[FollowUp] Cloudflare Workers AI model ${model} failed:`, cfErr instanceof Error ? cfErr.message : String(cfErr));
               }
             }
+            if (answer) break;
           }
         }
 

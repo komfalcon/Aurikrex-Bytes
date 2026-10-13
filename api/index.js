@@ -916,11 +916,19 @@ function getMistralApiKey() {
 function getNvidiaApiKey() {
   return (process.env.NVIDIA_API_KEY || process.env.NVIDIA_KEY || "").trim();
 }
-function getCloudflareAiConfig() {
-  const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
-  const apiToken = (process.env.CLOUDFLARE_API_TOKEN || "").trim();
-  if (!accountId || !apiToken) return null;
-  return { accountId, apiToken };
+function getCloudflareAiConfigs() {
+  const configs = [];
+  const id1 = (process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || "").trim();
+  const token1 = (process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN || "").trim();
+  if (id1 && token1) {
+    configs.push({ accountId: id1, apiToken: token1 });
+  }
+  const id2 = (process.env.CLOUDFLARE_ACCOUNT_ID_2 || process.env.CLOUDFLARE_ACCOUNT_ID_SECONDARY || process.env.CLOUDFLARE_ACCOUNT_ID_BACKUP || process.env.CF_ACCOUNT_ID_2 || "").trim();
+  const token2 = (process.env.CLOUDFLARE_API_TOKEN_2 || process.env.CLOUDFLARE_API_TOKEN_SECONDARY || process.env.CLOUDFLARE_API_TOKEN_BACKUP || process.env.CF_API_TOKEN_2 || "").trim();
+  if (id2 && token2 && (id2 !== id1 || token2 !== token1)) {
+    configs.push({ accountId: id2, apiToken: token2 });
+  }
+  return configs;
 }
 var init_aiKeys = __esm({
   "server/_core/aiKeys.ts"() {
@@ -938,52 +946,56 @@ var init_storage = __esm({
 
 // server/_core/imageGeneration.ts
 async function generateCloudflareFluxImage(prompt) {
-  const cf = getCloudflareAiConfig();
-  if (!cf || !prompt) return null;
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3e4);
-    const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/@cf/black-forest-labs/flux-1-schnell`;
-    const response = await fetch(url, {
-      signal: controller.signal,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${cf.apiToken}`
-      },
-      body: JSON.stringify({
-        prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`
-      })
-    });
-    clearTimeout(timeout);
-    if (response.ok) {
-      const data = await response.json();
-      const b64 = data.result?.image;
-      if (b64) {
-        const dataUri = `data:image/jpeg;base64,${b64}`;
-        if (cloudinaryConfigured()) {
-          try {
-            const { v2: cloudinary2 } = await import("cloudinary");
-            cloudinary2.config({
-              cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-              api_key: process.env.CLOUDINARY_API_KEY,
-              api_secret: process.env.CLOUDINARY_API_SECRET
-            });
-            const uploadRes = await cloudinary2.uploader.upload(dataUri, {
-              folder: "aurikrex/posts",
-              resource_type: "image"
-            });
-            if (uploadRes.secure_url || uploadRes.url) {
-              return uploadRes.secure_url || uploadRes.url;
+  const configs = getCloudflareAiConfigs();
+  if (!configs.length || !prompt) return null;
+  for (const cf of configs) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3e4);
+      const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/@cf/black-forest-labs/flux-1-schnell`;
+      const response = await fetch(url, {
+        signal: controller.signal,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${cf.apiToken}`
+        },
+        body: JSON.stringify({
+          prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`
+        })
+      });
+      clearTimeout(timeout);
+      if (response.ok) {
+        const data = await response.json();
+        const b64 = data.result?.image;
+        if (b64) {
+          const dataUri = `data:image/jpeg;base64,${b64}`;
+          if (cloudinaryConfigured()) {
+            try {
+              const { v2: cloudinary2 } = await import("cloudinary");
+              cloudinary2.config({
+                cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+                api_key: process.env.CLOUDINARY_API_KEY,
+                api_secret: process.env.CLOUDINARY_API_SECRET
+              });
+              const uploadRes = await cloudinary2.uploader.upload(dataUri, {
+                folder: "aurikrex/posts",
+                resource_type: "image"
+              });
+              if (uploadRes.secure_url || uploadRes.url) {
+                return uploadRes.secure_url || uploadRes.url;
+              }
+            } catch {
             }
-          } catch {
           }
+          return dataUri;
         }
-        return dataUri;
+      } else {
+        console.warn(`[Cloudflare FLUX] Account failed with status ${response.status}. Trying next fallback account if available.`);
       }
+    } catch (err) {
+      console.warn("[Cloudflare FLUX] Generation failed with account:", err instanceof Error ? err.message : String(err));
     }
-  } catch (err) {
-    console.warn("[Cloudflare FLUX] Generation failed:", err instanceof Error ? err.message : String(err));
   }
   return null;
 }
@@ -1681,42 +1693,44 @@ EDITORIAL RULES:
       }
     }
   }
-  const cf = getCloudflareAiConfig();
-  if (cf) {
+  const cfConfigs = getCloudflareAiConfigs();
+  if (cfConfigs.length > 0) {
     const cfModels = ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"];
-    for (const model of cfModels) {
-      try {
-        const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${cf.apiToken}`
-          },
-          body: JSON.stringify({
-            messages: [
-              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
-              { role: "user", content: prompt }
-            ],
-            max_tokens: 1e3
-          })
-        });
-        if (response.ok) {
-          const resData = await response.json();
-          const content = resData.result?.response || resData.result?.text || "";
-          const parsed = parseAiJsonResponse(content);
-          if (parsed && parsed.length > 0) {
-            const item = parsed[0];
-            const headline = extractAiHeadline(item, candidate.title);
-            const rawBody = extractAiBody(item);
-            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
-            if (headline && body && body.length > 100) {
-              return { headline, body, category };
+    for (const cf of cfConfigs) {
+      for (const model of cfModels) {
+        try {
+          const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${cf.apiToken}`
+            },
+            body: JSON.stringify({
+              messages: [
+                { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+                { role: "user", content: prompt }
+              ],
+              max_tokens: 1e3
+            })
+          });
+          if (response.ok) {
+            const resData = await response.json();
+            const content = resData.result?.response || resData.result?.text || "";
+            const parsed = parseAiJsonResponse(content);
+            if (parsed && parsed.length > 0) {
+              const item = parsed[0];
+              const headline = extractAiHeadline(item, candidate.title);
+              const rawBody = extractAiBody(item);
+              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
+              if (headline && body && body.length > 100) {
+                return { headline, body, category };
+              }
             }
           }
+        } catch {
         }
-      } catch {
       }
     }
   }
@@ -1739,8 +1753,8 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
   }
   const mistralKey = getMistralApiKey();
   const nvidiaKey = getNvidiaApiKey();
-  const cfConfig = getCloudflareAiConfig();
-  if (!mistralKey && !nvidiaKey && !cfConfig) {
+  const cfConfigs = getCloudflareAiConfigs();
+  if (!mistralKey && !nvidiaKey && cfConfigs.length === 0) {
     console.warn(
       "[AICurator] No AI API key (MISTRAL_API_KEY, NVIDIA_API_KEY, CLOUDFLARE_API_TOKEN) configured. Skipping curation."
     );
@@ -2153,8 +2167,8 @@ async function parsePdfToBytes(pdfBase64OrText) {
   }
   const mistralKey = getMistralApiKey();
   const nvidiaKey = getNvidiaApiKey();
-  const cfConfig = getCloudflareAiConfig();
-  if (!mistralKey && !nvidiaKey && !cfConfig) {
+  const cfConfigs = getCloudflareAiConfigs();
+  if (!mistralKey && !nvidiaKey && cfConfigs.length === 0) {
     console.warn("[PDFParser] Neither MISTRAL_API_KEY, NVIDIA_API_KEY, nor CLOUDFLARE_API_TOKEN is configured.");
     return [
       {
@@ -2367,39 +2381,42 @@ ${documentText.slice(0, 5e4)}`;
       }
     }
   }
-  if ((!rawJson || rawJson === "[]") && cfConfig && !isImage) {
+  if ((!rawJson || rawJson === "[]") && cfConfigs.length > 0 && !isImage) {
     const cfModels = ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"];
-    for (const model of cfModels) {
-      try {
-        const url = `https://api.cloudflare.com/client/v4/accounts/${cfConfig.accountId}/ai/run/${model}`;
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${cfConfig.apiToken}`
-          },
-          body: JSON.stringify({
-            messages: [
-              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
-              { role: "user", content: `${promptText}
+    for (const cf of cfConfigs) {
+      for (const model of cfModels) {
+        try {
+          const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${cf.apiToken}`
+            },
+            body: JSON.stringify({
+              messages: [
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                { role: "user", content: `${promptText}
 
 DOCUMENT TEXT:
 ${documentText.slice(0, 5e4)}` }
-            ],
-            max_tokens: 4096
-          })
-        });
-        if (response.ok) {
-          const resData = await response.json();
-          rawJson = resData.result?.response || resData.result?.text || "[]";
-          if (rawJson && rawJson !== "[]") {
-            console.info(`[PDFParser] Successfully parsed document using Cloudflare Workers AI (${model})`);
-            break;
+              ],
+              max_tokens: 4096
+            })
+          });
+          if (response.ok) {
+            const resData = await response.json();
+            rawJson = resData.result?.response || resData.result?.text || "[]";
+            if (rawJson && rawJson !== "[]") {
+              console.info(`[PDFParser] Successfully parsed document using Cloudflare Workers AI (${model})`);
+              break;
+            }
           }
+        } catch (err) {
+          console.warn(`[PDFParser] Cloudflare AI fallback error:`, err instanceof Error ? err.message : String(err));
         }
-      } catch (err) {
-        console.warn(`[PDFParser] Cloudflare AI fallback error:`, err instanceof Error ? err.message : String(err));
       }
+      if (rawJson && rawJson !== "[]") break;
     }
   }
   const parsed = parseAiJsonResponse(rawJson);
@@ -4431,8 +4448,8 @@ Instructions:
         }
       }
       if (!answer) {
-        const cf = getCloudflareAiConfig();
-        if (cf) {
+        const cfConfigs = getCloudflareAiConfigs();
+        for (const cf of cfConfigs) {
           for (const model of ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"]) {
             try {
               const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
@@ -4462,6 +4479,7 @@ Instructions:
               console.warn(`[FollowUp] Cloudflare Workers AI model ${model} failed:`, cfErr instanceof Error ? cfErr.message : String(cfErr));
             }
           }
+          if (answer) break;
         }
       }
       if (!answer && tavilyDirectAnswer) {

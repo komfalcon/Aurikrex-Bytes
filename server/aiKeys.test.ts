@@ -1,5 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { getAiApiKeys, getPrimaryAiApiKey, hasAiApiKey, getCloudflareAiConfig } from "./_core/aiKeys.js";
+import {
+  getAiApiKeys,
+  getPrimaryAiApiKey,
+  hasAiApiKey,
+  getCloudflareAiConfig,
+  getCloudflareAiConfigs,
+} from "./_core/aiKeys.js";
 
 describe("AI API Keys Management & Multi-Key Fallback", () => {
   const envBackup = { ...process.env };
@@ -18,8 +24,16 @@ describe("AI API Keys Management & Multi-Key Fallback", () => {
     delete process.env.NVIDIA_API_KEY;
     delete process.env.CLOUDFLARE_ACCOUNT_ID;
     delete process.env.CLOUDFLARE_API_TOKEN;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID_2;
+    delete process.env.CLOUDFLARE_API_TOKEN_2;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID_SECONDARY;
+    delete process.env.CLOUDFLARE_API_TOKEN_SECONDARY;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID_BACKUP;
+    delete process.env.CLOUDFLARE_API_TOKEN_BACKUP;
     delete process.env.CF_ACCOUNT_ID;
     delete process.env.CF_API_TOKEN;
+    delete process.env.CF_ACCOUNT_ID_2;
+    delete process.env.CF_API_TOKEN_2;
   });
 
   afterEach(() => {
@@ -125,5 +139,40 @@ describe("AI API Keys Management & Multi-Key Fallback", () => {
     process.env.CLOUDFLARE_API_TOKEN = "mock-cf-token";
     // missing account id
     expect(getCloudflareAiConfig()).toBeNull();
+  });
+
+  it("resolves multiple Cloudflare accounts in cascade order", () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "mock-cf-1";
+    process.env.CLOUDFLARE_API_TOKEN = "mock-token-1";
+    process.env.CLOUDFLARE_ACCOUNT_ID_2 = "mock-cf-2";
+    process.env.CLOUDFLARE_API_TOKEN_2 = "mock-token-2";
+
+    const configs = getCloudflareAiConfigs();
+    expect(configs).toHaveLength(2);
+    expect(configs[0]).toEqual({ accountId: "mock-cf-1", apiToken: "mock-token-1" });
+    expect(configs[1]).toEqual({ accountId: "mock-cf-2", apiToken: "mock-token-2" });
+    expect(getCloudflareAiConfig()).toEqual(configs[0]);
+  });
+
+  it("deduplicates identical primary and secondary Cloudflare accounts", () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "shared-cf";
+    process.env.CLOUDFLARE_API_TOKEN = "shared-token";
+    process.env.CLOUDFLARE_ACCOUNT_ID_2 = "shared-cf";
+    process.env.CLOUDFLARE_API_TOKEN_2 = "shared-token";
+
+    const configs = getCloudflareAiConfigs();
+    expect(configs).toHaveLength(1);
+    expect(configs[0]).toEqual({ accountId: "shared-cf", apiToken: "shared-token" });
+  });
+
+  it("supports secondary aliases (CLOUDFLARE_ACCOUNT_ID_SECONDARY, CF_ACCOUNT_ID_2)", () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "primary-cf";
+    process.env.CLOUDFLARE_API_TOKEN = "primary-token";
+    process.env.CLOUDFLARE_ACCOUNT_ID_SECONDARY = "fallback-cf";
+    process.env.CLOUDFLARE_API_TOKEN_SECONDARY = "fallback-token";
+
+    const configs = getCloudflareAiConfigs();
+    expect(configs).toHaveLength(2);
+    expect(configs[1]).toEqual({ accountId: "fallback-cf", apiToken: "fallback-token" });
   });
 });
