@@ -17,16 +17,77 @@
  */
 import { storagePut } from "server/storage";
 import { ENV } from "./env.js";
-import { getNvidiaApiKey } from "./aiKeys.js";
+import { getNvidiaApiKey, getCloudflareAiConfig } from "./aiKeys.js";
 import { cloudinaryConfigured } from "../services.js";
 
 /**
- * Generates photorealistic 16:9 PNG images using NVIDIA NIM (FLUX.1-schnell).
+ * Generates photorealistic 16:9 images using Cloudflare Workers AI (FLUX.1-schnell).
+ */
+export async function generateCloudflareFluxImage(prompt: string): Promise<string | null> {
+  const cf = getCloudflareAiConfig();
+  if (!cf || !prompt) return null;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/@cf/black-forest-labs/flux-1-schnell`;
+    const response = await fetch(url, {
+      signal: controller.signal,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${cf.apiToken}`,
+      },
+      body: JSON.stringify({
+        prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`,
+      }),
+    });
+
+    clearTimeout(timeout);
+    if (response.ok) {
+      const data = await response.json();
+      const b64 = data.result?.image;
+      if (b64) {
+        const dataUri = `data:image/jpeg;base64,${b64}`;
+        if (cloudinaryConfigured()) {
+          try {
+            const { v2: cloudinary } = await import("cloudinary");
+            cloudinary.config({
+              cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+              api_key: process.env.CLOUDINARY_API_KEY,
+              api_secret: process.env.CLOUDINARY_API_SECRET,
+            });
+            const uploadRes = await cloudinary.uploader.upload(dataUri, {
+              folder: "aurikrex/posts",
+              resource_type: "image",
+            });
+            if (uploadRes.secure_url || uploadRes.url) {
+              return uploadRes.secure_url || uploadRes.url;
+            }
+          } catch {
+            // Cloudinary fallback to dataUri
+          }
+        }
+        return dataUri;
+      }
+    }
+  } catch (err) {
+    console.warn("[Cloudflare FLUX] Generation failed:", err instanceof Error ? err.message : String(err));
+  }
+  return null;
+}
+
+/**
+ * Generates photorealistic 16:9 PNG images using NVIDIA NIM or Cloudflare Workers AI (FLUX.1-schnell).
  * Automatically uploads the resulting PNG to Cloudinary CDN if configured.
  */
 export async function generateNvidiaFluxImage(prompt: string): Promise<string | null> {
+  if (!prompt) return null;
   const nvidiaKey = getNvidiaApiKey();
-  if (!nvidiaKey || !prompt) return null;
+  if (!nvidiaKey) {
+    return generateCloudflareFluxImage(prompt);
+  }
 
   try {
     const controller = new AbortController();
@@ -90,6 +151,10 @@ export async function generateNvidiaFluxImage(prompt: string): Promise<string | 
   } catch (err) {
     console.warn("[NVIDIA FLUX] Generation failed:", err instanceof Error ? err.message : String(err));
   }
+
+  // Fall back to Cloudflare Workers AI FLUX if NVIDIA endpoints fail
+  const cfImage = await generateCloudflareFluxImage(prompt);
+  if (cfImage) return cfImage;
 
   return null;
 }

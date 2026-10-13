@@ -1,6 +1,6 @@
 import { CuratedByte, cleanHeadline, clampEditorialBrief, parseAiJsonResponse, extractAiBody } from "./aiCurator.js";
 import { cloudinaryConfigured } from "../services.js";
-import { getMistralApiKey, getNvidiaApiKey } from "./aiKeys.js";
+import { getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig } from "./aiKeys.js";
 import { generateNvidiaFluxImage, getTopicStockImage } from "./imageGeneration.js";
 import zlib from "zlib";
 import { createRequire } from "module";
@@ -377,13 +377,14 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
 
   const mistralKey = getMistralApiKey();
   const nvidiaKey = getNvidiaApiKey();
+  const cfConfig = getCloudflareAiConfig();
 
-  if (!mistralKey && !nvidiaKey) {
-    console.warn("[PDFParser] Neither MISTRAL_API_KEY nor NVIDIA_API_KEY is configured.");
+  if (!mistralKey && !nvidiaKey && !cfConfig) {
+    console.warn("[PDFParser] Neither MISTRAL_API_KEY, NVIDIA_API_KEY, nor CLOUDFLARE_API_TOKEN is configured.");
     return [
       {
         headline: "Falke AI Key Required for Document Ingestion",
-        body: "Please ensure MISTRAL_API_KEY or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable native document parsing.",
+        body: "Please ensure MISTRAL_API_KEY, NVIDIA_API_KEY, or CLOUDFLARE_API_TOKEN is configured in your environment variables on Vercel to enable native document parsing.",
         category: "Tech",
         imageUrl: generateDynamicByteCard("Falke AI Key Required", "Tech"),
       },
@@ -619,6 +620,41 @@ CRITICAL INGESTION & FILTERING RULES:
         }
       } catch (err) {
         console.warn(`[PDFParser] Mistral fallback error:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+
+  // 3. Tertiary Provider: Cloudflare Workers AI (Text/Single Prompt fallback)
+  if ((!rawJson || rawJson === "[]") && cfConfig && !isImage) {
+    const cfModels = ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"];
+    for (const model of cfModels) {
+      try {
+        const url = `https://api.cloudflare.com/client/v4/accounts/${cfConfig.accountId}/ai/run/${model}`;
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${cfConfig.apiToken}`,
+          },
+          body: JSON.stringify({
+            messages: [
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              { role: "user", content: `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}` },
+            ],
+            max_tokens: 4096,
+          }),
+        });
+
+        if (response.ok) {
+          const resData = await response.json();
+          rawJson = resData.result?.response || resData.result?.text || "[]";
+          if (rawJson && rawJson !== "[]") {
+            console.info(`[PDFParser] Successfully parsed document using Cloudflare Workers AI (${model})`);
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`[PDFParser] Cloudflare AI fallback error:`, err instanceof Error ? err.message : String(err));
       }
     }
   }

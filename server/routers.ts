@@ -64,7 +64,7 @@ import {
 } from "./_core/cookies.js";
 import { systemRouter } from "./_core/systemRouter.js";
 import { publicProcedure, router } from "./_core/trpc.js";
-import { getMistralApiKey, getNvidiaApiKey } from "./_core/aiKeys.js";
+import { getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig } from "./_core/aiKeys.js";
 import {
   assertActiveAdmin,
   assertPermission,
@@ -1247,13 +1247,49 @@ Instructions:
           }
         }
 
-        // 3. Fallback to Tavily direct web answer if AI endpoints failed
+        // 3. Tertiary: Fall back to Cloudflare Workers AI if Mistral and NVIDIA failed
+        if (!answer) {
+          const cf = getCloudflareAiConfig();
+          if (cf) {
+            for (const model of ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"]) {
+              try {
+                const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
+                const cfRes = await axios.post(
+                  url,
+                  {
+                    messages: [
+                      { role: "system", content: systemPrompt },
+                      { role: "user", content: input.question },
+                    ],
+                    max_tokens: 600,
+                  },
+                  {
+                    headers: {
+                      Authorization: `Bearer ${cf.apiToken}`,
+                      "Content-Type": "application/json",
+                    },
+                    timeout: 15_000,
+                  }
+                );
+                const text = cfRes.data?.result?.response || cfRes.data?.result?.text || "";
+                if (text && text.trim()) {
+                  answer = text.trim();
+                  break;
+                }
+              } catch (cfErr) {
+                console.warn(`[FollowUp] Cloudflare Workers AI model ${model} failed:`, cfErr instanceof Error ? cfErr.message : String(cfErr));
+              }
+            }
+          }
+        }
+
+        // 4. Fallback to Tavily direct web answer if AI endpoints failed
         if (!answer && tavilyDirectAnswer) {
           answer = tavilyDirectAnswer;
         }
 
         if (!answer) {
-          answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable live AI web search.`;
+          answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, NVIDIA_API_KEY, or CLOUDFLARE_API_TOKEN is configured in your environment variables on Vercel to enable live AI web search.`;
         }
 
         return { answer, searchQueries, remainingCoins, nextResetDate };

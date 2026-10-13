@@ -44,7 +44,12 @@ export function getPrimaryAiApiKey(): string {
 }
 
 export function hasAiApiKey(): boolean {
-  return getAiApiKeys().length > 0 || Boolean(getMistralApiKey());
+  return (
+    getAiApiKeys().length > 0 ||
+    Boolean(getMistralApiKey()) ||
+    Boolean(getNvidiaApiKey()) ||
+    Boolean(getCloudflareAiConfig())
+  );
 }
 
 export function getMistralApiKey(): string {
@@ -53,4 +58,11 @@ export function getMistralApiKey(): string {
 
 export function getNvidiaApiKey(): string {
   return (process.env.NVIDIA_API_KEY || process.env.NVIDIA_KEY || "").trim();
+}
+
+export function getCloudflareAiConfig(): { accountId: string; apiToken: string } | null {
+  const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
+  const apiToken = (process.env.CLOUDFLARE_API_TOKEN || "").trim();
+  if (!accountId || !apiToken) return null;
+  return { accountId, apiToken };
 }

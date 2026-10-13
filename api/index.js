@@ -199,6 +199,52 @@ var init_streak = __esm({
   }
 });
 
+// server/auth.ts
+import bcrypt from "bcryptjs";
+import crypto2 from "node:crypto";
+import jwt from "jsonwebtoken";
+function hashPassword(password) {
+  return bcrypt.hash(password, 12);
+}
+function verifyPassword(password, hash) {
+  return bcrypt.compare(password, hash);
+}
+function createToken(payload, remember = false) {
+  return jwt.sign(payload, secret(), { expiresIn: remember ? "30d" : "12h" });
+}
+function readToken(token) {
+  try {
+    return jwt.verify(token, secret());
+  } catch {
+    return null;
+  }
+}
+function randomToken() {
+  return crypto2.randomBytes(32).toString("hex");
+}
+function hashToken(token) {
+  return crypto2.createHash("sha256").update(token).digest("hex");
+}
+function normalizeEmail(email) {
+  return email.trim().toLowerCase();
+}
+function isValidPassword(password) {
+  return password.length >= 8 && /\d/.test(password) && /[^A-Za-z0-9]/.test(password);
+}
+var secret;
+var init_auth = __esm({
+  "server/auth.ts"() {
+    "use strict";
+    init_env();
+    secret = () => {
+      if (process.env.NODE_ENV === "production" && !ENV.cookieSecret) {
+        throw new Error("Missing strong cookieSecret in production. Startup failed closed for security.");
+      }
+      return ENV.cookieSecret || "development-only-secret";
+    };
+  }
+});
+
 // server/db.ts
 var db_exports = {};
 __export(db_exports, {
@@ -397,7 +443,8 @@ async function getAdminById(id) {
 async function getAdminByRememberToken(token) {
   const db = await getDb();
   if (!db) return void 0;
-  const result = await db.select().from(adminUsers).where(eq(adminUsers.rememberDeviceToken, token)).limit(1);
+  const hashed = hashToken(token);
+  const result = await db.select().from(adminUsers).where(eq(adminUsers.rememberDeviceToken, hashed)).limit(1);
   return result[0];
 }
 async function listAdmins() {
@@ -466,7 +513,7 @@ async function listPosts() {
 async function listPublishedPostsForCarousel() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(posts).where(eq(posts.status, "published")).orderBy(desc(posts.publishedTime), desc(posts.id));
+  return db.select().from(posts).where(eq(posts.status, "published")).orderBy(desc(posts.publishedTime), desc(posts.id)).limit(12);
 }
 async function getPostById(id) {
   const db = await getDb();
@@ -751,6 +798,7 @@ var init_db = __esm({
     init_schema();
     init_env();
     init_streak();
+    init_auth();
     _db = null;
     _schemaRepair = null;
   }
@@ -868,6 +916,12 @@ function getMistralApiKey() {
 function getNvidiaApiKey() {
   return (process.env.NVIDIA_API_KEY || process.env.NVIDIA_KEY || "").trim();
 }
+function getCloudflareAiConfig() {
+  const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
+  const apiToken = (process.env.CLOUDFLARE_API_TOKEN || "").trim();
+  if (!accountId || !apiToken) return null;
+  return { accountId, apiToken };
+}
 var init_aiKeys = __esm({
   "server/_core/aiKeys.ts"() {
     "use strict";
@@ -883,9 +937,62 @@ var init_storage = __esm({
 });
 
 // server/_core/imageGeneration.ts
+async function generateCloudflareFluxImage(prompt) {
+  const cf = getCloudflareAiConfig();
+  if (!cf || !prompt) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3e4);
+    const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/@cf/black-forest-labs/flux-1-schnell`;
+    const response = await fetch(url, {
+      signal: controller.signal,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${cf.apiToken}`
+      },
+      body: JSON.stringify({
+        prompt: `${prompt}. High-quality editorial technology photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, realistic, no text, no watermark.`
+      })
+    });
+    clearTimeout(timeout);
+    if (response.ok) {
+      const data = await response.json();
+      const b64 = data.result?.image;
+      if (b64) {
+        const dataUri = `data:image/jpeg;base64,${b64}`;
+        if (cloudinaryConfigured()) {
+          try {
+            const { v2: cloudinary2 } = await import("cloudinary");
+            cloudinary2.config({
+              cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+              api_key: process.env.CLOUDINARY_API_KEY,
+              api_secret: process.env.CLOUDINARY_API_SECRET
+            });
+            const uploadRes = await cloudinary2.uploader.upload(dataUri, {
+              folder: "aurikrex/posts",
+              resource_type: "image"
+            });
+            if (uploadRes.secure_url || uploadRes.url) {
+              return uploadRes.secure_url || uploadRes.url;
+            }
+          } catch {
+          }
+        }
+        return dataUri;
+      }
+    }
+  } catch (err) {
+    console.warn("[Cloudflare FLUX] Generation failed:", err instanceof Error ? err.message : String(err));
+  }
+  return null;
+}
 async function generateNvidiaFluxImage(prompt) {
+  if (!prompt) return null;
   const nvidiaKey = getNvidiaApiKey();
-  if (!nvidiaKey || !prompt) return null;
+  if (!nvidiaKey) {
+    return generateCloudflareFluxImage(prompt);
+  }
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3e4);
@@ -943,6 +1050,8 @@ async function generateNvidiaFluxImage(prompt) {
   } catch (err) {
     console.warn("[NVIDIA FLUX] Generation failed:", err instanceof Error ? err.message : String(err));
   }
+  const cfImage = await generateCloudflareFluxImage(prompt);
+  if (cfImage) return cfImage;
   return null;
 }
 function getTopicStockImage(headline, category = "Tech") {
@@ -974,6 +1083,61 @@ var init_imageGeneration = __esm({
     init_env();
     init_aiKeys();
     init_services();
+  }
+});
+
+// server/_core/central.ts
+var central_exports = {};
+__export(central_exports, {
+  deductCoins: () => deductCoins,
+  verifyCentralToken: () => verifyCentralToken
+});
+import { createRemoteJWKSet, jwtVerify as jwtVerify2 } from "jose";
+async function verifyCentralToken(token) {
+  try {
+    const { payload } = await jwtVerify2(token, JWKS, {
+      algorithms: ["RS256"]
+    });
+    return payload;
+  } catch (err) {
+    console.error("Failed to verify central token:", err);
+    return null;
+  }
+}
+async function deductCoins(userId, appId = "aurikrex_bytes", featureName = "ai_summary") {
+  try {
+    const response = await fetch(`${CENTRAL_API_URL}/api/v1/coins/deduct`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Central-Api-Key": S2S_SECRET
+      },
+      body: JSON.stringify({
+        userId: String(userId),
+        appId,
+        featureName,
+        idempotencyKey: `bytes_${featureName}_${userId}_${Date.now()}_${Math.random().toString(36).substring(7)}`
+      })
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Coin deduction failed:", response.status, errorText);
+      return null;
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Coin deduction error:", error);
+    return null;
+  }
+}
+var CENTRAL_API_URL, S2S_SECRET, jwksUrl, JWKS;
+var init_central = __esm({
+  "server/_core/central.ts"() {
+    "use strict";
+    CENTRAL_API_URL = process.env.CENTRAL_API_URL || "https://aurikrex-central.pxxl.click";
+    S2S_SECRET = process.env.AURIKREX_CENTRAL_S2S_SECRET || "";
+    jwksUrl = new URL(`${CENTRAL_API_URL}/.well-known/jwks.json`);
+    JWKS = createRemoteJWKSet(jwksUrl);
   }
 });
 
@@ -1517,6 +1681,45 @@ EDITORIAL RULES:
       }
     }
   }
+  const cf = getCloudflareAiConfig();
+  if (cf) {
+    const cfModels = ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"];
+    for (const model of cfModels) {
+      try {
+        const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${cf.apiToken}`
+          },
+          body: JSON.stringify({
+            messages: [
+              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+              { role: "user", content: prompt }
+            ],
+            max_tokens: 1e3
+          })
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          const content = resData.result?.response || resData.result?.text || "";
+          const parsed = parseAiJsonResponse(content);
+          if (parsed && parsed.length > 0) {
+            const item = parsed[0];
+            const headline = extractAiHeadline(item, candidate.title);
+            const rawBody = extractAiBody(item);
+            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
+            if (headline && body && body.length > 100) {
+              return { headline, body, category };
+            }
+          }
+        }
+      } catch {
+      }
+    }
+  }
   return null;
 }
 async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
@@ -1528,11 +1731,18 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
     return [];
   }
   if (!candidates.length) return [];
+  const { deductCoins: deductCoins2 } = await Promise.resolve().then(() => (init_central(), central_exports));
+  const deductionSuccessful = await deductCoins2("system_curator", "aurikrex_bytes", "ai_curator");
+  if (!deductionSuccessful) {
+    console.error("[AICurator] Insufficient coins or deduction failed. Skipping curation.");
+    return [];
+  }
   const mistralKey = getMistralApiKey();
   const nvidiaKey = getNvidiaApiKey();
-  if (!mistralKey && !nvidiaKey) {
+  const cfConfig = getCloudflareAiConfig();
+  if (!mistralKey && !nvidiaKey && !cfConfig) {
     console.warn(
-      "[AICurator] No AI API key (MISTRAL_API_KEY, NVIDIA_API_KEY) configured. Skipping curation."
+      "[AICurator] No AI API key (MISTRAL_API_KEY, NVIDIA_API_KEY, CLOUDFLARE_API_TOKEN) configured. Skipping curation."
     );
     return [];
   }
@@ -1943,12 +2153,13 @@ async function parsePdfToBytes(pdfBase64OrText) {
   }
   const mistralKey = getMistralApiKey();
   const nvidiaKey = getNvidiaApiKey();
-  if (!mistralKey && !nvidiaKey) {
-    console.warn("[PDFParser] Neither MISTRAL_API_KEY nor NVIDIA_API_KEY is configured.");
+  const cfConfig = getCloudflareAiConfig();
+  if (!mistralKey && !nvidiaKey && !cfConfig) {
+    console.warn("[PDFParser] Neither MISTRAL_API_KEY, NVIDIA_API_KEY, nor CLOUDFLARE_API_TOKEN is configured.");
     return [
       {
         headline: "Falke AI Key Required for Document Ingestion",
-        body: "Please ensure MISTRAL_API_KEY or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable native document parsing.",
+        body: "Please ensure MISTRAL_API_KEY, NVIDIA_API_KEY, or CLOUDFLARE_API_TOKEN is configured in your environment variables on Vercel to enable native document parsing.",
         category: "Tech",
         imageUrl: generateDynamicByteCard("Falke AI Key Required", "Tech")
       }
@@ -2156,6 +2367,41 @@ ${documentText.slice(0, 5e4)}`;
       }
     }
   }
+  if ((!rawJson || rawJson === "[]") && cfConfig && !isImage) {
+    const cfModels = ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"];
+    for (const model of cfModels) {
+      try {
+        const url = `https://api.cloudflare.com/client/v4/accounts/${cfConfig.accountId}/ai/run/${model}`;
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${cfConfig.apiToken}`
+          },
+          body: JSON.stringify({
+            messages: [
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              { role: "user", content: `${promptText}
+
+DOCUMENT TEXT:
+${documentText.slice(0, 5e4)}` }
+            ],
+            max_tokens: 4096
+          })
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          rawJson = resData.result?.response || resData.result?.text || "[]";
+          if (rawJson && rawJson !== "[]") {
+            console.info(`[PDFParser] Successfully parsed document using Cloudflare Workers AI (${model})`);
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`[PDFParser] Cloudflare AI fallback error:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
   const parsed = parseAiJsonResponse(rawJson);
   if (!parsed.length) {
     throw new Error("Falke AI was unable to extract news stories from this document. Please ensure the document contains readable text or news cards.");
@@ -2264,7 +2510,7 @@ function formatPushNotificationContent(story, timeZone = process.env.APP_TIMEZON
     }).format(now2)
   );
   const isMorning = hour >= 4 && hour < 16;
-  const prefix = isMorning ? "\u{1F305} Morning Brief" : "\u{1F319} Evening Recap";
+  const prefix = isMorning ? "Morning Brief" : "Evening Recap";
   if (story) {
     const cleanTitle = story.headline.replace(/^(show\s+hn|launch\s+hn)\s*:\s*/i, "").trim();
     const heading = `${prefix}: ${cleanTitle}`.slice(0, 75);
@@ -2282,7 +2528,7 @@ function formatPushNotificationContent(story, timeZone = process.env.APP_TIMEZON
     };
   }
   return {
-    heading: isMorning ? "\u{1F305} Daily Tech Briefing is Ready" : "\u{1F319} Evening Tech Roundup",
+    heading: isMorning ? "Daily Tech Briefing is Ready" : "Evening Tech Roundup",
     content: "Catch up on what matters in tech today on Aurikrex Bytes.",
     url: `${baseUrl}/dashboard`
   };
@@ -2756,8 +3002,27 @@ function registerOAuthRoutes(app) {
 
 // server/_core/storageProxy.ts
 init_env();
+init_auth();
+function parseCookies(header) {
+  if (!header) return {};
+  return Object.fromEntries(
+    header.split(";").map((part) => {
+      const [k, ...v] = part.trim().split("=");
+      return [k, decodeURIComponent(v.join("="))];
+    })
+  );
+}
 function registerStorageProxy(app) {
   app.get("/manus-storage/*", async (req, res) => {
+    const cookies2 = parseCookies(req.headers.cookie);
+    const adminToken = cookies2["aurikrex_admin_session"];
+    const readerToken = cookies2["aurikrex_reader_session"];
+    const bearer = typeof req.headers.authorization === "string" && req.headers.authorization.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null;
+    const payload = adminToken && readToken(adminToken) || readerToken && readToken(readerToken) || bearer && readToken(bearer);
+    if (!payload) {
+      res.status(401).send("Unauthorized storage access");
+      return;
+    }
     const key = req.params[0];
     if (!key) {
       res.status(400).send("Missing storage key");
@@ -2798,57 +3063,22 @@ function registerStorageProxy(app) {
 
 // server/google-auth.ts
 init_schema();
+init_auth();
+init_db();
 import { OAuth2Client } from "google-auth-library";
 import { eq as eq2 } from "drizzle-orm";
-
-// server/auth.ts
-init_env();
-import bcrypt from "bcryptjs";
-import crypto2 from "node:crypto";
-import jwt from "jsonwebtoken";
-var secret = () => {
-  if (process.env.NODE_ENV === "production" && !ENV.cookieSecret) {
-    throw new Error("Missing strong cookieSecret in production. Startup failed closed for security.");
-  }
-  return ENV.cookieSecret || "development-only-secret";
-};
-function hashPassword(password) {
-  return bcrypt.hash(password, 12);
-}
-function verifyPassword(password, hash) {
-  return bcrypt.compare(password, hash);
-}
-function createToken(payload, remember = false) {
-  return jwt.sign(payload, secret(), { expiresIn: remember ? "30d" : "12h" });
-}
-function readToken(token) {
-  try {
-    return jwt.verify(token, secret());
-  } catch {
-    return null;
-  }
-}
-function randomToken() {
-  return crypto2.randomBytes(32).toString("hex");
-}
-function normalizeEmail(email) {
-  return email.trim().toLowerCase();
-}
-function isValidPassword(password) {
-  return password.length >= 8 && /\d/.test(password) && /[^A-Za-z0-9]/.test(password);
-}
-
-// server/google-auth.ts
-init_db();
 init_env();
 function registerGoogleAuthRoutes(app) {
   app.get("/api/auth/google/callback", async (req, res) => {
     const code = typeof req.query.code === "string" ? req.query.code : "";
     const state = typeof req.query.state === "string" ? req.query.state : "";
-    const cookieValue = (name) => (req.headers.cookie || "").split(";").map((value) => value.trim()).find((value) => value.startsWith(`${name}=`))?.split("=")[1] || "";
+    const cookieValue = (name) => {
+      const match = (req.headers.cookie || "").split(";").map((v) => v.trim()).find((v) => v.startsWith(`${name}=`));
+      return match ? decodeURIComponent(match.slice(name.length + 1)) : "";
+    };
     const storedState = cookieValue("aurikrex_google_state");
     const storedNonce = cookieValue("aurikrex_google_nonce");
-    if (!code || !state || !storedState || state !== decodeURIComponent(storedState) || !storedNonce || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return res.redirect("/login?error=oauth");
+    if (!code || !state || !storedState || state !== storedState || !storedNonce || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return res.redirect("/login?error=oauth");
     res.clearCookie("aurikrex_google_state", { ...getSessionCookieOptions(req), maxAge: -1 });
     res.clearCookie("aurikrex_google_nonce", { ...getSessionCookieOptions(req), maxAge: -1 });
     try {
@@ -2898,9 +3128,10 @@ function registerGoogleAuthRoutes(app) {
 // server/routers.ts
 init_schema();
 init_env();
+init_auth();
 import { TRPCError as TRPCError4 } from "@trpc/server";
 import axios2 from "axios";
-import { eq as eq3, inArray as inArray3 } from "drizzle-orm";
+import { and as and2, eq as eq3, inArray as inArray3 } from "drizzle-orm";
 import { z as z2 } from "zod";
 
 // server/_core/security.ts
@@ -3248,6 +3479,40 @@ async function requireReader(ctx) {
 var appRouter = router({
   system: systemRouter,
   auth: router({
+    coinsBalance: publicProcedure.query(async ({ ctx }) => {
+      try {
+        const token = cookies(ctx.req)[READER_COOKIE];
+        const payload = token ? readToken(token) : null;
+        if (payload && payload.kind === "reader") {
+          let email = payload.email;
+          if (!email) {
+            const r = await getReaderById(payload.id);
+            email = r?.email;
+          }
+          if (email) {
+            const centralUrl = process.env.CENTRAL_API_URL || "https://aurikrex-central.pxxl.click";
+            const secret2 = process.env.AURIKREX_CENTRAL_S2S_SECRET || "aurikrex-s2s-master-key-2026";
+            const res = await fetch(`${centralUrl}/api/v1/coins/balance?userId=${encodeURIComponent(email)}`, {
+              headers: {
+                "X-Central-Api-Key": secret2
+              }
+            });
+            if (res.ok) {
+              return await res.json();
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[Coins] Failed to query coins balance from Central:", err);
+      }
+      return {
+        balance: 5e3,
+        allowance: 5e3,
+        costPerRequest: 5,
+        lastResetDate: (/* @__PURE__ */ new Date()).toISOString(),
+        nextResetDate: new Date(Date.now() + 30 * 864e5).toISOString()
+      };
+    }),
     me: publicProcedure.query((opts) => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
       const firstPartyCookieOptions = getFirstPartyCookieOptions(ctx.req);
@@ -3316,9 +3581,7 @@ var appRouter = router({
       if (!reader) {
         const [newReader] = await db.insert(readers).values({
           email: ssoUser.email.toLowerCase(),
-          name: ssoUser.fullName || ssoUser.email.split("@")[0],
-          openId: aurikrex_id,
-          aurikrexId: aurikrex_id
+          name: ssoUser.fullName || ssoUser.email.split("@")[0]
         }).returning();
         reader = newReader;
       }
@@ -3360,7 +3623,7 @@ var appRouter = router({
       const deviceToken = input.remember ? randomToken() : null;
       const db = await getDb();
       if (db && deviceToken)
-        await db.update(adminUsers).set({ rememberDeviceToken: deviceToken }).where(eq3(adminUsers.id, admin.id));
+        await db.update(adminUsers).set({ rememberDeviceToken: hashToken(deviceToken) }).where(eq3(adminUsers.id, admin.id));
       setSession(ctx, ADMIN_COOKIE, token, input.remember);
       if (deviceToken)
         setSession(ctx, ADMIN_DEVICE_COOKIE, deviceToken, true);
@@ -3698,7 +3961,13 @@ var appRouter = router({
           message: "Only administrators can toggle maintenance mode."
         });
       }
-      const expected = process.env.MAINTENANCE_PASSWORD || "KorexTonyFalconStark1025$";
+      const expected = process.env.MAINTENANCE_PASSWORD;
+      if (!expected) {
+        throw new TRPCError4({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "MAINTENANCE_PASSWORD is not configured in environment variables."
+        });
+      }
       if (input.password !== expected) {
         throw new TRPCError4({
           code: "FORBIDDEN",
@@ -3712,18 +3981,15 @@ var appRouter = router({
   reader: router({
     oneSignalAppId: publicProcedure.query(() => ENV.oneSignalAppId),
     registerOneSignalSubscription: publicProcedure.input(z2.object({ subscriptionId: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
-      let readerId = null;
-      try {
-        readerId = (await requireReader(ctx)).id;
-      } catch {
-      }
+      const session = await requireReader(ctx);
       const db = await getDb();
       if (!db) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR" });
-      await db.delete(oneSignalSubscriptions).where(eq3(oneSignalSubscriptions.subscriptionId, input.subscriptionId));
-      await db.insert(oneSignalSubscriptions).values({ readerId, subscriptionId: input.subscriptionId });
+      await db.delete(oneSignalSubscriptions).where(and2(eq3(oneSignalSubscriptions.subscriptionId, input.subscriptionId), eq3(oneSignalSubscriptions.readerId, session.id)));
+      await db.insert(oneSignalSubscriptions).values({ readerId: session.id, subscriptionId: input.subscriptionId });
       return { success: true };
     }),
-    sendTestPush: publicProcedure.input(z2.object({ subscriptionId: z2.string().min(1) })).mutation(async ({ input }) => {
+    sendTestPush: publicProcedure.input(z2.object({ subscriptionId: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
+      await requireAdmin(ctx);
       const { sendTestPushNotification: sendTestPushNotification2 } = await Promise.resolve().then(() => (init_push(), push_exports));
       return await sendTestPushNotification2(input.subscriptionId);
     }),
@@ -4027,10 +4293,31 @@ var appRouter = router({
         postId: z2.number().int().positive(),
         question: z2.string().min(3).max(300).trim()
       })
-    ).mutation(async ({ input }) => {
+    ).mutation(async ({ input, ctx }) => {
       await publishDuePosts();
       const post = await getPublishedPostById(input.postId);
       if (!post) throw genericNotFound();
+      let remainingCoins;
+      let nextResetDate;
+      try {
+        const readerPayload = await requireReader(ctx).catch(() => null);
+        if (readerPayload) {
+          let readerEmail = readerPayload.email;
+          if (!readerEmail) {
+            const r = await getReaderById(readerPayload.id);
+            readerEmail = r?.email;
+          }
+          if (readerEmail) {
+            const { deductCoins: deductCoins2 } = await Promise.resolve().then(() => (init_central(), central_exports));
+            const res = await deductCoins2(readerEmail, "aurikrex_bytes", "ai_summary");
+            if (res && typeof res.remainingCoins === "number") {
+              remainingCoins = res.remainingCoins;
+              nextResetDate = res.nextResetDate;
+            }
+          }
+        }
+      } catch (_) {
+      }
       const searchQuery = `${post.headline} \u2014 ${input.question}`;
       let webContext = "";
       let tavilyDirectAnswer = "";
@@ -4143,13 +4430,47 @@ Instructions:
           }
         }
       }
+      if (!answer) {
+        const cf = getCloudflareAiConfig();
+        if (cf) {
+          for (const model of ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"]) {
+            try {
+              const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
+              const cfRes = await axios2.post(
+                url,
+                {
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: input.question }
+                  ],
+                  max_tokens: 600
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${cf.apiToken}`,
+                    "Content-Type": "application/json"
+                  },
+                  timeout: 15e3
+                }
+              );
+              const text2 = cfRes.data?.result?.response || cfRes.data?.result?.text || "";
+              if (text2 && text2.trim()) {
+                answer = text2.trim();
+                break;
+              }
+            } catch (cfErr) {
+              console.warn(`[FollowUp] Cloudflare Workers AI model ${model} failed:`, cfErr instanceof Error ? cfErr.message : String(cfErr));
+            }
+          }
+        }
+      }
       if (!answer && tavilyDirectAnswer) {
         answer = tavilyDirectAnswer;
       }
       if (!answer) {
-        answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, or NVIDIA_API_KEY is configured in your environment variables on Vercel to enable live AI web search.`;
+        answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, NVIDIA_API_KEY, or CLOUDFLARE_API_TOKEN is configured in your environment variables on Vercel to enable live AI web search.`;
       }
-      return { answer, searchQueries: searchQueries2 };
+      return { answer, searchQueries: searchQueries2, remainingCoins, nextResetDate };
     })
   })
 });
@@ -4174,7 +4495,6 @@ init_db();
 import fs from "fs";
 import os from "os";
 import path from "path";
-import sharp from "sharp";
 var siteUrl = () => (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.com").replace(/\/$/, "");
 var xmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 var htmlEscape = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -4404,7 +4724,13 @@ async function generateShareCard(post) {
     coverBuffer = await fetchRemoteImageBuffer(post.imageUrl);
   }
   const svg = await buildShareSvg(post, coverBuffer);
-  return sharp(svg).png({ quality: 90 }).toBuffer();
+  try {
+    const sharpMod = await import("sharp");
+    const sharp = sharpMod.default || sharpMod;
+    return await sharp(svg).png({ quality: 90 }).toBuffer();
+  } catch {
+    return Buffer.from(svg);
+  }
 }
 function escapeXml(value) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");

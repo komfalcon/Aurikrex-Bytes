@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { getAiApiKeys, getPrimaryAiApiKey, hasAiApiKey } from "./_core/aiKeys.js";
+import { getAiApiKeys, getPrimaryAiApiKey, hasAiApiKey, getCloudflareAiConfig } from "./_core/aiKeys.js";
 
 describe("AI API Keys Management & Multi-Key Fallback", () => {
   const envBackup = { ...process.env };
@@ -14,6 +14,12 @@ describe("AI API Keys Management & Multi-Key Fallback", () => {
     delete process.env.GOOGLE_API_KEY_SECONDARY;
     delete process.env.BUILT_IN_FORGE_API_KEY;
     delete process.env.FORGE_API_KEY;
+    delete process.env.MISTRAL_API_KEY;
+    delete process.env.NVIDIA_API_KEY;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    delete process.env.CLOUDFLARE_API_TOKEN;
+    delete process.env.CF_ACCOUNT_ID;
+    delete process.env.CF_API_TOKEN;
   });
 
   afterEach(() => {
@@ -97,5 +103,27 @@ describe("AI API Keys Management & Multi-Key Fallback", () => {
     expect(result.success).toBe(true);
     expect(result.keyUsed).toBe("healthy-key-2");
     expect(callLog).toEqual(["exhausted-key-1", "healthy-key-2"]);
+  });
+
+  it("resolves Cloudflare Workers AI configuration correctly", () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "mock-cf-account";
+    process.env.CLOUDFLARE_API_TOKEN = "mock-cf-token";
+
+    expect(getCloudflareAiConfig()).toEqual({
+      accountId: "mock-cf-account",
+      apiToken: "mock-cf-token",
+    });
+    expect(hasAiApiKey()).toBe(true);
+  });
+
+  it("returns null when Cloudflare credentials are incomplete or missing", () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "mock-cf-account";
+    // missing token
+    expect(getCloudflareAiConfig()).toBeNull();
+
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    process.env.CLOUDFLARE_API_TOKEN = "mock-cf-token";
+    // missing account id
+    expect(getCloudflareAiConfig()).toBeNull();
   });
 });
