@@ -407,7 +407,11 @@ export function PreviewPage() {
       <div className="wysiwyg-card">
         {item.imageUrl && (
           <img
-            src={item.imageUrl}
+            src={
+              item.imageUrl.includes("res.cloudinary.com") && item.imageUrl.includes("/upload/") && !item.imageUrl.includes("c_fill")
+                ? item.imageUrl.replace("/upload/", "/upload/w_1200,ar_16:9,c_fill,g_auto,f_auto,q_auto/")
+                : item.imageUrl
+            }
             alt=""
             className="wysiwyg-image"
             onError={(e) => {

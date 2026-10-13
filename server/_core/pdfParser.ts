@@ -195,7 +195,33 @@ export function generateDynamicByteCard(headline: string, category = "Tech", sou
 }
 
 /**
+ * Automatically trims dark/black borders and letterboxing from image buffers,
+ * and upscales/resizes to crisp 16:9 editorial dimensions (1200x675).
+ */
+async function cleanAndTrimImage(base64DataUri: string): Promise<string> {
+  if (!base64DataUri || !base64DataUri.startsWith("data:image/")) return base64DataUri;
+  try {
+    const sharp = _require("sharp");
+    const raw = base64DataUri.replace(/^data:image\/[a-z]+;base64,/, "");
+    const buf = Buffer.from(raw, "base64");
+
+    // Automatically trim borders with dark/black threshold (pixel brightness <= 40)
+    const trimmedBuf = await sharp(buf)
+      .trim({ background: { r: 0, g: 0, b: 0 }, threshold: 40 })
+      .resize({ width: 1200, height: 675, fit: "cover", position: "entropy" })
+      .jpeg({ quality: 90, mozjpeg: true })
+      .toBuffer();
+
+    return `data:image/jpeg;base64,${trimmedBuf.toString("base64")}`;
+  } catch (err) {
+    console.warn("[PDFParser] cleanAndTrimImage warning:", err instanceof Error ? err.message : String(err));
+    return base64DataUri;
+  }
+}
+
+/**
  * Attempts to upload a base64 image data URI to Cloudinary if credentials are configured.
+ * Enforces automatic 16:9 aspect ratio and content-aware auto-crop to remove black borders.
  */
 async function uploadBase64ToCloudinary(base64DataUri: string): Promise<string | null> {
   if (!cloudinaryConfigured()) return null;
@@ -209,6 +235,9 @@ async function uploadBase64ToCloudinary(base64DataUri: string): Promise<string |
     const result = await cloudinary.uploader.upload(base64DataUri, {
       folder: "aurikrex/posts",
       resource_type: "image",
+      transformation: [
+        { aspect_ratio: "16:9", crop: "fill", gravity: "auto" },
+      ],
     });
     return result.secure_url || result.url || null;
   } catch (err) {
@@ -275,22 +304,19 @@ function extractEmbeddedPdfImages(rawBase64: string): string[] {
 }
 
 /**
- * Attempts to recreate cover imagery using NVIDIA FLUX.
+ * Attempts to recreate cover imagery in high-resolution using FLUX (NVIDIA NIM or Cloudflare Workers AI).
  */
 async function generateAiRecreatedImage(prompt: string): Promise<string | null> {
   if (!prompt) return null;
-
-  if (getNvidiaApiKey()) {
-    try {
-      const fluxUrl = await generateNvidiaFluxImage(prompt);
-      if (fluxUrl) {
-        return fluxUrl;
-      }
-    } catch (err) {
-      console.warn("[PDFParser] NVIDIA FLUX image generation failed:", err instanceof Error ? err.message : String(err));
+  try {
+    const fluxUrl = await generateNvidiaFluxImage(prompt);
+    if (fluxUrl) {
+      console.info("[PDFParser] Successfully generated high-resolution AI cover image via FLUX.");
+      return fluxUrl;
     }
+  } catch (err) {
+    console.warn("[PDFParser] FLUX image generation failed:", err instanceof Error ? err.message : String(err));
   }
-
   return null;
 }
 
@@ -540,25 +566,35 @@ CRITICAL INGESTION & FILTERING RULES:
                 const category = String(item.category || "Tech");
                 const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: item.source || "Tech Wire", publishedAt: new Date() });
 
-                // If current page image is a full-page screenshot (aspect ratio < 0.60)
-                // and the NEXT page image is a genuine cover photo (aspect ratio >= 0.60), pair with the cover photo!
-                let chosenCoverImg = pageImg;
-                if (dims && dims.aspectRatio < 0.60 && pageIdx + 1 < embeddedImages.length) {
-                  const nextImg = embeddedImages[pageIdx + 1];
-                  const nextDims = getJpegDimensions(nextImg);
-                  if (nextDims && nextDims.aspectRatio >= 0.60) {
-                    chosenCoverImg = nextImg;
-                  }
+                // 1. Primary: Recreate high-resolution cover photo using AI FLUX
+                const promptToUse = item.imagePrompt || `${cleanTitle}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, no borders, no text`;
+                let imageUrl: string | null = null;
+                try {
+                  imageUrl = await generateAiRecreatedImage(promptToUse);
+                } catch {
+                  // Fall back to clean embedded image
                 }
 
-                // Try uploading cover JPEG to Cloudinary
-                const cdnUrl = await uploadBase64ToCloudinary(chosenCoverImg);
+                // 2. Secondary fallback: Clean & trim embedded PDF image of black edges, then upload to Cloudinary
+                if (!imageUrl) {
+                  let chosenCoverImg = pageImg;
+                  if (dims && dims.aspectRatio < 0.60 && pageIdx + 1 < embeddedImages.length) {
+                    const nextImg = embeddedImages[pageIdx + 1];
+                    const nextDims = getJpegDimensions(nextImg);
+                    if (nextDims && nextDims.aspectRatio >= 0.60) {
+                      chosenCoverImg = nextImg;
+                    }
+                  }
+                  const trimmedImg = await cleanAndTrimImage(chosenCoverImg);
+                  const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || chosenCoverImg);
+                  imageUrl = cdnUrl || trimmedImg || chosenCoverImg;
+                }
 
                 pageStories.push({
                   headline: cleanTitle,
                   body: finalBody,
                   category,
-                  imageUrl: cdnUrl || chosenCoverImg,
+                  imageUrl,
                   sourcePublisher: item.source || "NewsBytes",
                   sourcePublishedAt: new Date(),
                 });
@@ -705,21 +741,26 @@ CRITICAL INGESTION & FILTERING RULES:
     draftItems.map(async (draft, idx) => {
       let imageUrl: string | null = null;
 
-      // 1. Primary: Use the exact embedded image extracted from that specific PDF page (pageNumber index)
-      const imageIdx = Math.max(0, draft.pageNumber - 1);
-      const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
-      if (rawEmbedded) {
-        // Try uploading embedded image to Cloudinary so we have a clean CDN URL
-        const cdnUrl = await uploadBase64ToCloudinary(rawEmbedded);
-        imageUrl = cdnUrl || rawEmbedded;
+      // 1. Primary: Recreate high-resolution cover photo using AI FLUX
+      const promptToUse = draft.imagePrompt || `${draft.cleanTitle}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, no borders, no text`;
+      try {
+        imageUrl = await generateAiRecreatedImage(promptToUse);
+      } catch (err) {
+        console.warn("[PDFParser] AI high-res image recreation failed:", err);
       }
 
-      // 2. Secondary: Generate AI image from prompt if no embedded image found
-      if (!imageUrl && draft.imagePrompt) {
-        imageUrl = await generateAiRecreatedImage(draft.imagePrompt);
+      // 2. Secondary fallback: Use embedded PDF image, BUT clean & trim black edges first!
+      if (!imageUrl) {
+        const imageIdx = Math.max(0, draft.pageNumber - 1);
+        const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
+        if (rawEmbedded) {
+          const trimmedImg = await cleanAndTrimImage(rawEmbedded);
+          const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || rawEmbedded);
+          imageUrl = cdnUrl || trimmedImg || rawEmbedded;
+        }
       }
 
-      // 3. Fallback: Editorial stock image matched by topic
+      // 3. Tertiary fallback: Editorial stock image matched by topic
       if (!imageUrl) {
         imageUrl = getTopicStockImage(draft.cleanTitle, draft.category);
       }

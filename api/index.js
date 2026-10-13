@@ -1736,7 +1736,7 @@ EDITORIAL RULES:
   }
   return null;
 }
-async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
+async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdentifier) {
   let candidates;
   try {
     candidates = await fetchTodayCandidates(excludeKeys);
@@ -1745,11 +1745,20 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
     return [];
   }
   if (!candidates.length) return [];
-  const { deductCoins: deductCoins2 } = await Promise.resolve().then(() => (init_central(), central_exports));
-  const deductionSuccessful = await deductCoins2("system_curator", "aurikrex_bytes", "ai_curator");
-  if (!deductionSuccessful) {
-    console.error("[AICurator] Insufficient coins or deduction failed. Skipping curation.");
-    return [];
+  const targetUser = userIdentifier || process.env.CENTRAL_SYSTEM_USER;
+  if (targetUser && targetUser !== "system_curator") {
+    try {
+      const { deductCoins: deductCoins2 } = await Promise.resolve().then(() => (init_central(), central_exports));
+      const deductionRes = await deductCoins2(targetUser, "aurikrex_bytes", "ai_curator");
+      if (deductionRes && deductionRes.insufficient) {
+        console.warn(`[AICurator] Insufficient coins for user '${targetUser}'. Skipping curation.`);
+        return [];
+      }
+    } catch (err) {
+      console.warn("[AICurator] Central coin deduction warning:", err);
+    }
+  } else {
+    console.info("[AICurator] System / admin curation active; continuing curation.");
   }
   const mistralKey = getMistralApiKey();
   const nvidiaKey = getNvidiaApiKey();
@@ -1821,12 +1830,12 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set()) {
   console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
   return curatedBytes;
 }
-async function runNightlyCuration(status = "draft") {
+async function runNightlyCuration(status = "draft", userIdentifier) {
   const db = await getDb();
   if (!db) return 0;
   const existingPosts = await db.select({ duplicateKey: posts.duplicateKey }).from(posts);
   const excludeKeys = new Set(existingPosts.map((p) => p.duplicateKey).filter((k) => Boolean(k)));
-  const bytes = await curateTenBytes(excludeKeys);
+  const bytes = await curateTenBytes(excludeKeys, userIdentifier);
   if (!bytes.length) return 0;
   let count = 0;
   for (const byte of bytes) {
@@ -2021,6 +2030,19 @@ function generateDynamicByteCard(headline, category = "Tech", source) {
 </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
+async function cleanAndTrimImage(base64DataUri) {
+  if (!base64DataUri || !base64DataUri.startsWith("data:image/")) return base64DataUri;
+  try {
+    const sharp = _require("sharp");
+    const raw = base64DataUri.replace(/^data:image\/[a-z]+;base64,/, "");
+    const buf = Buffer.from(raw, "base64");
+    const trimmedBuf = await sharp(buf).trim({ background: { r: 0, g: 0, b: 0 }, threshold: 40 }).resize({ width: 1200, height: 675, fit: "cover", position: "entropy" }).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+    return `data:image/jpeg;base64,${trimmedBuf.toString("base64")}`;
+  } catch (err) {
+    console.warn("[PDFParser] cleanAndTrimImage warning:", err instanceof Error ? err.message : String(err));
+    return base64DataUri;
+  }
+}
 async function uploadBase64ToCloudinary(base64DataUri) {
   if (!cloudinaryConfigured()) return null;
   try {
@@ -2032,7 +2054,10 @@ async function uploadBase64ToCloudinary(base64DataUri) {
     });
     const result = await cloudinary2.uploader.upload(base64DataUri, {
       folder: "aurikrex/posts",
-      resource_type: "image"
+      resource_type: "image",
+      transformation: [
+        { aspect_ratio: "16:9", crop: "fill", gravity: "auto" }
+      ]
     });
     return result.secure_url || result.url || null;
   } catch (err) {
@@ -2087,15 +2112,14 @@ function extractEmbeddedPdfImages(rawBase64) {
 }
 async function generateAiRecreatedImage(prompt) {
   if (!prompt) return null;
-  if (getNvidiaApiKey()) {
-    try {
-      const fluxUrl = await generateNvidiaFluxImage(prompt);
-      if (fluxUrl) {
-        return fluxUrl;
-      }
-    } catch (err) {
-      console.warn("[PDFParser] NVIDIA FLUX image generation failed:", err instanceof Error ? err.message : String(err));
+  try {
+    const fluxUrl = await generateNvidiaFluxImage(prompt);
+    if (fluxUrl) {
+      console.info("[PDFParser] Successfully generated high-resolution AI cover image via FLUX.");
+      return fluxUrl;
     }
+  } catch (err) {
+    console.warn("[PDFParser] FLUX image generation failed:", err instanceof Error ? err.message : String(err));
   }
   return null;
 }
@@ -2308,20 +2332,30 @@ NOTE: You are analyzing PAGE ${pageNum} of ${embeddedImages.length}.`;
                 const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${pageNum}`)).slice(0, 120);
                 const category = String(item.category || "Tech");
                 const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: item.source || "Tech Wire", publishedAt: /* @__PURE__ */ new Date() });
-                let chosenCoverImg = pageImg;
-                if (dims && dims.aspectRatio < 0.6 && pageIdx + 1 < embeddedImages.length) {
-                  const nextImg = embeddedImages[pageIdx + 1];
-                  const nextDims = getJpegDimensions(nextImg);
-                  if (nextDims && nextDims.aspectRatio >= 0.6) {
-                    chosenCoverImg = nextImg;
-                  }
+                const promptToUse = item.imagePrompt || `${cleanTitle}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, no borders, no text`;
+                let imageUrl = null;
+                try {
+                  imageUrl = await generateAiRecreatedImage(promptToUse);
+                } catch {
                 }
-                const cdnUrl = await uploadBase64ToCloudinary(chosenCoverImg);
+                if (!imageUrl) {
+                  let chosenCoverImg = pageImg;
+                  if (dims && dims.aspectRatio < 0.6 && pageIdx + 1 < embeddedImages.length) {
+                    const nextImg = embeddedImages[pageIdx + 1];
+                    const nextDims = getJpegDimensions(nextImg);
+                    if (nextDims && nextDims.aspectRatio >= 0.6) {
+                      chosenCoverImg = nextImg;
+                    }
+                  }
+                  const trimmedImg = await cleanAndTrimImage(chosenCoverImg);
+                  const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || chosenCoverImg);
+                  imageUrl = cdnUrl || trimmedImg || chosenCoverImg;
+                }
                 pageStories.push({
                   headline: cleanTitle,
                   body: finalBody,
                   category,
-                  imageUrl: cdnUrl || chosenCoverImg,
+                  imageUrl,
                   sourcePublisher: item.source || "NewsBytes",
                   sourcePublishedAt: /* @__PURE__ */ new Date()
                 });
@@ -2449,14 +2483,20 @@ ${documentText.slice(0, 5e4)}` }
   const results = await Promise.all(
     draftItems.map(async (draft, idx) => {
       let imageUrl = null;
-      const imageIdx = Math.max(0, draft.pageNumber - 1);
-      const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
-      if (rawEmbedded) {
-        const cdnUrl = await uploadBase64ToCloudinary(rawEmbedded);
-        imageUrl = cdnUrl || rawEmbedded;
+      const promptToUse = draft.imagePrompt || `${draft.cleanTitle}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, no borders, no text`;
+      try {
+        imageUrl = await generateAiRecreatedImage(promptToUse);
+      } catch (err) {
+        console.warn("[PDFParser] AI high-res image recreation failed:", err);
       }
-      if (!imageUrl && draft.imagePrompt) {
-        imageUrl = await generateAiRecreatedImage(draft.imagePrompt);
+      if (!imageUrl) {
+        const imageIdx = Math.max(0, draft.pageNumber - 1);
+        const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
+        if (rawEmbedded) {
+          const trimmedImg = await cleanAndTrimImage(rawEmbedded);
+          const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || rawEmbedded);
+          imageUrl = cdnUrl || trimmedImg || rawEmbedded;
+        }
       }
       if (!imageUrl) {
         imageUrl = getTopicStockImage(draft.cleanTitle, draft.category);
@@ -3688,7 +3728,7 @@ var appRouter = router({
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:create");
       const { runNightlyCuration: runNightlyCuration2 } = await Promise.resolve().then(() => (init_aiCurator(), aiCurator_exports));
-      const count = await runNightlyCuration2("draft");
+      const count = await runNightlyCuration2("draft", admin.email);
       return { success: true, count };
     }),
     ingestPdf: publicProcedure.input(z2.object({ pdfContent: z2.string().min(1) })).mutation(async ({ input, ctx }) => {

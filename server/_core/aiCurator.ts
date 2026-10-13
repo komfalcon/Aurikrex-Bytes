@@ -785,7 +785,10 @@ EDITORIAL RULES:
   return null;
 }
 
-export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<CuratedByte[]> {
+export async function curateTenBytes(
+  excludeKeys = new Set<string>(),
+  userIdentifier?: string
+): Promise<CuratedByte[]> {
   let candidates: NewsCandidate[];
   try {
     candidates = await fetchTodayCandidates(excludeKeys);
@@ -795,12 +798,21 @@ export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<C
   }
   if (!candidates.length) return [];
 
-  // S2S Coin Deduction (AI Curator costs 5 coins)
-  const { deductCoins } = await import("./central.js");
-  const deductionSuccessful = await deductCoins("system_curator", "aurikrex_bytes", "ai_curator");
-  if (!deductionSuccessful) {
-    console.error("[AICurator] Insufficient coins or deduction failed. Skipping curation.");
-    return [];
+  // Optional Central Coin Deduction for registered users
+  const targetUser = userIdentifier || process.env.CENTRAL_SYSTEM_USER;
+  if (targetUser && targetUser !== "system_curator") {
+    try {
+      const { deductCoins } = await import("./central.js");
+      const deductionRes = await deductCoins(targetUser, "aurikrex_bytes", "ai_curator");
+      if (deductionRes && deductionRes.insufficient) {
+        console.warn(`[AICurator] Insufficient coins for user '${targetUser}'. Skipping curation.`);
+        return [];
+      }
+    } catch (err) {
+      console.warn("[AICurator] Central coin deduction warning:", err);
+    }
+  } else {
+    console.info("[AICurator] System / admin curation active; continuing curation.");
   }
 
   const mistralKey = getMistralApiKey();
@@ -895,7 +907,10 @@ export async function curateTenBytes(excludeKeys = new Set<string>()): Promise<C
   return curatedBytes;
 }
 
-export async function runNightlyCuration(status: "draft" | "published" = "draft"): Promise<number> {
+export async function runNightlyCuration(
+  status: "draft" | "published" = "draft",
+  userIdentifier?: string
+): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
 
@@ -904,7 +919,7 @@ export async function runNightlyCuration(status: "draft" | "published" = "draft"
   const excludeKeys = new Set(existingPosts.map(p => p.duplicateKey).filter((k): k is string => Boolean(k)));
 
   // 2. Curate 10 uncurated Bytes
-  const bytes = await curateTenBytes(excludeKeys);
+  const bytes = await curateTenBytes(excludeKeys, userIdentifier);
   if (!bytes.length) return 0;
 
   let count = 0;

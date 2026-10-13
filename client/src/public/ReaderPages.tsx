@@ -71,7 +71,7 @@ const optimizedImage = (url: string, width: number) =>
   url.includes("res.cloudinary.com") &&
   url.includes("/upload/") &&
   !url.includes("f_auto")
-    ? url.replace("/upload/", `/upload/f_auto,q_auto,w_${width}/`)
+    ? url.replace("/upload/", `/upload/f_auto,q_auto,ar_16:9,c_fill,g_auto,w_${width}/`)
     : url;
 
 type FeedViewMode = "editorial" | "compact";
