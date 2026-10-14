@@ -1519,6 +1519,7 @@ ${bg}`.trim();
 function extractArrayFromObject(parsed) {
   if (Array.isArray(parsed)) return parsed;
   if (parsed && typeof parsed === "object" && parsed !== null) {
+    if (Array.isArray(parsed.stories)) return parsed.stories;
     const arrayKey = Object.keys(parsed).find((k) => Array.isArray(parsed[k]));
     if (arrayKey) return parsed[arrayKey];
   }
@@ -2214,21 +2215,194 @@ async function parsePdfToBytes(pdfBase64OrText) {
   } else if (!isImage && !documentText) {
     documentText = "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
   }
-  const promptText = `You are the executive technology editor for Aurikrex Bytes (www.bytes.aurikrex.com).
-You are analyzing an uploaded multi-page document / PDF containing news cards.
+  const promptText = `ROLE
 
-CRITICAL INGESTION & FILTERING RULES:
-1. FILTER OUT NON-NEWS ITEMS & FLYERS: Ignore non-news pages such as event flyers, posters, schedules, advertisements, cover pages, or promotional banners (e.g. "Ingenium Tech Week", "Rally and Gyration", event lineups). ONLY extract genuine technology/science news articles.
-2. EXTRACT PAGE INDEX: For each valid news story found, return "pageNumber": (1-based page number where the story appears). This is required to pair the exact cover photo from that page.
-3. For EACH valid story, write a 3-part editorial brief:
-   - Part 1: The Lead \u2014 What happened, who announced it, and the core factual developments.
-   - Part 2: Why It Matters \u2014 Commercial, architectural, or industry-wide impact.
-   - Part 3: The Outlook \u2014 Key engineering milestones or product rollouts to watch next.
-4. "body": Strictly target 650-750 characters. No repetitive text.
-5. "headline": Crisp, active headline (under 80 characters). Strip app tags.
-6. "category": Choose from: "Tech", "AI", "Science", "Innovation", "Crypto".
-7. "imagePrompt": Detailed photorealistic visual description of the photo on that page.
-8. "source": Publisher/source name (e.g., "The Information", "Electrek", "Reuters").`;
+You are the Executive Technology Editor for Aurikrex Bytes (https://bytes.aurikrex.com).
+
+Analyze the entire uploaded multi-page PDF, extract genuine technology and science news stories, create concise editorial briefs, and recreate each story's exact original image at higher resolution, cropping out unwanted black spaces along the edges.
+
+
+1. NEWS EXTRACTION & FILTERING
+
+Review every page in the PDF.
+
+INCLUDE:
+- Technology, AI, science, and engineering breakthroughs.
+- Product launches and company announcements.
+- Semiconductors, software, cybersecurity, robotics, and space.
+- Electric vehicles, cryptocurrency, and emerging innovations.
+- Technology business deals, investments, and industry developments.
+
+EXCLUDE:
+- Event flyers, posters, schedules, and promotional banners.
+- Advertisements, cover pages, and unrelated content.
+- Duplicate stories unless a later appearance contains significant new information.
+
+Extract every distinct, legitimate news story. Do not invent facts or treat promotional material as news.
+
+
+2. PAGE NUMBER
+
+For every story, provide "pageNumber" using the actual 1-based PDF page index.
+
+Verify the page containing the story and its associated original image. Never guess page numbers.
+
+
+3. HEADLINE
+
+Write a crisp, active, publication-ready headline.
+
+- Maximum 119 characters.
+- Remove app tags, interface text, and irrelevant metadata.
+- Preserve factual accuracy.
+- Avoid clickbait and unsupported claims.
+
+
+4. EDITORIAL BODY
+
+Write a three-part editorial brief:
+
+The Lead: What happened, who announced it, and the key facts.
+
+Why It Matters: The commercial, engineering, or industry-wide implications.
+
+The Outlook: Upcoming milestones, product rollouts, technical challenges, or unresolved questions worth watching.
+
+STRICT CHARACTER LIMIT:
+The complete body must contain 650\u2013750 characters, inclusive, including all three labels, spaces, and punctuation.
+
+Target approximately 700 characters. Verify the character count before returning each story.
+
+Keep the writing informative, concise, and non-repetitive. Distinguish verified facts from analysis and projections. Never invent future milestones.
+
+
+5. CATEGORY
+
+Assign exactly one category from this list:
+
+- "Tech"
+- "AI"
+- "Science"
+- "Innovation"
+- "Crypto"
+
+Choose the category that best represents each story's primary subject.
+
+
+6. EXACT IMAGE RECREATION \u2014 CRITICAL
+
+For every valid story, locate the exact original photograph or cover image associated with it on the corresponding PDF page.
+
+Recreate that SAME image at higher resolution and crop out unwanted black spaces along its edges.
+
+This is an image-reproduction task, NOT an instruction to generate a similar image.
+
+PRESERVE:
+- The original subject, people, objects, and surroundings.
+- Composition, camera angle, perspective, and aspect ratio.
+- Colors, lighting, shadows, and photographic style.
+- Faces, logos, symbols, and meaningful visual details.
+- All recognizable elements of the original photograph.
+
+DO NOT:
+- Substitute another photograph or create an alternative scene.
+- Redesign, stylize, or reinterpret the image.
+- Add or remove meaningful objects, people, or logos.
+- Introduce artificial details or change the image's meaning.
+- Stretch the image or crop out important content.
+
+BLACK-EDGE CROPPING:
+Remove only unwanted black borders or padding. Preserve intentional dark areas that belong to the photograph and retain all meaningful content.
+
+RESOLUTION:
+Enhance sharpness and detail while maintaining natural photographic realism. Avoid artificial textures and fabricated details.
+
+WORKFLOW:
+1. Identify the correct PDF page and original image.
+2. Extract or isolate the image.
+3. Crop unwanted black margins.
+4. Enhance or recreate it at higher resolution while preserving visual fidelity.
+5. Compare the result with the original.
+6. Save and deliver the actual image file for that story.
+
+If exact reconstruction is technically impossible, preserve as much original information as possible. Never claim an image was recreated unless the file was actually produced.
+
+The "imagePrompt" field below is descriptive metadata only. It does not replace the requirement to deliver the recreated image.
+
+Use descriptive filenames and PNG or high-quality JPEG output.
+
+
+7. IMAGE DESCRIPTION
+
+Write "imagePrompt" based on direct visual inspection of the original image.
+
+Describe the subject, environment, composition, lighting, dominant colors, and distinctive visible details.
+
+Do not invent details or describe an imagined replacement image.
+
+
+8. SOURCE ATTRIBUTION
+
+The "source" field must identify the original publisher, such as Reuters, TechCrunch, Electrek, or The Information.
+
+Use the publisher identified in the document whenever possible. Do not confuse the publisher with the company being reported on.
+
+If the source cannot be verified, use "Unknown".
+
+Never fabricate facts, source names, quotations, or citations.
+
+
+9. REQUIRED JSON OUTPUT
+
+Return only a valid JSON object in the following structure:
+
+{
+  "publication": "Aurikrex Bytes",
+  "documentAnalysis": {
+    "totalPagesReviewed": 0,
+    "validStoriesExtracted": 0,
+    "nonNewsPagesExcluded": 0
+  },
+  "stories": [
+    {
+      "pageNumber": 1,
+      "headline": "Publication-ready headline",
+      "category": "Tech",
+      "body": "The Lead: ... Why It Matters: ... The Outlook: ...",
+      "source": "Original publisher",
+      "imagePrompt": "Detailed description of the original image.",
+      "imageOutputFilename": "story-image.png",
+      "imageStatus": "recreated"
+    }
+  ]
+}
+
+OUTPUT RULES:
+- Return every distinct, valid news story in order of first appearance.
+- Include all required fields.
+- Use actual PDF page numbers.
+- Ensure every body contains 650\u2013750 characters.
+- Set "imageStatus" to "recreated" only when the image file has actually been produced and saved or attached. Otherwise, use "failed".
+- Count all reviewed pages and excluded non-news pages accurately.
+- Do not include excluded material in the stories array.
+- Ensure the JSON parses correctly, with no comments, trailing commas, or Markdown fences.
+- Deliver the recreated image files alongside the JSON output.
+
+
+10. FINAL QUALITY CHECK
+
+Before responding, verify:
+- The entire PDF has been reviewed.
+- All genuine news stories have been extracted.
+- Flyers, advertisements, and duplicate stories have been filtered appropriately.
+- Headlines, categories, sources, and page numbers are correct.
+- Every body meets the strict character limit.
+- Each recreated image matches its original, has unwanted black borders removed, and preserves meaningful content.
+- Every image marked "recreated" actually exists.
+- The JSON is valid and all document counts are accurate.
+
+FINAL INSTRUCTION:
+Prioritize factual accuracy, editorial quality, and exact image preservation. Never fabricate information or pretend an image has been produced when it has not. Return only the final JSON object and deliver the corresponding image files.`;
   let rawJson = "[]";
   if (nvidiaKey && (isImage || !isImageBasedPdf)) {
     const nvidiaModels = isImage ? ["meta/llama-3.2-90b-vision-instruct", "meta/llama-3.2-11b-vision-instruct"] : ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"];
@@ -2329,9 +2503,11 @@ NOTE: You are analyzing PAGE ${pageNum} of ${embeddedImages.length}.`;
               for (const item of parsedPage) {
                 let bodyText = extractAiBody(item);
                 if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) bodyText = "";
-                const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${pageNum}`)).slice(0, 120);
-                const category = String(item.category || "Tech");
-                const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: item.source || "Tech Wire", publishedAt: /* @__PURE__ */ new Date() });
+                const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${pageNum}`)).slice(0, 119);
+                const validCategories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
+                const category = validCategories.includes(String(item.category)) ? String(item.category) : "Tech";
+                const source = item.source && String(item.source).trim() ? String(item.source).trim() : "Unknown";
+                const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: source, publishedAt: /* @__PURE__ */ new Date() });
                 const promptToUse = item.imagePrompt || `${cleanTitle}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, no borders, no text`;
                 let imageUrl = null;
                 try {
@@ -2462,10 +2638,12 @@ ${documentText.slice(0, 5e4)}` }
     if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) {
       bodyText = "";
     }
-    const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${idx + 1}`)).slice(0, 120);
-    const category = String(item.category || "Tech");
+    const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${idx + 1}`)).slice(0, 119);
+    const validCategories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
+    const category = validCategories.includes(String(item.category)) ? String(item.category) : "Tech";
+    const source = item.source && String(item.source).trim() ? String(item.source).trim() : "Unknown";
     const finalBody = clampEditorialBrief(bodyText || cleanTitle, {
-      publisher: item.source || "Tech Wire",
+      publisher: source,
       publishedAt: /* @__PURE__ */ new Date()
     });
     const pageNum = Number(item.pageNumber || idx + 1);
@@ -2473,7 +2651,7 @@ ${documentText.slice(0, 5e4)}` }
       cleanTitle,
       finalBody,
       category,
-      source: item.source,
+      source,
       imagePrompt: item.imagePrompt,
       pageNumber: pageNum
     };

@@ -520,6 +520,7 @@ export function extractAiBody(item: any): string {
 function extractArrayFromObject(parsed: any): any[] {
   if (Array.isArray(parsed)) return parsed;
   if (parsed && typeof parsed === "object" && parsed !== null) {
+    if (Array.isArray(parsed.stories)) return parsed.stories;
     const arrayKey = Object.keys(parsed).find(k => Array.isArray(parsed[k]));
     if (arrayKey) return parsed[arrayKey];
   }
