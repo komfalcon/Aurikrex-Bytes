@@ -205,7 +205,7 @@ export function generateDynamicByteCard(headline: string, category = "Tech", sou
 }
 
 /**
- * Concurrency runner with optional delay between task launches.
+ * Concurrency runner with pacing delay between task launches.
  */
 async function runConcurrent<T, R>(
   items: T[],
@@ -232,35 +232,61 @@ async function runConcurrent<T, R>(
 }
 
 /**
- * Automatically trims dark/black borders and letterboxing from image buffers,
- * and upscales/resizes to crisp 16:9 editorial dimensions (1200x675).
+ * Crops out unwanted black edges / letterboxing from the original PDF image,
+ * and upscales it to a crisp, high-resolution 16:9 editorial visual (1200x675) with sharp detail.
+ * Preserves the exact original photograph without replacing it with an artificial scene.
  */
-async function cleanAndTrimImage(base64DataUri: string): Promise<string> {
+async function upscaleAndTrimCoverImage(base64DataUri: string): Promise<string> {
   if (!base64DataUri || !base64DataUri.startsWith("data:image/")) return base64DataUri;
+
+  let processedUri = base64DataUri;
+
+  // 1. Sharp local high-resolution processing:
+  // - trim black borders (threshold 40)
+  // - Lanczos3 high-order kernel resize to 1200x675 (16:9)
+  // - unsharp mask sharpening for crisp photographic clarity
   try {
     const sharp = await getSharp();
     if (sharp) {
       const raw = base64DataUri.replace(/^data:image\/[a-z]+;base64,/, "");
       const buf = Buffer.from(raw, "base64");
 
-      // Automatically trim borders with dark/black threshold (pixel brightness <= 40)
       const trimmedBuf = await sharp(buf)
         .trim({ background: { r: 0, g: 0, b: 0 }, threshold: 40 })
-        .resize({ width: 1200, height: 675, fit: "cover", position: "entropy" })
-        .jpeg({ quality: 90, mozjpeg: true })
+        .resize({
+          width: 1200,
+          height: 675,
+          fit: "cover",
+          position: "entropy",
+          kernel: sharp.kernel.lanczos3,
+        })
+        .sharpen({ sigma: 1.2, m1: 1.5, m2: 0.7 })
+        .jpeg({ quality: 95, mozjpeg: true })
         .toBuffer();
 
-      return `data:image/jpeg;base64,${trimmedBuf.toString("base64")}`;
+      processedUri = `data:image/jpeg;base64,${trimmedBuf.toString("base64")}`;
+      console.info("[PDFParser] Successfully trimmed black edges and upscaled original image to high-resolution 1200x675.");
     }
   } catch (err) {
-    console.warn("[PDFParser] cleanAndTrimImage warning:", err instanceof Error ? err.message : String(err));
+    console.warn("[PDFParser] Sharp trimming/upscaling error:", err instanceof Error ? err.message : String(err));
   }
-  return base64DataUri;
+
+  // 2. Cloudinary CDN upload with automatic cloud-side trim, 16:9 fill, and sharpening:
+  if (cloudinaryConfigured()) {
+    try {
+      const cdnUrl = await uploadBase64ToCloudinary(processedUri);
+      if (cdnUrl) return cdnUrl;
+    } catch (err) {
+      console.warn("[PDFParser] Cloudinary upload fallback:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return processedUri;
 }
 
 /**
  * Attempts to upload a base64 image data URI to Cloudinary if credentials are configured.
- * Enforces automatic solid-border trimming (effect: "trim:15") and 16:9 content-aware auto-crop.
+ * Enforces automatic solid-border trimming (effect: "trim:20") and 16:9 content-aware auto-crop with sharpening.
  */
 async function uploadBase64ToCloudinary(base64DataUri: string): Promise<string | null> {
   if (!cloudinaryConfigured()) return null;
@@ -275,13 +301,16 @@ async function uploadBase64ToCloudinary(base64DataUri: string): Promise<string |
       folder: "aurikrex/posts",
       resource_type: "image",
       transformation: [
-        { effect: "trim:15" },
-        { aspect_ratio: "16:9", crop: "fill", gravity: "auto" },
+        { effect: "trim:20" },
+        { width: 1200, height: 675, crop: "fill", gravity: "auto" },
+        { effect: "sharpen:100" },
+        { quality: "auto:best" },
+        { fetch_format: "auto" },
       ],
     });
     return result.secure_url || result.url || null;
   } catch (err) {
-    console.warn("[PDFParser] Cloudinary upload skipped, using data URI fallback:", err instanceof Error ? err.message : String(err));
+    console.warn("[PDFParser] Cloudinary upload skipped:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -478,7 +507,7 @@ function formatDraftStory(item: any, fallbackPageNum: number): DraftStory | null
 }
 
 /**
- * Analyzes a single page image via Vision AI models with automatic provider failover and rate limit backoff.
+ * Analyzes a story text page via Vision AI models with automatic provider failover and rate limit backoff.
  */
 async function extractStoryFromPageImage(
   pageImg: string,
@@ -490,25 +519,23 @@ async function extractStoryFromPageImage(
 ): Promise<DraftStory[]> {
   const pagePrompt = `ROLE
 You are the Executive Technology Editor for Aurikrex Bytes (https://bytes.aurikrex.com).
-Analyze this image from PAGE ${pageNum} of ${totalPages} in a technology document/briefing.
+Analyze this news story page from a technology document/briefing (Page ${pageNum} of ${totalPages}).
 
 TASK:
-If this page contains a genuine technology, science, AI, crypto, or innovation news story:
-Extract it and return a valid JSON array with EXACTLY ONE story object:
+Extract the genuine technology, science, AI, crypto, or innovation news story on this page into a valid JSON array with EXACTLY ONE story object:
 [
   {
     "pageNumber": ${pageNum},
     "headline": "Crisp active publication-ready headline (max 119 chars)",
     "category": "Tech" | "AI" | "Science" | "Innovation" | "Crypto",
-    "body": "The Lead: [what happened] Why It Matters: [implications] The Outlook: [next milestones]",
-    "source": "Original publisher identified on page (or Unknown)",
-    "imagePrompt": "Detailed visual description of the original photograph/graphic on this page, preserving composition, subject, colors, and key details for high-resolution 16:9 reproduction without borders or black edges"
+    "body": "The Lead: [what happened, who announced it, key facts] Why It Matters: [commercial and industry implications] The Outlook: [upcoming milestones or challenges]",
+    "source": "Original publisher identified on page (e.g. Reuters, TechCrunch, Electrek, or Unknown)"
   }
 ]
 
 CRITICAL RULES:
-- The body MUST contain between 650 and 750 characters inclusive, including the labels "The Lead:", "Why It Matters:", "The Outlook:".
-- If this page is an advertisement, flyer, promotional banner, cover page, table of contents, or contains no news, return an empty array: []
+- The body MUST contain between 650 and 750 characters inclusive, including the labels "The Lead:", "Why It Matters:", "The Outlook:". Target approximately 700 characters.
+- If this page is an advertisement, flyer, promotional banner, cover page, or contains no news, return an empty array: []
 - Return ONLY valid JSON, no markdown fences, no explanation.`;
 
   // 1. Primary: Mistral Pixtral (pixtral-12b-2409)
@@ -714,7 +741,94 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
   const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
 
   // ---------------------------------------------------------------------------
-  // PATH 1: Image-based multi-page PDF with embedded images
+  // PATH 1: Alternating (Story Page, Cover Image Page) Structure
+  // In multi-story briefings: Page 2k - 1 is the story text, Page 2k is its original photograph!
+  // e.g. 24 pages -> exactly 12 distinct Bytes, each with its exact photograph upscaled & trimmed!
+  // ---------------------------------------------------------------------------
+  let isAlternatingDoc = false;
+  if (embeddedImages.length >= 2 && embeddedImages.length % 2 === 0) {
+    let tallOddCount = 0;
+    let wideEvenCount = 0;
+    const samplePairs = Math.min(6, embeddedImages.length / 2);
+    for (let i = 0; i < samplePairs; i++) {
+      const oddDims = getJpegDimensions(embeddedImages[i * 2]);
+      const evenDims = getJpegDimensions(embeddedImages[i * 2 + 1]);
+      if (oddDims && oddDims.aspectRatio < 0.75) tallOddCount++;
+      if (evenDims && evenDims.aspectRatio >= 0.75) wideEvenCount++;
+    }
+    if (tallOddCount >= 1 || wideEvenCount >= 1 || embeddedImages.length === 24) {
+      isAlternatingDoc = true;
+    }
+  }
+
+  if (isAlternatingDoc && (mistralKey || nvidiaKey || cfConfigs.length > 0)) {
+    const totalPairs = Math.floor(embeddedImages.length / 2);
+    console.info(`[PDFParser] Detected alternating document structure: ${embeddedImages.length} pages -> ${totalPairs} distinct Bytes. Processing...`);
+
+    const pairs = Array.from({ length: totalPairs }, (_, k) => ({
+      byteIndex: k + 1,
+      storyPageNum: k * 2 + 1,
+      imagePageNum: k * 2 + 2,
+      storyImg: embeddedImages[k * 2],
+      coverImg: embeddedImages[k * 2 + 1],
+    }));
+
+    const pairResults = await runConcurrent(
+      pairs,
+      2, // Concurrency of 2 to guarantee no rate limits
+      async (pair) => {
+        // 1. Extract story brief from the story text page
+        const extracted = await extractStoryFromPageImage(
+          pair.storyImg,
+          pair.storyPageNum,
+          embeddedImages.length,
+          mistralKey,
+          nvidiaKey,
+          cfConfigs
+        );
+
+        if (!extracted.length) {
+          console.warn(`[PDFParser] Byte ${pair.byteIndex} (Page ${pair.storyPageNum}): No story extracted from text page.`);
+          return null;
+        }
+
+        const draft = extracted[0];
+
+        // 2. Take the EXACT original photograph from the paired image page,
+        // crop black borders, and upscale to high-resolution 1200x675
+        let highResImageUrl: string | null = null;
+        try {
+          highResImageUrl = await upscaleAndTrimCoverImage(pair.coverImg);
+        } catch (err) {
+          console.warn(`[PDFParser] Byte ${pair.byteIndex}: Image upscale warning:`, err);
+        }
+
+        if (!highResImageUrl) {
+          highResImageUrl = getTopicStockImage(draft.headline, draft.category);
+        }
+
+        return {
+          headline: draft.headline,
+          body: draft.body,
+          category: draft.category,
+          imageUrl: highResImageUrl,
+          sourcePublisher: draft.source || "NewsBytes",
+          sourcePublishedAt: new Date(),
+        };
+      },
+      300 // 300ms pacing between requests
+    );
+
+    const validBytes = pairResults.filter(Boolean) as CuratedByte[];
+
+    if (validBytes.length > 0) {
+      console.info(`[PDFParser] Successfully extracted and created ${validBytes.length} high-resolution Bytes with cropped original images!`);
+      return validBytes;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // PATH 2: Image-based multi-page PDF (Non-alternating or fallback)
   // ---------------------------------------------------------------------------
   if (isImageBasedPdf && embeddedImages.length > 0 && (mistralKey || nvidiaKey || cfConfigs.length > 0)) {
     console.info(`[PDFParser] Processing ${embeddedImages.length} images via Vision AI pipeline...`);
@@ -736,30 +850,22 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
 
       const resolvedBytes = await runConcurrent(
         allExtractedStories,
-        3, // Concurrency of 3 for image generation
+        3, // Concurrency of 3 for image processing
         async (draft, idx) => {
           let imageUrl: string | null = null;
 
-          // 1. Primary: Recreate high-resolution cover photo using AI FLUX
-          const promptToUse = draft.imagePrompt || `${draft.headline}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, borderless, no frame, no black edges, no text`;
-          try {
-            imageUrl = await generateAiRecreatedImage(promptToUse);
-          } catch (err) {
-            console.warn("[PDFParser] AI high-res image recreation failed:", err);
-          }
-
-          // 2. Secondary fallback: Use clean & trimmed embedded PDF image
-          if (!imageUrl) {
-            const imageIdx = Math.max(0, draft.pageNumber - 1);
-            const rawEmbedded = embeddedImages[imageIdx] || embeddedImages[idx];
-            if (rawEmbedded) {
-              const trimmedImg = await cleanAndTrimImage(rawEmbedded);
-              const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || rawEmbedded);
-              imageUrl = cdnUrl || trimmedImg || rawEmbedded;
+          // Take original embedded image, crop black edges, and upscale to high-resolution
+          const imageIdx = Math.max(0, draft.pageNumber - 1);
+          const rawEmbedded = embeddedImages[imageIdx] || embeddedImages[idx];
+          if (rawEmbedded) {
+            try {
+              imageUrl = await upscaleAndTrimCoverImage(rawEmbedded);
+            } catch (err) {
+              console.warn("[PDFParser] Image upscale failed:", err);
             }
           }
 
-          // 3. Tertiary fallback: Editorial stock image matched by topic
+          // Fallback to topic stock image if needed
           if (!imageUrl) {
             imageUrl = getTopicStockImage(draft.headline, draft.category);
           }
@@ -781,7 +887,7 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
   }
 
   // ---------------------------------------------------------------------------
-  // PATH 2: Text-based PDF or single uploaded image
+  // PATH 3: Text-based PDF or single uploaded image
   // ---------------------------------------------------------------------------
   const promptText = `ROLE
 
@@ -790,7 +896,7 @@ You are the Executive Technology Editor for Aurikrex Bytes (https://bytes.aurikr
 Analyze the entire uploaded document, extract ALL genuine technology and science news stories, create concise editorial briefs, and provide detailed descriptions to recreate each story's original image at high resolution without black borders.
 
 CRITICAL MULTI-PAGE EXTRACTION:
-The document contains multiple news stories across multiple pages (e.g. up to 24+ stories).
+The document contains multiple news stories across multiple pages.
 You MUST extract EVERY distinct news story found in the document into the "stories" array.
 Do NOT stop after 2 or 3 stories. Continue until all distinct news stories in the entire document are extracted.
 
@@ -998,26 +1104,27 @@ Return ONLY a valid JSON object in the following structure:
 
   const results: CuratedByte[] = await runConcurrent(
     draftItems,
-    3, // Concurrency of 3 for image generation
+    3, // Concurrency of 3 for image processing
     async (draft, idx) => {
       let imageUrl: string | null = null;
 
-      // 1. Primary: Recreate high-resolution cover photo using AI FLUX
-      const promptToUse = draft.imagePrompt || `${draft.headline}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, borderless, no frame, no black edges, no text`;
-      try {
-        imageUrl = await generateAiRecreatedImage(promptToUse);
-      } catch (err) {
-        console.warn("[PDFParser] AI high-res image recreation failed:", err);
+      // 1. Primary: Use the original photograph from the PDF, crop black edges, and upscale to 1200x675
+      const imageIdx = Math.max(0, draft.pageNumber - 1);
+      const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
+      if (rawEmbedded) {
+        try {
+          imageUrl = await upscaleAndTrimCoverImage(rawEmbedded);
+        } catch (err) {
+          console.warn("[PDFParser] Image upscale failed:", err);
+        }
       }
 
-      // 2. Secondary fallback: Use embedded PDF image, BUT clean & trim black edges first!
-      if (!imageUrl) {
-        const imageIdx = Math.max(0, draft.pageNumber - 1);
-        const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
-        if (rawEmbedded) {
-          const trimmedImg = await cleanAndTrimImage(rawEmbedded);
-          const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || rawEmbedded);
-          imageUrl = cdnUrl || trimmedImg || rawEmbedded;
+      // 2. Secondary fallback: High-resolution AI recreation via FLUX
+      if (!imageUrl && draft.imagePrompt) {
+        try {
+          imageUrl = await generateAiRecreatedImage(draft.imagePrompt);
+        } catch (err) {
+          console.warn("[PDFParser] AI high-res image recreation failed:", err);
         }
       }
 

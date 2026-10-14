@@ -2057,20 +2057,36 @@ async function runConcurrent(items, limit, fn, delayMs = 0) {
   await Promise.all(workers);
   return results;
 }
-async function cleanAndTrimImage(base64DataUri) {
+async function upscaleAndTrimCoverImage(base64DataUri) {
   if (!base64DataUri || !base64DataUri.startsWith("data:image/")) return base64DataUri;
+  let processedUri = base64DataUri;
   try {
     const sharp = await getSharp();
     if (sharp) {
       const raw = base64DataUri.replace(/^data:image\/[a-z]+;base64,/, "");
       const buf = Buffer.from(raw, "base64");
-      const trimmedBuf = await sharp(buf).trim({ background: { r: 0, g: 0, b: 0 }, threshold: 40 }).resize({ width: 1200, height: 675, fit: "cover", position: "entropy" }).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
-      return `data:image/jpeg;base64,${trimmedBuf.toString("base64")}`;
+      const trimmedBuf = await sharp(buf).trim({ background: { r: 0, g: 0, b: 0 }, threshold: 40 }).resize({
+        width: 1200,
+        height: 675,
+        fit: "cover",
+        position: "entropy",
+        kernel: sharp.kernel.lanczos3
+      }).sharpen({ sigma: 1.2, m1: 1.5, m2: 0.7 }).jpeg({ quality: 95, mozjpeg: true }).toBuffer();
+      processedUri = `data:image/jpeg;base64,${trimmedBuf.toString("base64")}`;
+      console.info("[PDFParser] Successfully trimmed black edges and upscaled original image to high-resolution 1200x675.");
     }
   } catch (err) {
-    console.warn("[PDFParser] cleanAndTrimImage warning:", err instanceof Error ? err.message : String(err));
+    console.warn("[PDFParser] Sharp trimming/upscaling error:", err instanceof Error ? err.message : String(err));
   }
-  return base64DataUri;
+  if (cloudinaryConfigured()) {
+    try {
+      const cdnUrl = await uploadBase64ToCloudinary(processedUri);
+      if (cdnUrl) return cdnUrl;
+    } catch (err) {
+      console.warn("[PDFParser] Cloudinary upload fallback:", err instanceof Error ? err.message : String(err));
+    }
+  }
+  return processedUri;
 }
 async function uploadBase64ToCloudinary(base64DataUri) {
   if (!cloudinaryConfigured()) return null;
@@ -2085,15 +2101,40 @@ async function uploadBase64ToCloudinary(base64DataUri) {
       folder: "aurikrex/posts",
       resource_type: "image",
       transformation: [
-        { effect: "trim:15" },
-        { aspect_ratio: "16:9", crop: "fill", gravity: "auto" }
+        { effect: "trim:20" },
+        { width: 1200, height: 675, crop: "fill", gravity: "auto" },
+        { effect: "sharpen:100" },
+        { quality: "auto:best" },
+        { fetch_format: "auto" }
       ]
     });
     return result.secure_url || result.url || null;
   } catch (err) {
-    console.warn("[PDFParser] Cloudinary upload skipped, using data URI fallback:", err instanceof Error ? err.message : String(err));
+    console.warn("[PDFParser] Cloudinary upload skipped:", err instanceof Error ? err.message : String(err));
     return null;
   }
+}
+function getJpegDimensions(base64Uri) {
+  try {
+    const base64Data = base64Uri.replace(/^data:image\/[a-z]+;base64,/, "");
+    const buf = Buffer.from(base64Data, "base64");
+    let offset = 2;
+    while (offset < buf.length - 8) {
+      if (buf[offset] !== 255) break;
+      const marker = buf[offset + 1];
+      if (marker >= 192 && marker <= 195) {
+        const height = buf.readUInt16BE(offset + 5);
+        const width = buf.readUInt16BE(offset + 7);
+        if (width > 0 && height > 0) {
+          return { width, height, aspectRatio: width / height };
+        }
+      }
+      const blockLength = buf.readUInt16BE(offset + 2);
+      offset += 2 + blockLength;
+    }
+  } catch {
+  }
+  return null;
 }
 function extractEmbeddedPdfImages(rawBase64) {
   try {
@@ -2220,25 +2261,23 @@ function formatDraftStory(item, fallbackPageNum) {
 async function extractStoryFromPageImage(pageImg, pageNum, totalPages, mistralKey, nvidiaKey, cfConfigs = []) {
   const pagePrompt = `ROLE
 You are the Executive Technology Editor for Aurikrex Bytes (https://bytes.aurikrex.com).
-Analyze this image from PAGE ${pageNum} of ${totalPages} in a technology document/briefing.
+Analyze this news story page from a technology document/briefing (Page ${pageNum} of ${totalPages}).
 
 TASK:
-If this page contains a genuine technology, science, AI, crypto, or innovation news story:
-Extract it and return a valid JSON array with EXACTLY ONE story object:
+Extract the genuine technology, science, AI, crypto, or innovation news story on this page into a valid JSON array with EXACTLY ONE story object:
 [
   {
     "pageNumber": ${pageNum},
     "headline": "Crisp active publication-ready headline (max 119 chars)",
     "category": "Tech" | "AI" | "Science" | "Innovation" | "Crypto",
-    "body": "The Lead: [what happened] Why It Matters: [implications] The Outlook: [next milestones]",
-    "source": "Original publisher identified on page (or Unknown)",
-    "imagePrompt": "Detailed visual description of the original photograph/graphic on this page, preserving composition, subject, colors, and key details for high-resolution 16:9 reproduction without borders or black edges"
+    "body": "The Lead: [what happened, who announced it, key facts] Why It Matters: [commercial and industry implications] The Outlook: [upcoming milestones or challenges]",
+    "source": "Original publisher identified on page (e.g. Reuters, TechCrunch, Electrek, or Unknown)"
   }
 ]
 
 CRITICAL RULES:
-- The body MUST contain between 650 and 750 characters inclusive, including the labels "The Lead:", "Why It Matters:", "The Outlook:".
-- If this page is an advertisement, flyer, promotional banner, cover page, table of contents, or contains no news, return an empty array: []
+- The body MUST contain between 650 and 750 characters inclusive, including the labels "The Lead:", "Why It Matters:", "The Outlook:". Target approximately 700 characters.
+- If this page is an advertisement, flyer, promotional banner, cover page, or contains no news, return an empty array: []
 - Return ONLY valid JSON, no markdown fences, no explanation.`;
   if (mistralKey) {
     for (const model of ["pixtral-12b-2409", "pixtral-large-latest"]) {
@@ -2418,6 +2457,76 @@ async function parsePdfToBytes(pdfBase64OrText) {
     documentText = "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
   }
   const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
+  let isAlternatingDoc = false;
+  if (embeddedImages.length >= 2 && embeddedImages.length % 2 === 0) {
+    let tallOddCount = 0;
+    let wideEvenCount = 0;
+    const samplePairs = Math.min(6, embeddedImages.length / 2);
+    for (let i = 0; i < samplePairs; i++) {
+      const oddDims = getJpegDimensions(embeddedImages[i * 2]);
+      const evenDims = getJpegDimensions(embeddedImages[i * 2 + 1]);
+      if (oddDims && oddDims.aspectRatio < 0.75) tallOddCount++;
+      if (evenDims && evenDims.aspectRatio >= 0.75) wideEvenCount++;
+    }
+    if (tallOddCount >= 1 || wideEvenCount >= 1 || embeddedImages.length === 24) {
+      isAlternatingDoc = true;
+    }
+  }
+  if (isAlternatingDoc && (mistralKey || nvidiaKey || cfConfigs.length > 0)) {
+    const totalPairs = Math.floor(embeddedImages.length / 2);
+    console.info(`[PDFParser] Detected alternating document structure: ${embeddedImages.length} pages -> ${totalPairs} distinct Bytes. Processing...`);
+    const pairs = Array.from({ length: totalPairs }, (_, k) => ({
+      byteIndex: k + 1,
+      storyPageNum: k * 2 + 1,
+      imagePageNum: k * 2 + 2,
+      storyImg: embeddedImages[k * 2],
+      coverImg: embeddedImages[k * 2 + 1]
+    }));
+    const pairResults = await runConcurrent(
+      pairs,
+      2,
+      // Concurrency of 2 to guarantee no rate limits
+      async (pair) => {
+        const extracted = await extractStoryFromPageImage(
+          pair.storyImg,
+          pair.storyPageNum,
+          embeddedImages.length,
+          mistralKey,
+          nvidiaKey,
+          cfConfigs
+        );
+        if (!extracted.length) {
+          console.warn(`[PDFParser] Byte ${pair.byteIndex} (Page ${pair.storyPageNum}): No story extracted from text page.`);
+          return null;
+        }
+        const draft = extracted[0];
+        let highResImageUrl = null;
+        try {
+          highResImageUrl = await upscaleAndTrimCoverImage(pair.coverImg);
+        } catch (err) {
+          console.warn(`[PDFParser] Byte ${pair.byteIndex}: Image upscale warning:`, err);
+        }
+        if (!highResImageUrl) {
+          highResImageUrl = getTopicStockImage(draft.headline, draft.category);
+        }
+        return {
+          headline: draft.headline,
+          body: draft.body,
+          category: draft.category,
+          imageUrl: highResImageUrl,
+          sourcePublisher: draft.source || "NewsBytes",
+          sourcePublishedAt: /* @__PURE__ */ new Date()
+        };
+      },
+      300
+      // 300ms pacing between requests
+    );
+    const validBytes = pairResults.filter(Boolean);
+    if (validBytes.length > 0) {
+      console.info(`[PDFParser] Successfully extracted and created ${validBytes.length} high-resolution Bytes with cropped original images!`);
+      return validBytes;
+    }
+  }
   if (isImageBasedPdf && embeddedImages.length > 0 && (mistralKey || nvidiaKey || cfConfigs.length > 0)) {
     console.info(`[PDFParser] Processing ${embeddedImages.length} images via Vision AI pipeline...`);
     const pageResults = await runConcurrent(
@@ -2437,22 +2546,16 @@ async function parsePdfToBytes(pdfBase64OrText) {
       const resolvedBytes = await runConcurrent(
         allExtractedStories,
         3,
-        // Concurrency of 3 for image generation
+        // Concurrency of 3 for image processing
         async (draft, idx) => {
           let imageUrl = null;
-          const promptToUse = draft.imagePrompt || `${draft.headline}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, borderless, no frame, no black edges, no text`;
-          try {
-            imageUrl = await generateAiRecreatedImage(promptToUse);
-          } catch (err) {
-            console.warn("[PDFParser] AI high-res image recreation failed:", err);
-          }
-          if (!imageUrl) {
-            const imageIdx = Math.max(0, draft.pageNumber - 1);
-            const rawEmbedded = embeddedImages[imageIdx] || embeddedImages[idx];
-            if (rawEmbedded) {
-              const trimmedImg = await cleanAndTrimImage(rawEmbedded);
-              const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || rawEmbedded);
-              imageUrl = cdnUrl || trimmedImg || rawEmbedded;
+          const imageIdx = Math.max(0, draft.pageNumber - 1);
+          const rawEmbedded = embeddedImages[imageIdx] || embeddedImages[idx];
+          if (rawEmbedded) {
+            try {
+              imageUrl = await upscaleAndTrimCoverImage(rawEmbedded);
+            } catch (err) {
+              console.warn("[PDFParser] Image upscale failed:", err);
             }
           }
           if (!imageUrl) {
@@ -2479,7 +2582,7 @@ You are the Executive Technology Editor for Aurikrex Bytes (https://bytes.aurikr
 Analyze the entire uploaded document, extract ALL genuine technology and science news stories, create concise editorial briefs, and provide detailed descriptions to recreate each story's original image at high resolution without black borders.
 
 CRITICAL MULTI-PAGE EXTRACTION:
-The document contains multiple news stories across multiple pages (e.g. up to 24+ stories).
+The document contains multiple news stories across multiple pages.
 You MUST extract EVERY distinct news story found in the document into the "stories" array.
 Do NOT stop after 2 or 3 stories. Continue until all distinct news stories in the entire document are extracted.
 
@@ -2668,22 +2771,23 @@ ${documentText.slice(0, 5e4)}` }
   const results = await runConcurrent(
     draftItems,
     3,
-    // Concurrency of 3 for image generation
+    // Concurrency of 3 for image processing
     async (draft, idx) => {
       let imageUrl = null;
-      const promptToUse = draft.imagePrompt || `${draft.headline}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, borderless, no frame, no black edges, no text`;
-      try {
-        imageUrl = await generateAiRecreatedImage(promptToUse);
-      } catch (err) {
-        console.warn("[PDFParser] AI high-res image recreation failed:", err);
+      const imageIdx = Math.max(0, draft.pageNumber - 1);
+      const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
+      if (rawEmbedded) {
+        try {
+          imageUrl = await upscaleAndTrimCoverImage(rawEmbedded);
+        } catch (err) {
+          console.warn("[PDFParser] Image upscale failed:", err);
+        }
       }
-      if (!imageUrl) {
-        const imageIdx = Math.max(0, draft.pageNumber - 1);
-        const rawEmbedded = coverImages[imageIdx] || coverImages[idx];
-        if (rawEmbedded) {
-          const trimmedImg = await cleanAndTrimImage(rawEmbedded);
-          const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || rawEmbedded);
-          imageUrl = cdnUrl || trimmedImg || rawEmbedded;
+      if (!imageUrl && draft.imagePrompt) {
+        try {
+          imageUrl = await generateAiRecreatedImage(draft.imagePrompt);
+        } catch (err) {
+          console.warn("[PDFParser] AI high-res image recreation failed:", err);
         }
       }
       if (!imageUrl) {
