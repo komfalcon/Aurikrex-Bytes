@@ -1883,7 +1883,17 @@ __export(pdfParser_exports, {
   parsePdfToBytes: () => parsePdfToBytes
 });
 import zlib from "zlib";
-import { createRequire } from "module";
+import pdfParse from "pdf-parse";
+async function getSharp() {
+  if (cachedSharp !== null) return cachedSharp;
+  try {
+    const mod = await import("sharp");
+    cachedSharp = mod.default || mod;
+  } catch {
+    cachedSharp = false;
+  }
+  return cachedSharp || null;
+}
 function extractEntityKicker(headline, category, source) {
   const h = headline.toLowerCase();
   if (/deepseek|chatgpt|openai|claude|anthropic|perplexity|llm|agent|gpt|gemini|numbat|model/.test(h)) {
@@ -2031,18 +2041,36 @@ function generateDynamicByteCard(headline, category = "Tech", source) {
 </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
+async function runConcurrent(items, limit, fn, delayMs = 0) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const idx = nextIndex++;
+      results[idx] = await fn(items[idx], idx);
+      if (delayMs > 0 && nextIndex < items.length) {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
 async function cleanAndTrimImage(base64DataUri) {
   if (!base64DataUri || !base64DataUri.startsWith("data:image/")) return base64DataUri;
   try {
-    const sharp = _require("sharp");
-    const raw = base64DataUri.replace(/^data:image\/[a-z]+;base64,/, "");
-    const buf = Buffer.from(raw, "base64");
-    const trimmedBuf = await sharp(buf).trim({ background: { r: 0, g: 0, b: 0 }, threshold: 40 }).resize({ width: 1200, height: 675, fit: "cover", position: "entropy" }).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
-    return `data:image/jpeg;base64,${trimmedBuf.toString("base64")}`;
+    const sharp = await getSharp();
+    if (sharp) {
+      const raw = base64DataUri.replace(/^data:image\/[a-z]+;base64,/, "");
+      const buf = Buffer.from(raw, "base64");
+      const trimmedBuf = await sharp(buf).trim({ background: { r: 0, g: 0, b: 0 }, threshold: 40 }).resize({ width: 1200, height: 675, fit: "cover", position: "entropy" }).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+      return `data:image/jpeg;base64,${trimmedBuf.toString("base64")}`;
+    }
   } catch (err) {
     console.warn("[PDFParser] cleanAndTrimImage warning:", err instanceof Error ? err.message : String(err));
-    return base64DataUri;
   }
+  return base64DataUri;
 }
 async function uploadBase64ToCloudinary(base64DataUri) {
   if (!cloudinaryConfigured()) return null;
@@ -2057,6 +2085,7 @@ async function uploadBase64ToCloudinary(base64DataUri) {
       folder: "aurikrex/posts",
       resource_type: "image",
       transformation: [
+        { effect: "trim:15" },
         { aspect_ratio: "16:9", crop: "fill", gravity: "auto" }
       ]
     });
@@ -2065,28 +2094,6 @@ async function uploadBase64ToCloudinary(base64DataUri) {
     console.warn("[PDFParser] Cloudinary upload skipped, using data URI fallback:", err instanceof Error ? err.message : String(err));
     return null;
   }
-}
-function getJpegDimensions(base64Uri) {
-  try {
-    const base64Data = base64Uri.replace(/^data:image\/[a-z]+;base64,/, "");
-    const buf = Buffer.from(base64Data, "base64");
-    let offset = 2;
-    while (offset < buf.length - 8) {
-      if (buf[offset] !== 255) break;
-      const marker = buf[offset + 1];
-      if (marker >= 192 && marker <= 195) {
-        const height = buf.readUInt16BE(offset + 5);
-        const width = buf.readUInt16BE(offset + 7);
-        if (width > 0 && height > 0) {
-          return { width, height, aspectRatio: width / height };
-        }
-      }
-      const blockLength = buf.readUInt16BE(offset + 2);
-      offset += 2 + blockLength;
-    }
-  } catch {
-  }
-  return null;
 }
 function extractEmbeddedPdfImages(rawBase64) {
   try {
@@ -2114,7 +2121,9 @@ function extractEmbeddedPdfImages(rawBase64) {
 async function generateAiRecreatedImage(prompt) {
   if (!prompt) return null;
   try {
-    const fluxUrl = await generateNvidiaFluxImage(prompt);
+    const cleanPrompt = prompt.replace(/\b(black borders?|black edges?|black frame|letterbox(?:ing)?|black spaces?)\b/gi, "").trim();
+    const finalPrompt = `${cleanPrompt}. High-resolution editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional studio lighting, photorealistic, borderless, no frame, no black edges, no letterbox, no text, no watermark`;
+    const fluxUrl = await generateNvidiaFluxImage(finalPrompt);
     if (fluxUrl) {
       console.info("[PDFParser] Successfully generated high-resolution AI cover image via FLUX.");
       return fluxUrl;
@@ -2128,7 +2137,6 @@ async function extractPdfText(rawBase64) {
   try {
     const buf = Buffer.from(rawBase64, "base64");
     try {
-      const pdfParse = _require("pdf-parse");
       const data = await pdfParse(buf, { max: 0 });
       const text2 = (data.text || "").trim();
       if (text2.length > 50) {
@@ -2136,7 +2144,7 @@ async function extractPdfText(rawBase64) {
         return text2;
       }
     } catch (err) {
-      console.warn("[PDFParser] pdf-parse failed, falling back to manual extraction:", err instanceof Error ? err.message : String(err));
+      console.warn("[PDFParser] pdf-parse failed, falling back to manual stream extraction:", err instanceof Error ? err.message : String(err));
     }
     const str = buf.toString("latin1");
     const extractedParts = [];
@@ -2146,9 +2154,37 @@ async function extractPdfText(rawBase64) {
       const streamContent = streamMatch[1];
       try {
         const streamBuf = Buffer.from(streamContent, "latin1");
-        const decompressed = zlib.inflateSync(streamBuf).toString("utf-8");
-        const words = decompressed.split(/\s+/).filter((w) => w.length > 2 && /[a-zA-Z]/.test(w));
-        if (words.length > 5) extractedParts.push(words.join(" "));
+        let decompressed = "";
+        try {
+          decompressed = zlib.inflateSync(streamBuf).toString("latin1");
+        } catch {
+          try {
+            decompressed = zlib.inflateRawSync(streamBuf).toString("latin1");
+          } catch {
+          }
+        }
+        if (decompressed) {
+          const tjMatches = decompressed.match(/\(([^)]+)\)\s*Tj/g);
+          if (tjMatches) {
+            for (const m of tjMatches) {
+              const textMatch = m.match(/\(([^)]+)\)\s*Tj/);
+              if (textMatch && textMatch[1]) extractedParts.push(textMatch[1]);
+            }
+          }
+          const arrayMatches = decompressed.match(/\[([\s\S]*?)\]\s*TJ/g);
+          if (arrayMatches) {
+            for (const arr of arrayMatches) {
+              const innerStrings = arr.match(/\(([^)]+)\)/g);
+              if (innerStrings) {
+                extractedParts.push(innerStrings.map((s) => s.slice(1, -1)).join(""));
+              }
+            }
+          }
+          if (!tjMatches && !arrayMatches) {
+            const words = decompressed.split(/\s+/).filter((w) => w.length > 2 && /[a-zA-Z]/.test(w));
+            if (words.length > 5) extractedParts.push(words.join(" "));
+          }
+        }
       } catch {
       }
     }
@@ -2157,6 +2193,172 @@ async function extractPdfText(rawBase64) {
   } catch {
   }
   return "";
+}
+function formatDraftStory(item, fallbackPageNum) {
+  let bodyText = extractAiBody(item);
+  if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) {
+    bodyText = "";
+  }
+  const cleanTitle = cleanHeadline(String(item.headline || item.title || "")).slice(0, 119);
+  if (!cleanTitle || cleanTitle.toLowerCase().includes("untitled")) return null;
+  const validCategories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
+  const category = validCategories.includes(String(item.category)) ? String(item.category) : "Tech";
+  const source = item.source && String(item.source).trim() ? String(item.source).trim() : "Unknown";
+  const finalBody = clampEditorialBrief(bodyText || cleanTitle, {
+    publisher: source,
+    publishedAt: /* @__PURE__ */ new Date()
+  });
+  return {
+    headline: cleanTitle,
+    body: finalBody,
+    category,
+    source,
+    imagePrompt: item.imagePrompt,
+    pageNumber: Number(item.pageNumber || fallbackPageNum)
+  };
+}
+async function extractStoryFromPageImage(pageImg, pageNum, totalPages, mistralKey, nvidiaKey, cfConfigs = []) {
+  const pagePrompt = `ROLE
+You are the Executive Technology Editor for Aurikrex Bytes (https://bytes.aurikrex.com).
+Analyze this image from PAGE ${pageNum} of ${totalPages} in a technology document/briefing.
+
+TASK:
+If this page contains a genuine technology, science, AI, crypto, or innovation news story:
+Extract it and return a valid JSON array with EXACTLY ONE story object:
+[
+  {
+    "pageNumber": ${pageNum},
+    "headline": "Crisp active publication-ready headline (max 119 chars)",
+    "category": "Tech" | "AI" | "Science" | "Innovation" | "Crypto",
+    "body": "The Lead: [what happened] Why It Matters: [implications] The Outlook: [next milestones]",
+    "source": "Original publisher identified on page (or Unknown)",
+    "imagePrompt": "Detailed visual description of the original photograph/graphic on this page, preserving composition, subject, colors, and key details for high-resolution 16:9 reproduction without borders or black edges"
+  }
+]
+
+CRITICAL RULES:
+- The body MUST contain between 650 and 750 characters inclusive, including the labels "The Lead:", "Why It Matters:", "The Outlook:".
+- If this page is an advertisement, flyer, promotional banner, cover page, table of contents, or contains no news, return an empty array: []
+- Return ONLY valid JSON, no markdown fences, no explanation.`;
+  if (mistralKey) {
+    for (const model of ["pixtral-12b-2409", "pixtral-large-latest"]) {
+      try {
+        const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": `Bearer ${mistralKey}`
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: pagePrompt },
+                  { type: "image_url", image_url: pageImg }
+                ]
+              }
+            ],
+            temperature: 0.3,
+            max_tokens: 2048
+          })
+        });
+        if (response.status === 429) {
+          console.warn(`[PDFParser] Page ${pageNum}: Mistral rate limit (429). Retrying after 1500ms...`);
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
+        if (response.ok) {
+          const resData = await response.json();
+          const pageJson = resData.choices?.[0]?.message?.content || "[]";
+          const parsed = parseAiJsonResponse(pageJson);
+          const stories = parsed.map((item) => formatDraftStory(item, pageNum)).filter(Boolean);
+          if (stories.length > 0) {
+            console.info(`[PDFParser] Page ${pageNum}: Successfully extracted story via Mistral Pixtral.`);
+            return stories;
+          }
+        }
+      } catch (err) {
+        console.warn(`[PDFParser] Page ${pageNum}: Mistral vision error:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+  if (nvidiaKey) {
+    try {
+      const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Authorization": `Bearer ${nvidiaKey}`
+        },
+        body: JSON.stringify({
+          model: "meta/llama-3.2-11b-vision-instruct",
+          messages: [
+            { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+            {
+              role: "user",
+              content: [
+                { type: "text", text: pagePrompt },
+                { type: "image_url", image_url: { url: pageImg } }
+              ]
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 2048
+        })
+      });
+      if (response.ok) {
+        const resData = await response.json();
+        const pageJson = resData.choices?.[0]?.message?.content || "[]";
+        const parsed = parseAiJsonResponse(pageJson);
+        const stories = parsed.map((item) => formatDraftStory(item, pageNum)).filter(Boolean);
+        if (stories.length > 0) {
+          console.info(`[PDFParser] Page ${pageNum}: Successfully extracted story via NVIDIA NIM Vision.`);
+          return stories;
+        }
+      }
+    } catch (err) {
+      console.warn(`[PDFParser] Page ${pageNum}: NVIDIA vision error:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+  if (cfConfigs.length > 0) {
+    for (const cf of cfConfigs) {
+      try {
+        const rawBase64 = pageImg.replace(/^data:image\/[a-z]+;base64,/, "");
+        const imgBuffer = Array.from(Buffer.from(rawBase64, "base64"));
+        const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/@cf/meta/llama-3.2-11b-vision-instruct`;
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${cf.apiToken}`
+          },
+          body: JSON.stringify({
+            prompt: pagePrompt,
+            image: imgBuffer,
+            max_tokens: 2048
+          })
+        });
+        if (response.ok) {
+          const resData = await response.json();
+          const pageJson = resData.result?.response || resData.result?.text || "[]";
+          const parsed = parseAiJsonResponse(pageJson);
+          const stories = parsed.map((item) => formatDraftStory(item, pageNum)).filter(Boolean);
+          if (stories.length > 0) {
+            console.info(`[PDFParser] Page ${pageNum}: Successfully extracted story via Cloudflare Vision.`);
+            return stories;
+          }
+        }
+      } catch (err) {
+        console.warn(`[PDFParser] Page ${pageNum}: Cloudflare vision error:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+  return [];
 }
 async function parsePdfToBytes(pdfBase64OrText) {
   let isBase64Pdf = false;
@@ -2211,151 +2413,109 @@ async function parsePdfToBytes(pdfBase64OrText) {
   }
   const isImageBasedPdf = isBase64Pdf && !isImage && documentText.length < 100;
   if (isImageBasedPdf) {
-    console.info("[PDFParser] PDF appears to be image-based (no extractable text). Routing to vision AI via document_url.");
+    console.info("[PDFParser] PDF appears to be image-based (no extractable text). Routing to vision AI pipeline.");
   } else if (!isImage && !documentText) {
     documentText = "A multi-story news PDF document uploaded by Aurikrex Bytes editor containing recent technology developments.";
+  }
+  const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
+  if (isImageBasedPdf && embeddedImages.length > 0 && (mistralKey || nvidiaKey || cfConfigs.length > 0)) {
+    console.info(`[PDFParser] Processing ${embeddedImages.length} images via Vision AI pipeline...`);
+    const pageResults = await runConcurrent(
+      embeddedImages,
+      2,
+      // Concurrency of 2 to avoid rate limits
+      async (pageImg, pageIdx) => {
+        const pageNum = pageIdx + 1;
+        return extractStoryFromPageImage(pageImg, pageNum, embeddedImages.length, mistralKey, nvidiaKey, cfConfigs);
+      },
+      350
+      // 350ms pacing between requests
+    );
+    const allExtractedStories = pageResults.flat();
+    if (allExtractedStories.length > 0) {
+      console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} pages. Resolving cover images...`);
+      const resolvedBytes = await runConcurrent(
+        allExtractedStories,
+        3,
+        // Concurrency of 3 for image generation
+        async (draft, idx) => {
+          let imageUrl = null;
+          const promptToUse = draft.imagePrompt || `${draft.headline}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, borderless, no frame, no black edges, no text`;
+          try {
+            imageUrl = await generateAiRecreatedImage(promptToUse);
+          } catch (err) {
+            console.warn("[PDFParser] AI high-res image recreation failed:", err);
+          }
+          if (!imageUrl) {
+            const imageIdx = Math.max(0, draft.pageNumber - 1);
+            const rawEmbedded = embeddedImages[imageIdx] || embeddedImages[idx];
+            if (rawEmbedded) {
+              const trimmedImg = await cleanAndTrimImage(rawEmbedded);
+              const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || rawEmbedded);
+              imageUrl = cdnUrl || trimmedImg || rawEmbedded;
+            }
+          }
+          if (!imageUrl) {
+            imageUrl = getTopicStockImage(draft.headline, draft.category);
+          }
+          return {
+            headline: draft.headline,
+            body: draft.body,
+            category: draft.category,
+            imageUrl,
+            sourcePublisher: draft.source || "NewsBytes",
+            sourcePublishedAt: /* @__PURE__ */ new Date()
+          };
+        },
+        150
+      );
+      return resolvedBytes;
+    }
   }
   const promptText = `ROLE
 
 You are the Executive Technology Editor for Aurikrex Bytes (https://bytes.aurikrex.com).
 
-Analyze the entire uploaded multi-page PDF, extract genuine technology and science news stories, create concise editorial briefs, and recreate each story's exact original image at higher resolution, cropping out unwanted black spaces along the edges.
+Analyze the entire uploaded document, extract ALL genuine technology and science news stories, create concise editorial briefs, and provide detailed descriptions to recreate each story's original image at high resolution without black borders.
 
+CRITICAL MULTI-PAGE EXTRACTION:
+The document contains multiple news stories across multiple pages (e.g. up to 24+ stories).
+You MUST extract EVERY distinct news story found in the document into the "stories" array.
+Do NOT stop after 2 or 3 stories. Continue until all distinct news stories in the entire document are extracted.
 
 1. NEWS EXTRACTION & FILTERING
-
-Review every page in the PDF.
-
+Review every page in the document.
 INCLUDE:
 - Technology, AI, science, and engineering breakthroughs.
 - Product launches and company announcements.
 - Semiconductors, software, cybersecurity, robotics, and space.
 - Electric vehicles, cryptocurrency, and emerging innovations.
 - Technology business deals, investments, and industry developments.
-
 EXCLUDE:
-- Event flyers, posters, schedules, and promotional banners.
-- Advertisements, cover pages, and unrelated content.
-- Duplicate stories unless a later appearance contains significant new information.
-
-Extract every distinct, legitimate news story. Do not invent facts or treat promotional material as news.
-
+- Event flyers, posters, schedules, promotional banners, ads, and cover pages.
 
 2. PAGE NUMBER
-
 For every story, provide "pageNumber" using the actual 1-based PDF page index.
 
-Verify the page containing the story and its associated original image. Never guess page numbers.
-
-
 3. HEADLINE
-
-Write a crisp, active, publication-ready headline.
-
-- Maximum 119 characters.
-- Remove app tags, interface text, and irrelevant metadata.
-- Preserve factual accuracy.
-- Avoid clickbait and unsupported claims.
-
+Crisp, active headline (maximum 119 characters). Remove app tags and interface text.
 
 4. EDITORIAL BODY
-
 Write a three-part editorial brief:
-
 The Lead: What happened, who announced it, and the key facts.
-
 Why It Matters: The commercial, engineering, or industry-wide implications.
-
 The Outlook: Upcoming milestones, product rollouts, technical challenges, or unresolved questions worth watching.
+STRICT CHARACTER LIMIT: 650\u2013750 characters inclusive, including all three labels, spaces, and punctuation.
 
-STRICT CHARACTER LIMIT:
-The complete body must contain 650\u2013750 characters, inclusive, including all three labels, spaces, and punctuation.
+5. CATEGORY: Exactly one of: "Tech", "AI", "Science", "Innovation", "Crypto".
 
-Target approximately 700 characters. Verify the character count before returning each story.
+6. IMAGE PROMPT:
+Detailed visual description of the original photograph/graphic on that page, preserving subject, composition, colors, and key details for high-resolution 16:9 reproduction without borders or black edges.
 
-Keep the writing informative, concise, and non-repetitive. Distinguish verified facts from analysis and projections. Never invent future milestones.
+7. SOURCE: Original publisher identified on page (or "Unknown").
 
-
-5. CATEGORY
-
-Assign exactly one category from this list:
-
-- "Tech"
-- "AI"
-- "Science"
-- "Innovation"
-- "Crypto"
-
-Choose the category that best represents each story's primary subject.
-
-
-6. EXACT IMAGE RECREATION \u2014 CRITICAL
-
-For every valid story, locate the exact original photograph or cover image associated with it on the corresponding PDF page.
-
-Recreate that SAME image at higher resolution and crop out unwanted black spaces along its edges.
-
-This is an image-reproduction task, NOT an instruction to generate a similar image.
-
-PRESERVE:
-- The original subject, people, objects, and surroundings.
-- Composition, camera angle, perspective, and aspect ratio.
-- Colors, lighting, shadows, and photographic style.
-- Faces, logos, symbols, and meaningful visual details.
-- All recognizable elements of the original photograph.
-
-DO NOT:
-- Substitute another photograph or create an alternative scene.
-- Redesign, stylize, or reinterpret the image.
-- Add or remove meaningful objects, people, or logos.
-- Introduce artificial details or change the image's meaning.
-- Stretch the image or crop out important content.
-
-BLACK-EDGE CROPPING:
-Remove only unwanted black borders or padding. Preserve intentional dark areas that belong to the photograph and retain all meaningful content.
-
-RESOLUTION:
-Enhance sharpness and detail while maintaining natural photographic realism. Avoid artificial textures and fabricated details.
-
-WORKFLOW:
-1. Identify the correct PDF page and original image.
-2. Extract or isolate the image.
-3. Crop unwanted black margins.
-4. Enhance or recreate it at higher resolution while preserving visual fidelity.
-5. Compare the result with the original.
-6. Save and deliver the actual image file for that story.
-
-If exact reconstruction is technically impossible, preserve as much original information as possible. Never claim an image was recreated unless the file was actually produced.
-
-The "imagePrompt" field below is descriptive metadata only. It does not replace the requirement to deliver the recreated image.
-
-Use descriptive filenames and PNG or high-quality JPEG output.
-
-
-7. IMAGE DESCRIPTION
-
-Write "imagePrompt" based on direct visual inspection of the original image.
-
-Describe the subject, environment, composition, lighting, dominant colors, and distinctive visible details.
-
-Do not invent details or describe an imagined replacement image.
-
-
-8. SOURCE ATTRIBUTION
-
-The "source" field must identify the original publisher, such as Reuters, TechCrunch, Electrek, or The Information.
-
-Use the publisher identified in the document whenever possible. Do not confuse the publisher with the company being reported on.
-
-If the source cannot be verified, use "Unknown".
-
-Never fabricate facts, source names, quotations, or citations.
-
-
-9. REQUIRED JSON OUTPUT
-
-Return only a valid JSON object in the following structure:
-
+8. REQUIRED JSON OUTPUT:
+Return ONLY a valid JSON object in the following structure:
 {
   "publication": "Aurikrex Bytes",
   "documentAnalysis": {
@@ -2370,45 +2530,14 @@ Return only a valid JSON object in the following structure:
       "category": "Tech",
       "body": "The Lead: ... Why It Matters: ... The Outlook: ...",
       "source": "Original publisher",
-      "imagePrompt": "Detailed description of the original image.",
-      "imageOutputFilename": "story-image.png",
-      "imageStatus": "recreated"
+      "imagePrompt": "Detailed description of the original image without borders or black edges."
     }
   ]
-}
-
-OUTPUT RULES:
-- Return every distinct, valid news story in order of first appearance.
-- Include all required fields.
-- Use actual PDF page numbers.
-- Ensure every body contains 650\u2013750 characters.
-- Set "imageStatus" to "recreated" only when the image file has actually been produced and saved or attached. Otherwise, use "failed".
-- Count all reviewed pages and excluded non-news pages accurately.
-- Do not include excluded material in the stories array.
-- Ensure the JSON parses correctly, with no comments, trailing commas, or Markdown fences.
-- Deliver the recreated image files alongside the JSON output.
-
-
-10. FINAL QUALITY CHECK
-
-Before responding, verify:
-- The entire PDF has been reviewed.
-- All genuine news stories have been extracted.
-- Flyers, advertisements, and duplicate stories have been filtered appropriately.
-- Headlines, categories, sources, and page numbers are correct.
-- Every body meets the strict character limit.
-- Each recreated image matches its original, has unwanted black borders removed, and preserves meaningful content.
-- Every image marked "recreated" actually exists.
-- The JSON is valid and all document counts are accurate.
-
-FINAL INSTRUCTION:
-Prioritize factual accuracy, editorial quality, and exact image preservation. Never fabricate information or pretend an image has been produced when it has not. Return only the final JSON object and deliver the corresponding image files.`;
+}`;
   let rawJson = "[]";
-  if (nvidiaKey && (isImage || !isImageBasedPdf)) {
+  if (nvidiaKey) {
     const nvidiaModels = isImage ? ["meta/llama-3.2-90b-vision-instruct", "meta/llama-3.2-11b-vision-instruct"] : ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"];
-    const nvidiaEndpoints = [
-      "https://integrate.api.nvidia.com/v1/chat/completions"
-    ];
+    const nvidiaEndpoints = ["https://integrate.api.nvidia.com/v1/chat/completions"];
     nvidiaLoop: for (const endpoint of nvidiaEndpoints) {
       for (const model of nvidiaModels) {
         try {
@@ -2429,7 +2558,7 @@ ${documentText.slice(0, 5e4)}`;
             body: JSON.stringify({
               model,
               messages: [
-                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON object." },
                 { role: "user", content: userContent }
               ],
               temperature: 0.3,
@@ -2445,7 +2574,7 @@ ${documentText.slice(0, 5e4)}`;
             }
           } else {
             const errText = await response.text().catch(() => "");
-            console.warn(`[PDFParser] NVIDIA AI model ${model} at ${endpoint} returned status ${response.status}:`, errText.slice(0, 150));
+            console.warn(`[PDFParser] NVIDIA AI model ${model} returned status ${response.status}:`, errText.slice(0, 150));
           }
         } catch (err) {
           console.warn(`[PDFParser] Error calling NVIDIA AI model ${model}:`, err instanceof Error ? err.message : String(err));
@@ -2453,108 +2582,8 @@ ${documentText.slice(0, 5e4)}`;
       }
     }
   }
-  const embeddedImages = isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
-  if (isImageBasedPdf && embeddedImages.length > 0 && (mistralKey || nvidiaKey)) {
-    console.info(`[PDFParser] Processing ${embeddedImages.length} images concurrently via Mistral Pixtral vision...`);
-    const hasTextScreenshots = embeddedImages.some((img) => {
-      const d = getJpegDimensions(img);
-      return d && d.aspectRatio < 0.6;
-    });
-    const pageTasks = embeddedImages.map(async (pageImg, pageIdx) => {
-      const pageNum = pageIdx + 1;
-      const dims = getJpegDimensions(pageImg);
-      if (dims && dims.aspectRatio >= 0.6 && hasTextScreenshots && embeddedImages.length > 1) {
-        return [];
-      }
-      const pagePrompt = `${promptText}
-
-NOTE: You are analyzing PAGE ${pageNum} of ${embeddedImages.length}.`;
-      for (const model of ["pixtral-12b-2409", "pixtral-large-latest"]) {
-        try {
-          const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Accept": "application/json",
-              "Authorization": `Bearer ${mistralKey}`
-            },
-            body: JSON.stringify({
-              model,
-              messages: [
-                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
-                {
-                  role: "user",
-                  content: [
-                    { type: "text", text: pagePrompt },
-                    { type: "image_url", image_url: pageImg }
-                  ]
-                }
-              ],
-              temperature: 0.3,
-              max_tokens: 4096
-            })
-          });
-          if (response.ok) {
-            const resData = await response.json();
-            const pageJson = resData.choices?.[0]?.message?.content || "[]";
-            const parsedPage = parseAiJsonResponse(pageJson);
-            if (parsedPage.length > 0) {
-              const pageStories = [];
-              for (const item of parsedPage) {
-                let bodyText = extractAiBody(item);
-                if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) bodyText = "";
-                const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${pageNum}`)).slice(0, 119);
-                const validCategories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
-                const category = validCategories.includes(String(item.category)) ? String(item.category) : "Tech";
-                const source = item.source && String(item.source).trim() ? String(item.source).trim() : "Unknown";
-                const finalBody = clampEditorialBrief(bodyText || cleanTitle, { publisher: source, publishedAt: /* @__PURE__ */ new Date() });
-                const promptToUse = item.imagePrompt || `${cleanTitle}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, no borders, no text`;
-                let imageUrl = null;
-                try {
-                  imageUrl = await generateAiRecreatedImage(promptToUse);
-                } catch {
-                }
-                if (!imageUrl) {
-                  let chosenCoverImg = pageImg;
-                  if (dims && dims.aspectRatio < 0.6 && pageIdx + 1 < embeddedImages.length) {
-                    const nextImg = embeddedImages[pageIdx + 1];
-                    const nextDims = getJpegDimensions(nextImg);
-                    if (nextDims && nextDims.aspectRatio >= 0.6) {
-                      chosenCoverImg = nextImg;
-                    }
-                  }
-                  const trimmedImg = await cleanAndTrimImage(chosenCoverImg);
-                  const cdnUrl = await uploadBase64ToCloudinary(trimmedImg || chosenCoverImg);
-                  imageUrl = cdnUrl || trimmedImg || chosenCoverImg;
-                }
-                pageStories.push({
-                  headline: cleanTitle,
-                  body: finalBody,
-                  category,
-                  imageUrl,
-                  sourcePublisher: item.source || "NewsBytes",
-                  sourcePublishedAt: /* @__PURE__ */ new Date()
-                });
-              }
-              console.info(`[PDFParser] Page ${pageNum}: Extracted ${pageStories.length} story/stories.`);
-              return pageStories;
-            }
-          }
-        } catch (err) {
-          console.warn(`[PDFParser] Page ${pageNum} extraction error:`, err instanceof Error ? err.message : String(err));
-        }
-      }
-      return [];
-    });
-    const pageResults = await Promise.all(pageTasks);
-    const allExtractedStories = pageResults.flat();
-    if (allExtractedStories.length > 0) {
-      console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} images concurrently.`);
-      return allExtractedStories;
-    }
-  }
   if ((!rawJson || rawJson === "[]") && mistralKey) {
-    const mistralModels = isImage ? ["pixtral-12b-2409"] : ["open-mistral-7b", "mistral-small-latest"];
+    const mistralModels = isImage ? ["pixtral-12b-2409"] : ["mistral-small-latest", "open-mistral-7b"];
     for (const model of mistralModels) {
       try {
         const userContent = isImage ? [{ type: "text", text: promptText }, { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }] : `${promptText}
@@ -2571,7 +2600,7 @@ ${documentText.slice(0, 5e4)}`;
           body: JSON.stringify({
             model,
             messages: [
-              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON object." },
               { role: "user", content: userContent }
             ],
             temperature: 0.3,
@@ -2605,7 +2634,7 @@ ${documentText.slice(0, 5e4)}`;
             },
             body: JSON.stringify({
               messages: [
-                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON object." },
                 { role: "user", content: `${promptText}
 
 DOCUMENT TEXT:
@@ -2633,35 +2662,16 @@ ${documentText.slice(0, 5e4)}` }
   if (!parsed.length) {
     throw new Error("Falke AI was unable to extract news stories from this document. Please ensure the document contains readable text or news cards.");
   }
-  const draftItems = parsed.map((item, idx) => {
-    let bodyText = extractAiBody(item);
-    if (bodyText.includes("%PDF") || bodyText.includes("/Catalog") || bodyText.includes("endobj")) {
-      bodyText = "";
-    }
-    const cleanTitle = cleanHeadline(String(item.headline || `Tech Story ${idx + 1}`)).slice(0, 119);
-    const validCategories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
-    const category = validCategories.includes(String(item.category)) ? String(item.category) : "Tech";
-    const source = item.source && String(item.source).trim() ? String(item.source).trim() : "Unknown";
-    const finalBody = clampEditorialBrief(bodyText || cleanTitle, {
-      publisher: source,
-      publishedAt: /* @__PURE__ */ new Date()
-    });
-    const pageNum = Number(item.pageNumber || idx + 1);
-    return {
-      cleanTitle,
-      finalBody,
-      category,
-      source,
-      imagePrompt: item.imagePrompt,
-      pageNumber: pageNum
-    };
-  });
+  const draftItems = parsed.map((item, idx) => formatDraftStory(item, idx + 1)).filter(Boolean);
   const coverImages = embeddedImages.length > 0 ? embeddedImages : isBase64Pdf && rawBase64 ? extractEmbeddedPdfImages(rawBase64) : [];
   console.info(`[PDFParser] Extracted ${draftItems.length} stories and ${coverImages.length} original PDF images. Resolving cover images...`);
-  const results = await Promise.all(
-    draftItems.map(async (draft, idx) => {
+  const results = await runConcurrent(
+    draftItems,
+    3,
+    // Concurrency of 3 for image generation
+    async (draft, idx) => {
       let imageUrl = null;
-      const promptToUse = draft.imagePrompt || `${draft.cleanTitle}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, no borders, no text`;
+      const promptToUse = draft.imagePrompt || `${draft.headline}. High-tech editorial journalism photography, 16:9 aspect ratio, 4k resolution, sharp focus, professional lighting, photorealistic, borderless, no frame, no black edges, no text`;
       try {
         imageUrl = await generateAiRecreatedImage(promptToUse);
       } catch (err) {
@@ -2677,21 +2687,22 @@ ${documentText.slice(0, 5e4)}` }
         }
       }
       if (!imageUrl) {
-        imageUrl = getTopicStockImage(draft.cleanTitle, draft.category);
+        imageUrl = getTopicStockImage(draft.headline, draft.category);
       }
       return {
-        headline: draft.cleanTitle,
-        body: draft.finalBody,
+        headline: draft.headline,
+        body: draft.body,
         category: draft.category,
         imageUrl,
         sourcePublisher: draft.source || "NewsBytes",
         sourcePublishedAt: /* @__PURE__ */ new Date()
       };
-    })
+    },
+    150
   );
   return results;
 }
-var _require;
+var cachedSharp;
 var init_pdfParser = __esm({
   "server/_core/pdfParser.ts"() {
     "use strict";
@@ -2699,7 +2710,7 @@ var init_pdfParser = __esm({
     init_services();
     init_aiKeys();
     init_imageGeneration();
-    _require = createRequire(import.meta.url);
+    cachedSharp = null;
   }
 });
 
