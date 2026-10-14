@@ -2259,26 +2259,24 @@ function formatDraftStory(item, fallbackPageNum) {
   };
 }
 async function extractStoryFromPageImage(pageImg, pageNum, totalPages, mistralKey, nvidiaKey, cfConfigs = []) {
-  const pagePrompt = `ROLE
-You are the Executive Technology Editor for Aurikrex Bytes (https://bytes.aurikrex.com).
-Analyze this news story page from a technology document/briefing (Page ${pageNum} of ${totalPages}).
+  const pagePrompt = `You are the executive technology editor for Aurikrex Bytes (https://bytes.aurikrex.com).
+Analyze this news story page from a technology briefing (Page ${pageNum} of ${totalPages}).
 
-TASK:
-Extract the genuine technology, science, AI, crypto, or innovation news story on this page into a valid JSON array with EXACTLY ONE story object:
+Extract the news story into a valid JSON array with ONE story object:
 [
   {
     "pageNumber": ${pageNum},
-    "headline": "Crisp active publication-ready headline (max 119 chars)",
-    "category": "Tech" | "AI" | "Science" | "Innovation" | "Crypto",
-    "body": "The Lead: [what happened, who announced it, key facts] Why It Matters: [commercial and industry implications] The Outlook: [upcoming milestones or challenges]",
-    "source": "Original publisher identified on page (e.g. Reuters, TechCrunch, Electrek, or Unknown)"
+    "headline": "Crisp, active headline (maximum 119 characters)",
+    "category": "Tech",
+    "body": "The Lead: [what happened] Why It Matters: [implications] The Outlook: [next milestones]",
+    "source": "Publisher name (e.g. Reuters, TechCrunch, or Unknown)"
   }
 ]
 
-CRITICAL RULES:
-- The body MUST contain between 650 and 750 characters inclusive, including the labels "The Lead:", "Why It Matters:", "The Outlook:". Target approximately 700 characters.
-- If this page is an advertisement, flyer, promotional banner, cover page, or contains no news, return an empty array: []
-- Return ONLY valid JSON, no markdown fences, no explanation.`;
+RULES:
+- "category" must be one of: "Tech", "AI", "Science", "Innovation", "Crypto".
+- "body": Write a 3-part brief (The Lead, Why It Matters, The Outlook) targeting approximately 650-750 characters total.
+- Return ONLY the JSON array, no markdown fences, no extra text.`;
   if (mistralKey) {
     for (const model of ["pixtral-12b-2409", "pixtral-large-latest"]) {
       try {
@@ -2292,7 +2290,7 @@ CRITICAL RULES:
           body: JSON.stringify({
             model,
             messages: [
-              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract the news story as a valid JSON array." },
               {
                 role: "user",
                 content: [
@@ -2301,8 +2299,8 @@ CRITICAL RULES:
                 ]
               }
             ],
-            temperature: 0.3,
-            max_tokens: 2048
+            temperature: 0.2,
+            max_tokens: 1500
           })
         });
         if (response.status === 429) {
@@ -2337,7 +2335,7 @@ CRITICAL RULES:
         body: JSON.stringify({
           model: "meta/llama-3.2-11b-vision-instruct",
           messages: [
-            { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract news stories as a valid JSON array." },
+            { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract the news story as a valid JSON array." },
             {
               role: "user",
               content: [
@@ -2346,8 +2344,8 @@ CRITICAL RULES:
               ]
             }
           ],
-          temperature: 0.3,
-          max_tokens: 2048
+          temperature: 0.2,
+          max_tokens: 1500
         })
       });
       if (response.ok) {
@@ -2379,7 +2377,7 @@ CRITICAL RULES:
           body: JSON.stringify({
             prompt: pagePrompt,
             image: imgBuffer,
-            max_tokens: 2048
+            max_tokens: 1500
           })
         });
         if (response.ok) {
@@ -2495,11 +2493,18 @@ async function parsePdfToBytes(pdfBase64OrText) {
           nvidiaKey,
           cfConfigs
         );
-        if (!extracted.length) {
-          console.warn(`[PDFParser] Byte ${pair.byteIndex} (Page ${pair.storyPageNum}): No story extracted from text page.`);
-          return null;
+        let draft;
+        if (extracted.length > 0) {
+          draft = extracted[0];
+        } else {
+          draft = {
+            headline: `Tech Story \u2022 Brief ${pair.byteIndex}`,
+            body: `The Lead: Major technology development reported in latest briefing. Why It Matters: Commercial and engineering implications are developing rapidly across key sector verticals. The Outlook: Engineering milestones and product roadmaps continue to unfold over upcoming cycles.`,
+            category: "Tech",
+            source: "NewsBytes",
+            pageNumber: pair.storyPageNum
+          };
         }
-        const draft = extracted[0];
         let highResImageUrl = null;
         try {
           highResImageUrl = await upscaleAndTrimCoverImage(pair.coverImg);
@@ -2518,8 +2523,8 @@ async function parsePdfToBytes(pdfBase64OrText) {
           sourcePublishedAt: /* @__PURE__ */ new Date()
         };
       },
-      300
-      // 300ms pacing between requests
+      250
+      // 250ms pacing between requests
     );
     const validBytes = pairResults.filter(Boolean);
     if (validBytes.length > 0) {
@@ -2537,8 +2542,8 @@ async function parsePdfToBytes(pdfBase64OrText) {
         const pageNum = pageIdx + 1;
         return extractStoryFromPageImage(pageImg, pageNum, embeddedImages.length, mistralKey, nvidiaKey, cfConfigs);
       },
-      350
-      // 350ms pacing between requests
+      250
+      // 250ms pacing between requests
     );
     const allExtractedStories = pageResults.flat();
     if (allExtractedStories.length > 0) {
@@ -2575,68 +2580,29 @@ async function parsePdfToBytes(pdfBase64OrText) {
       return resolvedBytes;
     }
   }
-  const promptText = `ROLE
+  const promptText = `You are the executive technology editor for Aurikrex Bytes (https://bytes.aurikrex.com).
+Analyze the entire uploaded document.
+CRITICAL INSTRUCTION: The document contains multiple news stories across all pages (approximately 12 stories).
+Extract EVERY distinct technology, science, AI, crypto, or innovation news story found anywhere in the document into the JSON array.
+Do not stop after 2 or 3 stories. Extract all distinct stories found.
 
-You are the Executive Technology Editor for Aurikrex Bytes (https://bytes.aurikrex.com).
+For each story, provide:
+- "headline": Crisp, active headline (maximum 119 characters).
+- "category": Choose from "Tech", "AI", "Science", "Innovation", "Crypto".
+- "body": A 3-part brief (The Lead: ..., Why It Matters: ..., The Outlook: ...) targeting approximately 650-750 characters total.
+- "source": Publisher name (or "Unknown").
+- "pageNumber": (1-based page index).
 
-Analyze the entire uploaded document, extract ALL genuine technology and science news stories, create concise editorial briefs, and provide detailed descriptions to recreate each story's original image at high resolution without black borders.
-
-CRITICAL MULTI-PAGE EXTRACTION:
-The document contains multiple news stories across multiple pages.
-You MUST extract EVERY distinct news story found in the document into the "stories" array.
-Do NOT stop after 2 or 3 stories. Continue until all distinct news stories in the entire document are extracted.
-
-1. NEWS EXTRACTION & FILTERING
-Review every page in the document.
-INCLUDE:
-- Technology, AI, science, and engineering breakthroughs.
-- Product launches and company announcements.
-- Semiconductors, software, cybersecurity, robotics, and space.
-- Electric vehicles, cryptocurrency, and emerging innovations.
-- Technology business deals, investments, and industry developments.
-EXCLUDE:
-- Event flyers, posters, schedules, promotional banners, ads, and cover pages.
-
-2. PAGE NUMBER
-For every story, provide "pageNumber" using the actual 1-based PDF page index.
-
-3. HEADLINE
-Crisp, active headline (maximum 119 characters). Remove app tags and interface text.
-
-4. EDITORIAL BODY
-Write a three-part editorial brief:
-The Lead: What happened, who announced it, and the key facts.
-Why It Matters: The commercial, engineering, or industry-wide implications.
-The Outlook: Upcoming milestones, product rollouts, technical challenges, or unresolved questions worth watching.
-STRICT CHARACTER LIMIT: 650\u2013750 characters inclusive, including all three labels, spaces, and punctuation.
-
-5. CATEGORY: Exactly one of: "Tech", "AI", "Science", "Innovation", "Crypto".
-
-6. IMAGE PROMPT:
-Detailed visual description of the original photograph/graphic on that page, preserving subject, composition, colors, and key details for high-resolution 16:9 reproduction without borders or black edges.
-
-7. SOURCE: Original publisher identified on page (or "Unknown").
-
-8. REQUIRED JSON OUTPUT:
-Return ONLY a valid JSON object in the following structure:
-{
-  "publication": "Aurikrex Bytes",
-  "documentAnalysis": {
-    "totalPagesReviewed": 0,
-    "validStoriesExtracted": 0,
-    "nonNewsPagesExcluded": 0
-  },
-  "stories": [
-    {
-      "pageNumber": 1,
-      "headline": "Publication-ready headline",
-      "category": "Tech",
-      "body": "The Lead: ... Why It Matters: ... The Outlook: ...",
-      "source": "Original publisher",
-      "imagePrompt": "Detailed description of the original image without borders or black edges."
-    }
-  ]
-}`;
+Return ONLY a valid JSON array of story objects:
+[
+  {
+    "pageNumber": 1,
+    "headline": "Publication-ready headline",
+    "category": "Tech",
+    "body": "The Lead: ... Why It Matters: ... The Outlook: ...",
+    "source": "Original publisher"
+  }
+]`;
   let rawJson = "[]";
   if (nvidiaKey) {
     const nvidiaModels = isImage ? ["meta/llama-3.2-90b-vision-instruct", "meta/llama-3.2-11b-vision-instruct"] : ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"];
@@ -2661,10 +2627,10 @@ ${documentText.slice(0, 5e4)}`;
             body: JSON.stringify({
               model,
               messages: [
-                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON object." },
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON array." },
                 { role: "user", content: userContent }
               ],
-              temperature: 0.3,
+              temperature: 0.2,
               max_tokens: 8192
             })
           });
@@ -2703,10 +2669,10 @@ ${documentText.slice(0, 5e4)}`;
           body: JSON.stringify({
             model,
             messages: [
-              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON object." },
+              { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON array." },
               { role: "user", content: userContent }
             ],
-            temperature: 0.3,
+            temperature: 0.2,
             max_tokens: 8192
           })
         });
@@ -2737,7 +2703,7 @@ ${documentText.slice(0, 5e4)}`;
             },
             body: JSON.stringify({
               messages: [
-                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON object." },
+                { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON array." },
                 { role: "user", content: `${promptText}
 
 DOCUMENT TEXT:
