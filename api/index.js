@@ -2953,6 +2953,294 @@ var init_push = __esm({
   }
 });
 
+// server/aiCache.ts
+var aiCache_exports = {};
+__export(aiCache_exports, {
+  FOLLOW_UP_PROMPT_VERSION: () => FOLLOW_UP_PROMPT_VERSION,
+  MAX_CACHEABLE_OUTPUT_CHARS: () => MAX_CACHEABLE_OUTPUT_CHARS,
+  MIN_CACHEABLE_OUTPUT_CHARS: () => MIN_CACHEABLE_OUTPUT_CHARS,
+  computeFollowUpContentHash: () => computeFollowUpContentHash,
+  getCachedFollowUp: () => getCachedFollowUp,
+  invalidateCachedFollowUp: () => invalidateCachedFollowUp,
+  normalizeCanonicalText: () => normalizeCanonicalText,
+  setCachedFollowUp: () => setCachedFollowUp,
+  sha256Hex: () => sha256Hex,
+  singleFlightFollowUp: () => singleFlightFollowUp,
+  validateFollowUpOutput: () => validateFollowUpOutput
+});
+import { createHash as createHash2 } from "crypto";
+import { sql as sql2 } from "drizzle-orm";
+async function ensureCacheTable() {
+  const db = await getDb();
+  if (!db) return null;
+  if (!_cacheTableReady) {
+    _cacheTableReady = (async () => {
+      await db.run(
+        sql2.raw(`CREATE TABLE IF NOT EXISTS ai_explanation_cache (
+          content_hash text NOT NULL,
+          prompt_version text NOT NULL,
+          post_id integer NOT NULL,
+          question_text text NOT NULL,
+          answer_text text NOT NULL,
+          search_queries_json text NOT NULL DEFAULT '[]',
+          model_used text NOT NULL DEFAULT 'mistral-small-latest',
+          status text NOT NULL DEFAULT 'active',
+          hit_count integer NOT NULL DEFAULT 0,
+          report_count integer NOT NULL DEFAULT 0,
+          invalidated_reason text,
+          created_at integer NOT NULL,
+          last_served_at integer NOT NULL,
+          PRIMARY KEY (content_hash, prompt_version)
+        )`)
+      );
+      await db.run(
+        sql2.raw(
+          "CREATE INDEX IF NOT EXISTS ai_explanation_cache_post_idx ON ai_explanation_cache (post_id, status)"
+        )
+      );
+    })().catch((err) => {
+      console.warn("[AiCache] Table initialization warning:", err);
+      _cacheTableReady = null;
+    });
+  }
+  await _cacheTableReady;
+  return db;
+}
+function normalizeCanonicalText(value) {
+  if (!value) return "";
+  return String(value).normalize("NFKC").replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().toLowerCase();
+}
+function sha256Hex(input) {
+  return createHash2("sha256").update(input, "utf8").digest("hex");
+}
+function computeFollowUpContentHash(params) {
+  const canonicalPayload = JSON.stringify({
+    v: params.promptVersion || FOLLOW_UP_PROMPT_VERSION,
+    postId: Number(params.postId),
+    headline: normalizeCanonicalText(params.headline),
+    body: normalizeCanonicalText(params.body),
+    question: normalizeCanonicalText(params.question)
+  });
+  return sha256Hex(canonicalPayload);
+}
+function validateFollowUpOutput(rawText) {
+  if (!rawText || typeof rawText !== "string") {
+    return { valid: false, normalizedText: "", reason: "Output is empty or non-string" };
+  }
+  const normalizedText = rawText.replace(/\r\n/g, "\n").replace(/\n{4,}/g, "\n\n\n").trim();
+  if (normalizedText.length < MIN_CACHEABLE_OUTPUT_CHARS) {
+    return {
+      valid: false,
+      normalizedText,
+      reason: `Output too short (${normalizedText.length} < ${MIN_CACHEABLE_OUTPUT_CHARS} chars)`
+    };
+  }
+  if (normalizedText.length > MAX_CACHEABLE_OUTPUT_CHARS) {
+    return {
+      valid: false,
+      normalizedText,
+      reason: `Output too long (${normalizedText.length} > ${MAX_CACHEABLE_OUTPUT_CHARS} chars)`
+    };
+  }
+  for (const pattern of REFUSAL_OR_FALLBACK_PATTERNS) {
+    if (pattern.test(normalizedText)) {
+      return {
+        valid: false,
+        normalizedText,
+        reason: `Output matched refusal/fallback pattern: ${pattern.source}`
+      };
+    }
+  }
+  return { valid: true, normalizedText };
+}
+async function getCachedFollowUp(contentHash, promptVersion = FOLLOW_UP_PROMPT_VERSION) {
+  const memKey = `${promptVersion}:${contentHash}`;
+  const now2 = Date.now();
+  const memRecord = memoryCache.get(memKey);
+  if (memRecord && memRecord.status === "active" && memRecord.answerText) {
+    memRecord.hitCount += 1;
+    memRecord.lastServedAt = now2;
+    void incrementDbHitCount(contentHash, promptVersion, now2);
+    let parsedQueries = [];
+    try {
+      parsedQueries = JSON.parse(memRecord.searchQueriesJson);
+    } catch {
+    }
+    return {
+      answer: memRecord.answerText,
+      searchQueries: Array.isArray(parsedQueries) ? parsedQueries : [],
+      modelUsed: memRecord.modelUsed,
+      cached: true,
+      contentHash,
+      hitCount: memRecord.hitCount
+    };
+  }
+  try {
+    const db = await ensureCacheTable();
+    if (!db) return null;
+    const rows = await db.all(
+      sql2`SELECT content_hash, prompt_version, post_id, question_text, answer_text, search_queries_json, model_used, status, hit_count, report_count, created_at, last_served_at
+          FROM ai_explanation_cache
+          WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion} AND status = 'active'
+          LIMIT 1`
+    );
+    const row = rows[0];
+    if (!row || !row.answer_text) return null;
+    const newHitCount = (Number(row.hit_count) || 0) + 1;
+    memoryCache.set(memKey, {
+      contentHash: row.content_hash,
+      promptVersion: row.prompt_version,
+      postId: Number(row.post_id),
+      questionText: row.question_text,
+      answerText: row.answer_text,
+      searchQueriesJson: row.search_queries_json || "[]",
+      modelUsed: row.model_used || "mistral-small-latest",
+      status: "active",
+      hitCount: newHitCount,
+      reportCount: Number(row.report_count) || 0,
+      createdAt: Number(row.created_at) || now2,
+      lastServedAt: now2
+    });
+    void incrementDbHitCount(contentHash, promptVersion, now2);
+    let parsedQueries = [];
+    try {
+      parsedQueries = JSON.parse(row.search_queries_json || "[]");
+    } catch {
+    }
+    return {
+      answer: row.answer_text,
+      searchQueries: Array.isArray(parsedQueries) ? parsedQueries : [],
+      modelUsed: row.model_used || "mistral-small-latest",
+      cached: true,
+      contentHash,
+      hitCount: newHitCount
+    };
+  } catch (err) {
+    console.warn("[AiCache] Read error:", err);
+    return null;
+  }
+}
+async function incrementDbHitCount(contentHash, promptVersion, now2) {
+  try {
+    const db = await ensureCacheTable();
+    if (!db) return;
+    await db.run(
+      sql2`UPDATE ai_explanation_cache
+          SET hit_count = hit_count + 1, last_served_at = ${now2}
+          WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion}`
+    );
+  } catch {
+  }
+}
+async function setCachedFollowUp(params) {
+  const promptVersion = params.promptVersion || FOLLOW_UP_PROMPT_VERSION;
+  const validation = validateFollowUpOutput(params.answer);
+  if (!validation.valid) {
+    console.warn(`[AiCache] Rejected caching invalid AI output: ${validation.reason}`);
+    return false;
+  }
+  const now2 = Date.now();
+  const searchQueriesJson = JSON.stringify(params.searchQueries || []);
+  const memKey = `${promptVersion}:${params.contentHash}`;
+  memoryCache.set(memKey, {
+    contentHash: params.contentHash,
+    promptVersion,
+    postId: params.postId,
+    questionText: params.question,
+    answerText: validation.normalizedText,
+    searchQueriesJson,
+    modelUsed: params.modelUsed || "mistral-small-latest",
+    status: "active",
+    hitCount: 0,
+    reportCount: 0,
+    createdAt: now2,
+    lastServedAt: now2
+  });
+  try {
+    const db = await ensureCacheTable();
+    if (!db) return true;
+    await db.run(
+      sql2`INSERT INTO ai_explanation_cache (
+            content_hash, prompt_version, post_id, question_text, answer_text,
+            search_queries_json, model_used, status, hit_count, report_count, created_at, last_served_at
+          ) VALUES (
+            ${params.contentHash}, ${promptVersion}, ${params.postId}, ${params.question},
+            ${validation.normalizedText}, ${searchQueriesJson}, ${params.modelUsed || "mistral-small-latest"},
+            'active', 0, 0, ${now2}, ${now2}
+          )
+          ON CONFLICT(content_hash, prompt_version) DO UPDATE SET
+            answer_text = excluded.answer_text,
+            search_queries_json = excluded.search_queries_json,
+            model_used = excluded.model_used,
+            status = 'active',
+            invalidated_reason = NULL,
+            last_served_at = excluded.last_served_at`
+    );
+    return true;
+  } catch (err) {
+    console.warn("[AiCache] Write error:", err);
+    return true;
+  }
+}
+async function invalidateCachedFollowUp(contentHash, reason = "reported", promptVersion = FOLLOW_UP_PROMPT_VERSION) {
+  const memKey = `${promptVersion}:${contentHash}`;
+  const memRecord = memoryCache.get(memKey);
+  if (memRecord) {
+    memRecord.status = "invalidated";
+    memRecord.reportCount += 1;
+  }
+  try {
+    const db = await ensureCacheTable();
+    if (!db) return Boolean(memRecord);
+    await db.run(
+      sql2`UPDATE ai_explanation_cache
+          SET status = 'invalidated',
+              report_count = report_count + 1,
+              invalidated_reason = ${reason.slice(0, 200)}
+          WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion}`
+    );
+    return true;
+  } catch {
+    return Boolean(memRecord);
+  }
+}
+function singleFlightFollowUp(key, fn) {
+  const existing = inFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+  const promise = fn().finally(() => {
+    inFlight.delete(key);
+  });
+  inFlight.set(key, promise);
+  return promise;
+}
+var FOLLOW_UP_PROMPT_VERSION, MIN_CACHEABLE_OUTPUT_CHARS, MAX_CACHEABLE_OUTPUT_CHARS, REFUSAL_OR_FALLBACK_PATTERNS, inFlight, memoryCache, _cacheTableReady;
+var init_aiCache = __esm({
+  "server/aiCache.ts"() {
+    "use strict";
+    init_db();
+    FOLLOW_UP_PROMPT_VERSION = "v1-bytes-followup";
+    MIN_CACHEABLE_OUTPUT_CHARS = 35;
+    MAX_CACHEABLE_OUTPUT_CHARS = 12e3;
+    REFUSAL_OR_FALLBACK_PATTERNS = [
+      /as an ai/i,
+      /i cannot fulfill/i,
+      /i'm sorry,?\s+but i can't/i,
+      /unable to help with that/i,
+      /internal server error/i,
+      /service unavailable/i,
+      /rate limit exceeded/i,
+      /quota exceeded/i,
+      /live search and ai analysis are currently updating/i,
+      /please ensure tavily_api_key/i
+    ];
+    inFlight = /* @__PURE__ */ new Map();
+    memoryCache = /* @__PURE__ */ new Map();
+    _cacheTableReady = null;
+  }
+});
+
 // server/_core/vercel.ts
 import "dotenv/config";
 import express from "express";
@@ -3814,7 +4102,15 @@ var appRouter = router({
               }
             });
             if (res.ok) {
-              return await res.json();
+              const centralData = await res.json();
+              if (typeof centralData?.balance === "number") {
+                return {
+                  ...centralData,
+                  balance: Math.min(centralData.balance, 2500),
+                  allowance: 2500
+                };
+              }
+              return centralData;
             }
           }
         }
@@ -3822,8 +4118,8 @@ var appRouter = router({
         console.warn("[Coins] Failed to query coins balance from Central:", err);
       }
       return {
-        balance: 5e3,
-        allowance: 5e3,
+        balance: 2500,
+        allowance: 2500,
         costPerRequest: 5,
         lastResetDate: (/* @__PURE__ */ new Date()).toISOString(),
         nextResetDate: new Date(Date.now() + 30 * 864e5).toISOString()
@@ -4607,70 +4903,109 @@ var appRouter = router({
     askFollowUp: publicProcedure.input(
       z2.object({
         postId: z2.number().int().positive(),
-        question: z2.string().min(3).max(300).trim()
+        question: z2.string().min(3).max(300).trim(),
+        bypassCache: z2.boolean().optional()
       })
     ).mutation(async ({ input, ctx }) => {
       await publishDuePosts();
       const post = await getPublishedPostById(input.postId);
       if (!post) throw genericNotFound();
+      const {
+        computeFollowUpContentHash: computeFollowUpContentHash2,
+        getCachedFollowUp: getCachedFollowUp2,
+        setCachedFollowUp: setCachedFollowUp2,
+        singleFlightFollowUp: singleFlightFollowUp2
+      } = await Promise.resolve().then(() => (init_aiCache(), aiCache_exports));
+      const contentHash = computeFollowUpContentHash2({
+        postId: post.id,
+        headline: post.headline,
+        body: post.body,
+        question: input.question
+      });
       let remainingCoins;
       let nextResetDate;
-      try {
+      const resolveReaderEmail = async () => {
         const readerPayload = await requireReader(ctx).catch(() => null);
-        if (readerPayload) {
-          let readerEmail = readerPayload.email;
-          if (!readerEmail) {
-            const r = await getReaderById(readerPayload.id);
-            readerEmail = r?.email;
-          }
-          if (readerEmail) {
-            const { deductCoins: deductCoins2 } = await Promise.resolve().then(() => (init_central(), central_exports));
-            const res = await deductCoins2(readerEmail, "aurikrex_bytes", "ai_summary");
-            if (res && typeof res.remainingCoins === "number") {
-              remainingCoins = res.remainingCoins;
-              nextResetDate = res.nextResetDate;
+        if (!readerPayload) return void 0;
+        if (readerPayload.email) return readerPayload.email;
+        const r = await getReaderById(readerPayload.id);
+        return r?.email;
+      };
+      if (!input.bypassCache) {
+        const cached = await getCachedFollowUp2(contentHash);
+        if (cached && cached.answer) {
+          try {
+            const readerEmail = await resolveReaderEmail();
+            if (readerEmail) {
+              const { getCoinBalance } = await Promise.resolve().then(() => (init_central(), central_exports));
+              const bal = await getCoinBalance(readerEmail);
+              if (bal && typeof bal.balance === "number") {
+                remainingCoins = bal.balance;
+                nextResetDate = bal.nextResetDate;
+              }
             }
+          } catch (_) {
+          }
+          return {
+            answer: cached.answer,
+            searchQueries: cached.searchQueries,
+            remainingCoins,
+            nextResetDate,
+            cached: true,
+            contentHash
+          };
+        }
+      }
+      try {
+        const readerEmail = await resolveReaderEmail();
+        if (readerEmail) {
+          const { deductCoins: deductCoins2 } = await Promise.resolve().then(() => (init_central(), central_exports));
+          const res = await deductCoins2(readerEmail, "aurikrex_bytes", "ai_summary");
+          if (res && typeof res.remainingCoins === "number") {
+            remainingCoins = res.remainingCoins;
+            nextResetDate = res.nextResetDate;
           }
         }
       } catch (_) {
       }
-      const searchQuery = `${post.headline} \u2014 ${input.question}`;
-      let webContext = "";
-      let tavilyDirectAnswer = "";
-      let searchQueries2 = [];
-      const tavilyApiKey = (process.env.TAVILY_API_KEY || "").trim();
-      if (tavilyApiKey) {
-        try {
-          const tavilyRes = await axios2.post(
-            "https://api.tavily.com/search",
-            {
-              api_key: tavilyApiKey,
-              query: searchQuery,
-              max_results: 5,
-              search_depth: "basic",
-              include_answer: true
-            },
-            { timeout: 1e4 }
-          );
-          tavilyDirectAnswer = tavilyRes.data?.answer || "";
-          const results = tavilyRes.data?.results ?? [];
-          searchQueries2 = results.map((r) => r.title || r.query).filter(Boolean).slice(0, 3);
-          webContext = results.map(
-            (r, i) => `[${i + 1}] ${r.title}
+      const generated = await singleFlightFollowUp2(contentHash, async () => {
+        const searchQuery = `${post.headline} \u2014 ${input.question}`;
+        let webContext = "";
+        let tavilyDirectAnswer = "";
+        let searchQueries2 = [];
+        const tavilyApiKey = (process.env.TAVILY_API_KEY || "").trim();
+        if (tavilyApiKey) {
+          try {
+            const tavilyRes = await axios2.post(
+              "https://api.tavily.com/search",
+              {
+                api_key: tavilyApiKey,
+                query: searchQuery,
+                max_results: 5,
+                search_depth: "basic",
+                include_answer: true
+              },
+              { timeout: 1e4 }
+            );
+            tavilyDirectAnswer = tavilyRes.data?.answer || "";
+            const results = tavilyRes.data?.results ?? [];
+            searchQueries2 = results.map((r) => r.title || r.query).filter(Boolean).slice(0, 3);
+            webContext = results.map(
+              (r, i) => `[${i + 1}] ${r.title}
 ${r.content?.slice(0, 400) ?? ""}`
-          ).join("\n\n");
-        } catch (err) {
-          console.warn("[FollowUp] Tavily search failed, using story context:", err);
+            ).join("\n\n");
+          } catch (err) {
+            console.warn("[FollowUp] Tavily search failed, using story context:", err);
+          }
         }
-      }
-      if (searchQueries2.length === 0) {
-        searchQueries2 = [
-          `${post.headline.slice(0, 50)}\u2026`,
-          `${input.question} overview`,
-          `Aurikrex Bytes technical context`
-        ];
-      }
-      const systemPrompt = `You are an intelligent tech news assistant for Aurikrex Bytes.
+        if (searchQueries2.length === 0) {
+          searchQueries2 = [
+            `${post.headline.slice(0, 50)}\u2026`,
+            `${input.question} overview`,
+            `Aurikrex Bytes technical context`
+          ];
+        }
+        const systemPrompt = `You are an intelligent tech news assistant for Aurikrex Bytes.
 The reader is asking a follow-up question regarding the following story:
 
 HEADLINE: ${post.headline}
@@ -4685,109 +5020,151 @@ Instructions:
 3. Keep the tone calm, authoritative, and focused on tech signal rather than hype.
 4. Do NOT repeat or copy the original story text verbatim.
 5. Do NOT invent false facts.`;
-      let answer = "";
-      const mistralApiKey = getMistralApiKey();
-      const nvidiaApiKey = getNvidiaApiKey();
-      if (mistralApiKey) {
-        for (const model of ["mistral-small-latest", "open-mistral-7b"]) {
-          try {
-            const mistralRes = await axios2.post(
-              "https://api.mistral.ai/v1/chat/completions",
-              {
-                model,
-                messages: [
-                  { role: "system", content: systemPrompt },
-                  { role: "user", content: input.question }
-                ],
-                max_tokens: 600,
-                temperature: 0.4
-              },
-              {
-                headers: { Authorization: `Bearer ${mistralApiKey}` },
-                timeout: 15e3
-              }
-            );
-            const text2 = mistralRes.data?.choices?.[0]?.message?.content ?? "";
-            if (text2 && text2.trim()) {
-              answer = text2.trim();
-              break;
-            }
-          } catch (mistralErr) {
-            console.warn(`[FollowUp] Mistral AI model ${model} failed:`, mistralErr instanceof Error ? mistralErr.message : String(mistralErr));
-          }
-        }
-      }
-      if (!answer && nvidiaApiKey) {
-        for (const model of ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"]) {
-          try {
-            const nvidiaRes = await axios2.post(
-              "https://integrate.api.nvidia.com/v1/chat/completions",
-              {
-                model,
-                messages: [
-                  { role: "system", content: systemPrompt },
-                  { role: "user", content: input.question }
-                ],
-                max_tokens: 600,
-                temperature: 0.4
-              },
-              {
-                headers: { Authorization: `Bearer ${nvidiaApiKey}` },
-                timeout: 15e3
-              }
-            );
-            const text2 = nvidiaRes.data?.choices?.[0]?.message?.content ?? "";
-            if (text2 && text2.trim()) {
-              answer = text2.trim();
-              break;
-            }
-          } catch (nvidiaErr) {
-            console.warn(`[FollowUp] NVIDIA NIM model ${model} failed:`, nvidiaErr instanceof Error ? nvidiaErr.message : String(nvidiaErr));
-          }
-        }
-      }
-      if (!answer) {
-        const cfConfigs = getCloudflareAiConfigs();
-        for (const cf of cfConfigs) {
-          for (const model of ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"]) {
+        let answer = "";
+        let modelUsed = "";
+        const mistralApiKey = getMistralApiKey();
+        const nvidiaApiKey = getNvidiaApiKey();
+        if (mistralApiKey) {
+          for (const model of ["mistral-small-latest", "open-mistral-7b"]) {
             try {
-              const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
-              const cfRes = await axios2.post(
-                url,
+              const mistralRes = await axios2.post(
+                "https://api.mistral.ai/v1/chat/completions",
                 {
+                  model,
                   messages: [
                     { role: "system", content: systemPrompt },
                     { role: "user", content: input.question }
                   ],
-                  max_tokens: 600
+                  max_tokens: 600,
+                  temperature: 0.4
                 },
                 {
-                  headers: {
-                    Authorization: `Bearer ${cf.apiToken}`,
-                    "Content-Type": "application/json"
-                  },
+                  headers: { Authorization: `Bearer ${mistralApiKey}` },
                   timeout: 15e3
                 }
               );
-              const text2 = cfRes.data?.result?.response || cfRes.data?.result?.text || "";
+              const text2 = mistralRes.data?.choices?.[0]?.message?.content ?? "";
               if (text2 && text2.trim()) {
                 answer = text2.trim();
+                modelUsed = model;
                 break;
               }
-            } catch (cfErr) {
-              console.warn(`[FollowUp] Cloudflare Workers AI model ${model} failed:`, cfErr instanceof Error ? cfErr.message : String(cfErr));
+            } catch (mistralErr) {
+              console.warn(
+                `[FollowUp] Mistral AI model ${model} failed:`,
+                mistralErr instanceof Error ? mistralErr.message : String(mistralErr)
+              );
             }
           }
-          if (answer) break;
         }
-      }
-      if (!answer && tavilyDirectAnswer) {
-        answer = tavilyDirectAnswer;
-      }
-      if (!answer) {
-        answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, NVIDIA_API_KEY, or CLOUDFLARE_API_TOKEN is configured in your environment variables on Vercel to enable live AI web search.`;
-      }
-      return { answer, searchQueries: searchQueries2, remainingCoins, nextResetDate };
+        if (!answer && nvidiaApiKey) {
+          for (const model of ["meta/llama-3.1-405b-instruct", "mistralai/mistral-large-2407"]) {
+            try {
+              const nvidiaRes = await axios2.post(
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                {
+                  model,
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: input.question }
+                  ],
+                  max_tokens: 600,
+                  temperature: 0.4
+                },
+                {
+                  headers: { Authorization: `Bearer ${nvidiaApiKey}` },
+                  timeout: 15e3
+                }
+              );
+              const text2 = nvidiaRes.data?.choices?.[0]?.message?.content ?? "";
+              if (text2 && text2.trim()) {
+                answer = text2.trim();
+                modelUsed = model;
+                break;
+              }
+            } catch (nvidiaErr) {
+              console.warn(
+                `[FollowUp] NVIDIA NIM model ${model} failed:`,
+                nvidiaErr instanceof Error ? nvidiaErr.message : String(nvidiaErr)
+              );
+            }
+          }
+        }
+        if (!answer) {
+          const cfConfigs = getCloudflareAiConfigs();
+          for (const cf of cfConfigs) {
+            for (const model of ["@cf/meta/llama-3.1-70b-instruct", "@cf/meta/llama-3.1-8b-instruct"]) {
+              try {
+                const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
+                const cfRes = await axios2.post(
+                  url,
+                  {
+                    messages: [
+                      { role: "system", content: systemPrompt },
+                      { role: "user", content: input.question }
+                    ],
+                    max_tokens: 600
+                  },
+                  {
+                    headers: {
+                      Authorization: `Bearer ${cf.apiToken}`,
+                      "Content-Type": "application/json"
+                    },
+                    timeout: 15e3
+                  }
+                );
+                const text2 = cfRes.data?.result?.response || cfRes.data?.result?.text || "";
+                if (text2 && text2.trim()) {
+                  answer = text2.trim();
+                  modelUsed = model;
+                  break;
+                }
+              } catch (cfErr) {
+                console.warn(
+                  `[FollowUp] Cloudflare Workers AI model ${model} failed:`,
+                  cfErr instanceof Error ? cfErr.message : String(cfErr)
+                );
+              }
+            }
+            if (answer) break;
+          }
+        }
+        if (!answer && tavilyDirectAnswer) {
+          answer = tavilyDirectAnswer;
+          modelUsed = "tavily-direct";
+        }
+        if (answer) {
+          await setCachedFollowUp2({
+            contentHash,
+            postId: post.id,
+            question: input.question,
+            answer,
+            searchQueries: searchQueries2,
+            modelUsed: modelUsed || "mistral-small-latest"
+          });
+        } else {
+          answer = `Live search and AI analysis are currently updating. Please ensure TAVILY_API_KEY, MISTRAL_API_KEY, NVIDIA_API_KEY, or CLOUDFLARE_API_TOKEN is configured in your environment variables on Vercel to enable live AI web search.`;
+        }
+        return { answer, searchQueries: searchQueries2, modelUsed };
+      });
+      return {
+        answer: generated.answer,
+        searchQueries: generated.searchQueries,
+        remainingCoins,
+        nextResetDate,
+        cached: false,
+        contentHash
+      };
+    }),
+    reportFollowUp: publicProcedure.input(
+      z2.object({
+        contentHash: z2.string().min(16).max(128).trim(),
+        reason: z2.string().max(200).optional()
+      })
+    ).mutation(async ({ input }) => {
+      const { invalidateCachedFollowUp: invalidateCachedFollowUp2 } = await Promise.resolve().then(() => (init_aiCache(), aiCache_exports));
+      const invalidated = await invalidateCachedFollowUp2(input.contentHash, input.reason || "reported");
+      return { success: true, invalidated };
     })
   })
 });
