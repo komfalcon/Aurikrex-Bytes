@@ -16,8 +16,8 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
     const cachedReset = localStorage.getItem('aurikrex:last-coin-reset-date');
     if (cachedBalance !== null && !isNaN(Number(cachedBalance))) {
       return {
-        balance: Number(cachedBalance),
-        allowance: 5000,
+        balance: Math.min(Number(cachedBalance), 2500),
+        allowance: 2500,
         costPerRequest: 5,
         lastResetDate: new Date().toISOString(),
         nextResetDate: cachedReset || new Date(Date.now() + 30 * 86400000).toISOString(),
@@ -37,10 +37,15 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
   useEffect(() => {
     if (coinsQuery.data) {
       const data = coinsQuery.data as CoinBalanceData;
-      setBalanceData(data);
-      if (typeof window !== 'undefined' && typeof data.balance === 'number') {
-        localStorage.setItem('aurikrex:last-coin-balance', String(data.balance));
-        if (data.nextResetDate) localStorage.setItem('aurikrex:last-coin-reset-date', data.nextResetDate);
+      const sanitized = {
+        ...data,
+        balance: Math.min(data.balance, 2500),
+        allowance: 2500,
+      };
+      setBalanceData(sanitized);
+      if (typeof window !== 'undefined' && typeof sanitized.balance === 'number') {
+        localStorage.setItem('aurikrex:last-coin-balance', String(sanitized.balance));
+        if (sanitized.nextResetDate) localStorage.setItem('aurikrex:last-coin-reset-date', sanitized.nextResetDate);
       }
     }
   }, [coinsQuery.data]);
@@ -49,7 +54,7 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
     const handleCoinsUpdated = (event: Event) => {
       const customEv = event as CustomEvent<{ remainingCoins?: number; nextResetDate?: string }>;
       if (typeof customEv.detail?.remainingCoins === 'number') {
-        const newCoins = customEv.detail.remainingCoins;
+        const newCoins = Math.min(customEv.detail.remainingCoins, 2500);
         const newReset = customEv.detail.nextResetDate;
         if (typeof window !== 'undefined') {
           localStorage.setItem('aurikrex:last-coin-balance', String(newCoins));
@@ -58,7 +63,7 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
         setBalanceData((prev) =>
           prev
             ? { ...prev, balance: newCoins, nextResetDate: newReset || prev.nextResetDate }
-            : { balance: newCoins, allowance: 5000, costPerRequest: 5, lastResetDate: new Date().toISOString(), nextResetDate: newReset || new Date().toISOString() }
+            : { balance: newCoins, allowance: 2500, costPerRequest: 5, lastResetDate: new Date().toISOString(), nextResetDate: newReset || new Date().toISOString() }
         );
       } else {
         coinsQuery.refetch();
@@ -85,7 +90,7 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const balance = balanceData?.balance ?? 5000;
+  const balance = Math.min(balanceData?.balance ?? 2500, 2500);
   const isLow = balance < 5;
 
   const formatCountdown = (targetIso?: string) => {
@@ -137,7 +142,7 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400">Monthly Allowance:</span>
-              <span className="font-semibold text-slate-200">5,000 Coins</span>
+              <span className="font-semibold text-slate-200">{(balanceData?.allowance || 2500).toLocaleString()} Coins</span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400">Cost per AI Request:</span>
@@ -150,7 +155,7 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
           </div>
 
           <div className="rounded-lg bg-slate-950 p-2.5 text-[11px] text-slate-400 leading-relaxed">
-            💡 Every registered user receives 5,000 Auri Coins every 30 days (1,000 AI requests). Coins reset automatically on your monthly anniversary date.
+            💡 Every registered user receives {(balanceData?.allowance || 2500).toLocaleString()} Auri Coins every 30 days ({Math.floor((balanceData?.allowance || 2500) / 5).toLocaleString()} AI requests). Coins reset automatically on your monthly anniversary date.
           </div>
         </div>
       )}
@@ -186,11 +191,11 @@ export function OutOfCoinsModal({
         </div>
         <h3 className="text-lg font-bold text-white">Out of Auri Coins for this Month</h3>
         <p className="mt-2 text-sm text-slate-400 leading-relaxed">
-          You've used all 5,000 Auri Coins for your current 30-day period (1,000 AI requests across CBT, Library, Bytes, and Phorynt).
+          You've used all 2,500 Auri Coins for your current 30-day period (500 AI requests across Bytes and Phorynt).
         </p>
 
         <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
-          ⏳ Next 5,000 Coin Refresh in: <strong className="font-bold text-white">{formatDays(nextResetDate)}</strong>
+          ⏳ Next 2,500 Coin Refresh in: <strong className="font-bold text-white">{formatDays(nextResetDate)}</strong>
         </div>
 
         <button

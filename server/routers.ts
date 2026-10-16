@@ -146,7 +146,15 @@ export const appRouter = router({
               },
             });
             if (res.ok) {
-              return await res.json();
+              const centralData = await res.json();
+              if (typeof centralData?.balance === "number") {
+                return {
+                  ...centralData,
+                  balance: Math.min(centralData.balance, 2500),
+                  allowance: 2500,
+                };
+              }
+              return centralData;
             }
           }
         }
@@ -154,8 +162,8 @@ export const appRouter = router({
         console.warn("[Coins] Failed to query coins balance from Central:", err);
       }
       return {
-        balance: 5000,
-        allowance: 5000,
+        balance: 2500,
+        allowance: 2500,
         costPerRequest: 5,
         lastResetDate: new Date().toISOString(),
         nextResetDate: new Date(Date.now() + 30 * 86400000).toISOString(),
