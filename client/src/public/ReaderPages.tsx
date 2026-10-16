@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   ArrowRight,
+  ArrowUp,
   Bell,
   Bookmark,
   BookOpen,
@@ -841,37 +842,99 @@ function TodayCompletionCard({
     }
   };
 
+  const handleFinishBriefing = () => {
+    const firstUnread = document.querySelector(".post-card[data-read='false'], .post-card:not(.is-read)");
+    if (firstUnread) {
+      firstUnread.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
   return (
-    <div className="today-completion-card" role="region" aria-label="Today's briefing completion status">
-      <div className="today-completion-icon">
-        <CheckCircle2 size={40} />
+    <div
+      className={`today-completion-card ${isFullyRead ? "is-completed" : "is-uncompleted"}`}
+      role="region"
+      aria-label="Today's briefing completion status"
+    >
+      {/* 3D Illustration Area with ambient circular glow */}
+      <div className="today-completion-art">
+        <img
+          src={isFullyRead ? "/images/briefing-completed.png" : "/images/briefing-uncompleted.png"}
+          alt={isFullyRead ? "Briefing complete illustration" : "Briefing in progress illustration"}
+          className="today-completion-img"
+          loading="lazy"
+          decoding="async"
+        />
       </div>
+
+      {/* Pill Badge */}
+      <div className={`today-completion-badge ${isFullyRead ? "badge-completed" : "badge-uncompleted"}`}>
+        {isFullyRead ? (
+          <>
+            <CheckCircle2 size={14} strokeWidth={2.5} />
+            <span>DAILY BRIEFING COMPLETE</span>
+          </>
+        ) : (
+          <>
+            <BookOpen size={14} strokeWidth={2.5} />
+            <span>DAILY BRIEFING</span>
+          </>
+        )}
+      </div>
+
+      {/* Headline */}
       <h3 className="today-completion-title">
-        {isFullyRead ? "Nice! You've finished today's Bytes." : "You've reached the end of today's drop!"}
+        {isFullyRead ? (
+          <>
+            Today&apos;s Bytes: <span className="today-completion-highlight">Complete.</span>
+          </>
+        ) : (
+          <>
+            Don&apos;t miss <span className="today-completion-highlight">the rest.</span>
+          </>
+        )}
       </h3>
+
+      {/* Subtitle / Editorial Body */}
       <p className="today-completion-subtitle">
         {isFullyRead
-          ? `You've read all ${totalCount} bytes in today's briefing. Great job keeping your mind sharp and your streak alive!`
-          : `You've scrolled through today's briefing. Read each byte to max out your daily learning streak!`}
+          ? `You've read all ${totalCount} Bytes in today's briefing. Stay curious. We'll be back tomorrow.`
+          : `Today's briefing isn't complete without you. Go back and catch the Bytes you missed.`}
       </p>
 
+      {/* Streak Pill */}
       <div className="today-completion-streak">
-        <Flame size={18} fill="currentColor" />
-        <span>{streak} Day Streak Active</span>
+        <span className="streak-fire" role="img" aria-label="Fire">🔥</span>
+        <span className="streak-divider">|</span>
+        <span className="streak-text">{Math.max(1, streak || 1)}-Day Learning Streak</span>
       </div>
 
+      {/* Action Buttons */}
       <div className="today-completion-actions">
-        <button type="button" className="button" onClick={handleShare}>
-          <Share2 size={16} /> Share My Streak
-        </button>
-        <Link href="/archive" className="button button-outline">
-          Explore Archive <ArrowRight size={15} />
+        {isFullyRead ? (
+          <button type="button" className="today-completion-btn-primary" onClick={handleShare}>
+            <Share2 size={16} />
+            <span>Share My Streak</span>
+            <ArrowRight size={15} />
+          </button>
+        ) : (
+          <button type="button" className="today-completion-btn-primary" onClick={handleFinishBriefing}>
+            <ArrowUp size={16} />
+            <span>Finish Today&apos;s Briefing</span>
+          </button>
+        )}
+        <Link href="/archive" className="today-completion-btn-secondary">
+          <span>Explore Archive</span>
+          <ArrowRight size={15} />
         </Link>
       </div>
 
-      <p style={{ fontSize: "13px", color: "var(--muted, #64748b)", marginTop: "8px", marginBottom: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
-        <Clock3 size={14} /> See you tomorrow at 8:00 AM for your next briefing drop.
-      </p>
+      {/* Arrival Footer */}
+      <div className="today-completion-footer">
+        <Clock3 size={14} />
+        <span>Your next briefing arrives tomorrow at 8:00 AM.</span>
+      </div>
     </div>
   );
 }
@@ -886,7 +949,11 @@ function PostCard({
   isRead?: boolean;
 }) {
   return (
-    <article className={`post-card ${featured ? "post-card-featured" : ""} ${isRead ? "is-read" : ""}`}>
+    <article
+      className={`post-card ${featured ? "post-card-featured" : ""} ${isRead ? "is-read" : ""}`}
+      data-read={isRead ? "true" : "false"}
+      data-post-id={post.id}
+    >
       <ProtectedLink
         href={`/post/${post.id}`}
         className="post-card-link"
