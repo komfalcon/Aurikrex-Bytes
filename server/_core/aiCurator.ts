@@ -201,8 +201,9 @@ export function generateEditorialSvgCard(headline: string, category = "Tech"): s
 }
 
 export async function extractSourceArticleImage(url: string): Promise<string | null> {
-  // If URL is not valid HTTP/HTTPS, skip
-  if (!url || !url.startsWith("http")) return null;
+  // If URL is not a safe public HTTPS URL, skip
+  const { isSafePublicHttpsUrl } = await import("./security.js");
+  if (!isSafePublicHttpsUrl(url)) return null;
   // If the URL is Hacker News itself, don't crawl HN discussion pages for images
   if (/news\.ycombinator\.com/i.test(url)) return null;
 

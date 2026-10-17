@@ -1,14 +1,12 @@
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import { ENV } from "./_core/env.js";
+import { ENV, validateProductionEnvironment } from "./_core/env.js";
 
 export type SessionPayload = { kind: "admin" | "reader"; id: number; email: string; role?: "admin" | "editor"; verified?: boolean };
 
 const secret = () => {
-  if (process.env.NODE_ENV === "production" && !ENV.cookieSecret) {
-    throw new Error("Missing strong cookieSecret in production. Startup failed closed for security.");
-  }
+  validateProductionEnvironment();
   return ENV.cookieSecret || "development-only-secret";
 };
 

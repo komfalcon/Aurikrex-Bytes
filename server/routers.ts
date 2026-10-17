@@ -16,8 +16,11 @@ import {
 } from "./auth.js";
 import {
   checkPasswordAttemptLockout,
+  isSafeAvatarUrl,
+  isSafePublicHttpsUrl,
   recordFailedPasswordAttempt,
   resetPasswordAttempts,
+  safeStringEqual,
 } from "./_core/security.js";
 import {
   getAdminByEmail,
@@ -138,24 +141,16 @@ export const appRouter = router({
             email = r?.email;
           }
           if (email) {
-            const centralUrl = process.env.CENTRAL_API_URL || "https://aurikrex-central.pxxl.click";
-            const secret = process.env.AURIKREX_CENTRAL_S2S_SECRET || "aurikrex-s2s-master-key-2026";
-            const res = await fetch(`${centralUrl}/api/v1/coins/balance?userId=${encodeURIComponent(email)}`, {
-              headers: {
-                "X-Central-Api-Key": secret,
-              },
-            });
-            if (res.ok) {
-              const centralData = await res.json();
-              if (typeof centralData?.balance === "number") {
-                return {
-                  ...centralData,
-                  balance: Math.min(centralData.balance, 2500),
-                  allowance: 2500,
-                };
-              }
-              return centralData;
+            const { getCoinBalance } = await import("./_core/central.js");
+            const centralData = await getCoinBalance(email);
+            if (centralData && typeof centralData.balance === "number") {
+              return {
+                ...centralData,
+                balance: Math.min(centralData.balance, 2500),
+                allowance: 2500,
+              };
             }
+            if (centralData) return centralData;
           }
         }
       } catch (err) {
@@ -335,7 +330,7 @@ export const appRouter = router({
           headline: z.string().min(1).max(120),
           body: z.string().min(1).max(800),
           category: z.string().optional(),
-          imageUrl: z.string().url().optional(),
+          imageUrl: z.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").optional(),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -395,7 +390,7 @@ export const appRouter = router({
           headline: z.string().min(1).optional(),
           body: z.string().min(1).optional(),
           category: z.string().optional(),
-          imageUrl: z.string().url().nullable().optional(),
+          imageUrl: z.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").nullable().optional(),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -722,7 +717,7 @@ export const appRouter = router({
             message: "MAINTENANCE_PASSWORD is not configured in environment variables.",
           });
         }
-        if (input.password !== expected) {
+        if (!safeStringEqual(input.password, expected)) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Incorrect verification password. Action denied.",
@@ -789,7 +784,7 @@ export const appRouter = router({
           name: z.string().trim().min(1).max(120),
           email: z.string().email(),
           password: z.string().min(8),
-          avatarUrl: z.string().optional().nullable(),
+          avatarUrl: z.string().refine(isSafeAvatarUrl, "Invalid avatar URL").optional().nullable(),
         })
       )
       .mutation(async ({ input }) => {
@@ -913,7 +908,7 @@ export const appRouter = router({
       };
     }),
     updateAvatar: publicProcedure
-      .input(z.object({ avatarUrl: z.string() }))
+      .input(z.object({ avatarUrl: z.string().refine(isSafeAvatarUrl, "Invalid avatar URL") }))
       .mutation(async ({ input, ctx }) => {
         const reader = await requireReader(ctx);
         return updateReaderAvatar(reader.id, input.avatarUrl);
@@ -1137,8 +1132,13 @@ export const appRouter = router({
           return r?.email;
         };
 
+        // Only authenticated admins can force a cache bypass
+        const isAdminCaller = input.bypassCache === true
+          ? Boolean(await requireAdmin(ctx).catch(() => null))
+          : false;
+
         // 1. CBT-style Cache Lookup (before coin deduction and upstream Tavily/LLM calls!)
-        if (!input.bypassCache) {
+        if (!isAdminCaller) {
           const cached = await getCachedFollowUp(contentHash);
           if (cached && cached.answer) {
             try {
@@ -1147,7 +1147,7 @@ export const appRouter = router({
                 const { getCoinBalance } = await import("./_core/central.js");
                 const bal = await getCoinBalance(readerEmail);
                 if (bal && typeof bal.balance === "number") {
-                  remainingCoins = bal.balance;
+                  remainingCoins = Math.min(bal.balance, 2500);
                   nextResetDate = bal.nextResetDate;
                 }
               }
@@ -1164,18 +1164,26 @@ export const appRouter = router({
           }
         }
 
-        // 2. Cache MISS: Deduct Auri Coins for live AI generation
+        // 2. Cache MISS: Deduct Auri Coins for live AI generation (and block if out of coins)
         try {
           const readerEmail = await resolveReaderEmail();
           if (readerEmail) {
             const { deductCoins } = await import("./_core/central.js");
             const res = await deductCoins(readerEmail, "aurikrex_bytes", "ai_summary");
+            if (res?.error && res?.status === 402) {
+              throw new TRPCError({
+                code: "FORBIDDEN",
+                message: "You have run out of Auri Coins for this month.",
+              });
+            }
             if (res && typeof res.remainingCoins === "number") {
-              remainingCoins = res.remainingCoins;
+              remainingCoins = Math.min(res.remainingCoins, 2500);
               nextResetDate = res.nextResetDate;
             }
           }
-        } catch (_) {}
+        } catch (coinErr) {
+          if (coinErr instanceof TRPCError) throw coinErr;
+        }
 
         // 3. Single-flight coalescing + upstream Tavily & LLM cascade + quality validation + cache write
         const generated = await singleFlightFollowUp(contentHash, async () => {
@@ -1385,13 +1393,18 @@ Instructions:
     reportFollowUp: publicProcedure
       .input(
         z.object({
-          contentHash: z.string().min(16).max(128).trim(),
+          contentHash: z.string().regex(/^[a-f0-9]{64}$/i, "Valid SHA-256 contentHash required"),
           reason: z.string().max(200).optional(),
         })
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        const isAdminCaller = Boolean(await requireAdmin(ctx).catch(() => null));
         const { invalidateCachedFollowUp } = await import("./aiCache.js");
-        const invalidated = await invalidateCachedFollowUp(input.contentHash, input.reason || "reported");
+        const invalidated = await invalidateCachedFollowUp(
+          input.contentHash,
+          input.reason || "reported",
+          { force: isAdminCaller }
+        );
         return { success: true, invalidated };
       }),
   }),

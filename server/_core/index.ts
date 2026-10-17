@@ -41,6 +41,7 @@ async function setupApp() {
     console.error(`[Environment] Production configuration incomplete: ${environmentIssues.join("; ")}`);
   }
   const app = express();
+  app.set("trust proxy", 1);
   let server: Server | undefined;
   if (!process.env.VERCEL) {
     server = createServer(app);
@@ -135,9 +136,7 @@ export default async function handler(req: any, res: any) {
   } catch (error) {
     console.error("Vercel Edge Handler Error:", error);
     res.status(500).json({
-      error: "Fatal Vercel Handler Error",
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      error: "Internal Server Error",
     });
   }
 }

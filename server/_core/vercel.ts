@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import cors from "cors";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth.js";
 import { registerStorageProxy } from "./storageProxy.js";
@@ -17,6 +18,7 @@ async function setupApp() {
     console.error(`[Environment] Production configuration incomplete: ${environmentIssues.join("; ")}`);
   }
   const app = express();
+  app.set("trust proxy", 1);
   app.use((req, _res, next) => {
     const matchedPath = req.headers["x-matched-path"] as string | undefined;
     if (matchedPath && (matchedPath === "/sitemap.xml" || matchedPath === "/robots.txt" || matchedPath.endsWith("/sitemap.xml"))) {
@@ -25,6 +27,10 @@ async function setupApp() {
     next();
   });
   app.use(securityHeaders);
+  app.use(cors({
+    origin: ["https://bytes.aurikrex.com", "https://www.bytes.aurikrex.com", "https://cbt.aurikrex.com", "https://aurikrex.com", "https://aurikrex-central.pxxl.click", "https://bytes.pxxl.click"],
+    credentials: true,
+  }));
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
@@ -59,8 +65,7 @@ async function setupApp() {
       return res.json({ sent });
     } catch (error) {
       console.error("[Cron] notify failed", error);
-      const detail = error instanceof Error ? error.message : "Unknown notification provider error";
-      return res.status(500).json({ error: "Notify job failed", detail });
+      return res.status(500).json({ error: "Notify job failed" });
     }
   });
 
@@ -96,8 +101,7 @@ export default async function handler(req: any, res: any) {
   } catch (error) {
     console.error("Vercel Handler Error:", error);
     res.status(500).json({
-      error: "Fatal Vercel Handler Error",
-      message: error instanceof Error ? error.message : String(error),
+      error: "Internal Server Error",
     });
   }
 }

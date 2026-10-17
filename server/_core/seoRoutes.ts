@@ -210,7 +210,9 @@ async function readProductionShell() {
 
 async function fetchRemoteImageBuffer(url: string) {
   try {
-    const response = await fetch(url);
+    const { isSafePublicHttpsUrl } = await import("./security.js");
+    if (!isSafePublicHttpsUrl(url)) return null;
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) return null;
     return Buffer.from(await response.arrayBuffer());
   } catch {

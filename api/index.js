@@ -237,9 +237,7 @@ var init_auth = __esm({
     "use strict";
     init_env();
     secret = () => {
-      if (process.env.NODE_ENV === "production" && !ENV.cookieSecret) {
-        throw new Error("Missing strong cookieSecret in production. Startup failed closed for security.");
-      }
+      validateProductionEnvironment();
       return ENV.cookieSecret || "development-only-secret";
     };
   }
@@ -804,6 +802,170 @@ var init_db = __esm({
   }
 });
 
+// server/_core/security.ts
+var security_exports = {};
+__export(security_exports, {
+  ATTEMPT_WINDOW_MS: () => ATTEMPT_WINDOW_MS,
+  LOCKOUT_DURATION_MS: () => LOCKOUT_DURATION_MS,
+  MAX_FAILED_BEFORE_AUTO_RESET: () => MAX_FAILED_BEFORE_AUTO_RESET,
+  MAX_FAILED_BEFORE_LOCKOUT: () => MAX_FAILED_BEFORE_LOCKOUT,
+  authRateLimit: () => authRateLimit,
+  checkPasswordAttemptLockout: () => checkPasswordAttemptLockout,
+  clearAllAuthRateLimitStores: () => clearAllAuthRateLimitStores,
+  isSafeAvatarUrl: () => isSafeAvatarUrl,
+  isSafePublicHttpsUrl: () => isSafePublicHttpsUrl,
+  recordFailedPasswordAttempt: () => recordFailedPasswordAttempt,
+  resetPasswordAttempts: () => resetPasswordAttempts,
+  safeStringEqual: () => safeStringEqual,
+  securityHeaders: () => securityHeaders
+});
+import crypto3 from "node:crypto";
+function safeStringEqual(a, b) {
+  const bufA = Buffer.from(String(a ?? ""), "utf8");
+  const bufB = Buffer.from(String(b ?? ""), "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return crypto3.timingSafeEqual(bufA, bufB);
+}
+function isSafePublicHttpsUrl(value) {
+  if (!value || typeof value !== "string") return false;
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase();
+    if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) || host === "0.0.0.0" || host.includes(":")) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isSafeAvatarUrl(value) {
+  if (!value) return true;
+  const trimmed = value.trim();
+  if (/^data:image\/(png|jpeg|jpg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    return trimmed.length <= 5e5;
+  }
+  return isSafePublicHttpsUrl(trimmed);
+}
+function securityHeaders(_req, res, next) {
+  res.removeHeader("X-Powered-By");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob: https://res.cloudinary.com https://*.googleusercontent.com; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com https://maps.googleapis.com; connect-src 'self' https://maps.googleapis.com https://api.cloudinary.com wss:; frame-src https://accounts.google.com; form-action 'self' https://accounts.google.com");
+  if (process.env.NODE_ENV === "production" && process.env.APP_BASE_URL?.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+}
+function authRateLimit(req, res, next) {
+  if (!req.originalUrl.startsWith("/api/trpc/")) return next();
+  const route = req.originalUrl.split("?")[0];
+  const isAuthRoute = /\/(reader\.(signup|login|requestPasswordReset|resetPassword|verifyEmail|resendVerificationEmail)|admin\.(login|setMaintenanceMode))$/.test(route);
+  const isAiRoute = /\/publicPosts\.(askFollowUp|reportFollowUp)$/.test(route);
+  if (!isAuthRoute && !isAiRoute) return next();
+  const maxRequests = isAiRoute ? AI_MAX_REQUESTS : AUTH_MAX_REQUESTS;
+  const clientIp = req.ip || req.socket?.remoteAddress || "unknown";
+  const key = `${clientIp}:${route}`;
+  const now2 = Date.now();
+  const current = authAttempts.get(key);
+  if (!current || current.resetAt <= now2) authAttempts.set(key, { count: 1, resetAt: now2 + AUTH_WINDOW_MS });
+  else current.count += 1;
+  const attempt = authAttempts.get(key);
+  res.setHeader("RateLimit-Limit", maxRequests);
+  res.setHeader("RateLimit-Remaining", Math.max(0, maxRequests - attempt.count));
+  if (attempt.count > maxRequests) {
+    res.setHeader("Retry-After", String(Math.ceil((attempt.resetAt - now2) / 1e3)));
+    return res.status(429).json({ error: "Too many requests. Please try again shortly." });
+  }
+  next();
+}
+function checkPasswordAttemptLockout(email) {
+  const normEmail = email.trim().toLowerCase();
+  const record = failedAttemptsMap.get(normEmail);
+  if (!record) return { locked: false };
+  const now2 = Date.now();
+  if (record.lockedUntil && record.lockedUntil > now2) {
+    const remainingSec = Math.ceil((record.lockedUntil - now2) / 1e3);
+    const minutes = Math.ceil(remainingSec / 60);
+    return {
+      locked: true,
+      message: record.resetSent ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address." : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
+      autoResetTriggered: record.resetSent
+    };
+  }
+  if (now2 - record.firstAttemptAt > ATTEMPT_WINDOW_MS && (!record.lockedUntil || record.lockedUntil <= now2)) {
+    failedAttemptsMap.delete(normEmail);
+    return { locked: false };
+  }
+  if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
+    if (!record.lockedUntil || record.lockedUntil <= now2) {
+      record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
+    }
+    const remainingSec = Math.ceil((record.lockedUntil - now2) / 1e3);
+    const minutes = Math.ceil(remainingSec / 60);
+    return {
+      locked: true,
+      message: record.resetSent ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address." : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
+      autoResetTriggered: record.resetSent
+    };
+  }
+  return { locked: false };
+}
+function recordFailedPasswordAttempt(email) {
+  const normEmail = email.trim().toLowerCase();
+  const now2 = Date.now();
+  let record = failedAttemptsMap.get(normEmail);
+  if (!record || now2 - record.firstAttemptAt > ATTEMPT_WINDOW_MS) {
+    record = { count: 1, firstAttemptAt: now2, lockedUntil: null, resetSent: false };
+  } else {
+    record.count += 1;
+  }
+  let locked = false;
+  let autoResetNeeded = false;
+  let message = "Invalid email or password";
+  if (record.count >= MAX_FAILED_BEFORE_AUTO_RESET) {
+    record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
+    locked = true;
+    if (!record.resetSent) {
+      autoResetNeeded = true;
+      record.resetSent = true;
+    }
+    message = "Account locked due to multiple failed login attempts. A password reset link has been automatically sent to your email address.";
+  } else if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
+    record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
+    locked = true;
+    message = "Too many failed password attempts. Account temporarily locked for 15 minutes. Please try again later or reset your password.";
+  } else {
+    const remaining = MAX_FAILED_BEFORE_LOCKOUT - record.count;
+    message = `Invalid email or password. ${remaining} attempt${remaining > 1 ? "s" : ""} remaining before temporary account lock.`;
+  }
+  failedAttemptsMap.set(normEmail, record);
+  return { count: record.count, locked, autoResetNeeded, message };
+}
+function resetPasswordAttempts(email) {
+  failedAttemptsMap.delete(email.trim().toLowerCase());
+}
+function clearAllAuthRateLimitStores() {
+  authAttempts.clear();
+  failedAttemptsMap.clear();
+}
+var authAttempts, AUTH_WINDOW_MS, AUTH_MAX_REQUESTS, AI_MAX_REQUESTS, failedAttemptsMap, MAX_FAILED_BEFORE_LOCKOUT, LOCKOUT_DURATION_MS, MAX_FAILED_BEFORE_AUTO_RESET, ATTEMPT_WINDOW_MS;
+var init_security = __esm({
+  "server/_core/security.ts"() {
+    "use strict";
+    authAttempts = /* @__PURE__ */ new Map();
+    AUTH_WINDOW_MS = 6e4;
+    AUTH_MAX_REQUESTS = 30;
+    AI_MAX_REQUESTS = 15;
+    failedAttemptsMap = /* @__PURE__ */ new Map();
+    MAX_FAILED_BEFORE_LOCKOUT = 5;
+    LOCKOUT_DURATION_MS = 15 * 60 * 1e3;
+    MAX_FAILED_BEFORE_AUTO_RESET = 8;
+    ATTEMPT_WINDOW_MS = 15 * 60 * 1e3;
+  }
+});
+
 // server/services.ts
 import { v2 as cloudinary } from "cloudinary";
 import nodemailer from "nodemailer";
@@ -933,6 +1095,90 @@ function getCloudflareAiConfigs() {
 var init_aiKeys = __esm({
   "server/_core/aiKeys.ts"() {
     "use strict";
+  }
+});
+
+// server/_core/central.ts
+var central_exports = {};
+__export(central_exports, {
+  deductCoins: () => deductCoins,
+  getCoinBalance: () => getCoinBalance,
+  verifyCentralToken: () => verifyCentralToken
+});
+import { createRemoteJWKSet, jwtVerify as jwtVerify2 } from "jose";
+async function verifyCentralToken(token) {
+  try {
+    const { payload } = await jwtVerify2(token, JWKS, {
+      algorithms: ["RS256"]
+    });
+    return payload;
+  } catch (err) {
+    console.error("Failed to verify central token:", err);
+    return null;
+  }
+}
+async function getCoinBalance(userId) {
+  const s2sSecret = getS2sSecret();
+  try {
+    const response = await fetch(
+      `${CENTRAL_API_URL}/api/v1/coins/balance?userId=${encodeURIComponent(String(userId))}`,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          ...s2sSecret ? { "X-Central-Api-Key": s2sSecret } : {}
+        }
+      }
+    );
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (error) {
+    console.warn("Coin balance fetch error:", error);
+    return null;
+  }
+}
+async function deductCoins(userId, appId = "aurikrex_bytes", featureName = "ai_summary") {
+  const s2sSecret = getS2sSecret();
+  if (!s2sSecret) {
+    console.warn("[Central] AURIKREX_CENTRAL_S2S_SECRET is not configured");
+    return null;
+  }
+  try {
+    const response = await fetch(`${CENTRAL_API_URL}/api/v1/coins/deduct`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Central-Api-Key": s2sSecret
+      },
+      body: JSON.stringify({
+        userId: String(userId),
+        appId,
+        featureName,
+        idempotencyKey: `bytes_${featureName}_${userId}_${Date.now()}_${Math.random().toString(36).substring(7)}`
+      })
+    });
+    if (response.status === 402) {
+      const errData = await response.json().catch(() => ({}));
+      return { error: true, status: 402, code: "OUT_OF_COINS", remainingCoins: errData?.currentBalance ?? 0 };
+    }
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Coin deduction failed:", response.status, errorText);
+      return null;
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Coin deduction error:", error);
+    return null;
+  }
+}
+var CENTRAL_API_URL, getS2sSecret, jwksUrl, JWKS;
+var init_central = __esm({
+  "server/_core/central.ts"() {
+    "use strict";
+    CENTRAL_API_URL = process.env.CENTRAL_API_URL || "https://aurikrex-central.pxxl.click";
+    getS2sSecret = () => process.env.AURIKREX_CENTRAL_S2S_SECRET || "";
+    jwksUrl = new URL(`${CENTRAL_API_URL}/.well-known/jwks.json`);
+    JWKS = createRemoteJWKSet(jwksUrl);
   }
 });
 
@@ -1098,61 +1344,6 @@ var init_imageGeneration = __esm({
   }
 });
 
-// server/_core/central.ts
-var central_exports = {};
-__export(central_exports, {
-  deductCoins: () => deductCoins,
-  verifyCentralToken: () => verifyCentralToken
-});
-import { createRemoteJWKSet, jwtVerify as jwtVerify2 } from "jose";
-async function verifyCentralToken(token) {
-  try {
-    const { payload } = await jwtVerify2(token, JWKS, {
-      algorithms: ["RS256"]
-    });
-    return payload;
-  } catch (err) {
-    console.error("Failed to verify central token:", err);
-    return null;
-  }
-}
-async function deductCoins(userId, appId = "aurikrex_bytes", featureName = "ai_summary") {
-  try {
-    const response = await fetch(`${CENTRAL_API_URL}/api/v1/coins/deduct`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Central-Api-Key": S2S_SECRET
-      },
-      body: JSON.stringify({
-        userId: String(userId),
-        appId,
-        featureName,
-        idempotencyKey: `bytes_${featureName}_${userId}_${Date.now()}_${Math.random().toString(36).substring(7)}`
-      })
-    });
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Coin deduction failed:", response.status, errorText);
-      return null;
-    }
-    return await response.json();
-  } catch (error) {
-    console.error("Coin deduction error:", error);
-    return null;
-  }
-}
-var CENTRAL_API_URL, S2S_SECRET, jwksUrl, JWKS;
-var init_central = __esm({
-  "server/_core/central.ts"() {
-    "use strict";
-    CENTRAL_API_URL = process.env.CENTRAL_API_URL || "https://aurikrex-central.pxxl.click";
-    S2S_SECRET = process.env.AURIKREX_CENTRAL_S2S_SECRET || "";
-    jwksUrl = new URL(`${CENTRAL_API_URL}/.well-known/jwks.json`);
-    JWKS = createRemoteJWKSet(jwksUrl);
-  }
-});
-
 // server/_core/aiCurator.ts
 var aiCurator_exports = {};
 __export(aiCurator_exports, {
@@ -1302,7 +1493,8 @@ function generateEditorialSvgCard(headline, category = "Tech") {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 async function extractSourceArticleImage(url) {
-  if (!url || !url.startsWith("http")) return null;
+  const { isSafePublicHttpsUrl: isSafePublicHttpsUrl2 } = await Promise.resolve().then(() => (init_security(), security_exports));
+  if (!isSafePublicHttpsUrl2(url)) return null;
   if (/news\.ycombinator\.com/i.test(url)) return null;
   try {
     const controller = new AbortController();
@@ -2957,6 +3149,7 @@ var init_push = __esm({
 var aiCache_exports = {};
 __export(aiCache_exports, {
   FOLLOW_UP_PROMPT_VERSION: () => FOLLOW_UP_PROMPT_VERSION,
+  FOLLOW_UP_REPORT_THRESHOLD: () => FOLLOW_UP_REPORT_THRESHOLD,
   MAX_CACHEABLE_OUTPUT_CHARS: () => MAX_CACHEABLE_OUTPUT_CHARS,
   MIN_CACHEABLE_OUTPUT_CHARS: () => MIN_CACHEABLE_OUTPUT_CHARS,
   computeFollowUpContentHash: () => computeFollowUpContentHash,
@@ -3182,26 +3375,41 @@ async function setCachedFollowUp(params) {
     return true;
   }
 }
-async function invalidateCachedFollowUp(contentHash, reason = "reported", promptVersion = FOLLOW_UP_PROMPT_VERSION) {
+async function invalidateCachedFollowUp(contentHash, reason = "reported", options = {}) {
+  const promptVersion = options.promptVersion || FOLLOW_UP_PROMPT_VERSION;
+  const force = Boolean(options.force);
   const memKey = `${promptVersion}:${contentHash}`;
   const memRecord = memoryCache.get(memKey);
   if (memRecord) {
-    memRecord.status = "invalidated";
     memRecord.reportCount += 1;
+    if (force || memRecord.reportCount >= FOLLOW_UP_REPORT_THRESHOLD) {
+      memRecord.status = "invalidated";
+    }
   }
   try {
     const db = await ensureCacheTable();
-    if (!db) return Boolean(memRecord);
-    await db.run(
-      sql2`UPDATE ai_explanation_cache
-          SET status = 'invalidated',
-              report_count = report_count + 1,
-              invalidated_reason = ${reason.slice(0, 200)}
-          WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion}`
-    );
-    return true;
+    if (!db) return Boolean(memRecord && memRecord.status === "invalidated");
+    if (force) {
+      await db.run(
+        sql2`UPDATE ai_explanation_cache
+            SET status = 'invalidated',
+                report_count = report_count + 1,
+                invalidated_reason = ${reason.slice(0, 200)}
+            WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion}`
+      );
+      return true;
+    } else {
+      await db.run(
+        sql2`UPDATE ai_explanation_cache
+            SET report_count = report_count + 1,
+                status = CASE WHEN report_count + 1 >= ${FOLLOW_UP_REPORT_THRESHOLD} THEN 'invalidated' ELSE status END,
+                invalidated_reason = ${reason.slice(0, 200)}
+            WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion}`
+      );
+      return Boolean(memRecord && memRecord.status === "invalidated");
+    }
   } catch {
-    return Boolean(memRecord);
+    return Boolean(memRecord && memRecord.status === "invalidated");
   }
 }
 function singleFlightFollowUp(key, fn) {
@@ -3215,7 +3423,7 @@ function singleFlightFollowUp(key, fn) {
   inFlight.set(key, promise);
   return promise;
 }
-var FOLLOW_UP_PROMPT_VERSION, MIN_CACHEABLE_OUTPUT_CHARS, MAX_CACHEABLE_OUTPUT_CHARS, REFUSAL_OR_FALLBACK_PATTERNS, inFlight, memoryCache, _cacheTableReady;
+var FOLLOW_UP_PROMPT_VERSION, MIN_CACHEABLE_OUTPUT_CHARS, MAX_CACHEABLE_OUTPUT_CHARS, REFUSAL_OR_FALLBACK_PATTERNS, inFlight, memoryCache, _cacheTableReady, FOLLOW_UP_REPORT_THRESHOLD;
 var init_aiCache = __esm({
   "server/aiCache.ts"() {
     "use strict";
@@ -3238,12 +3446,14 @@ var init_aiCache = __esm({
     inFlight = /* @__PURE__ */ new Map();
     memoryCache = /* @__PURE__ */ new Map();
     _cacheTableReady = null;
+    FOLLOW_UP_REPORT_THRESHOLD = 3;
   }
 });
 
 // server/_core/vercel.ts
 import "dotenv/config";
 import express from "express";
+import cors from "cors";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 
 // shared/const.ts
@@ -3733,118 +3943,13 @@ function registerGoogleAuthRoutes(app) {
 init_schema();
 init_env();
 init_auth();
+init_security();
+init_db();
+init_services();
 import { TRPCError as TRPCError4 } from "@trpc/server";
 import axios2 from "axios";
 import { and as and2, eq as eq3, inArray as inArray3 } from "drizzle-orm";
 import { z as z2 } from "zod";
-
-// server/_core/security.ts
-var authAttempts = /* @__PURE__ */ new Map();
-var AUTH_WINDOW_MS = 6e4;
-var AUTH_MAX_REQUESTS = 30;
-var failedAttemptsMap = /* @__PURE__ */ new Map();
-var MAX_FAILED_BEFORE_LOCKOUT = 5;
-var LOCKOUT_DURATION_MS = 15 * 60 * 1e3;
-var MAX_FAILED_BEFORE_AUTO_RESET = 8;
-var ATTEMPT_WINDOW_MS = 15 * 60 * 1e3;
-function securityHeaders(_req, res, next) {
-  res.removeHeader("X-Powered-By");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob: https://res.cloudinary.com https://*.googleusercontent.com; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com https://maps.googleapis.com; connect-src 'self' https://maps.googleapis.com https://api.cloudinary.com wss:; frame-src https://accounts.google.com; form-action 'self' https://accounts.google.com");
-  if (process.env.NODE_ENV === "production" && process.env.APP_BASE_URL?.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-  next();
-}
-function authRateLimit(req, res, next) {
-  if (!req.originalUrl.startsWith("/api/trpc/")) return next();
-  const route = req.originalUrl.split("?")[0];
-  if (!/\/(reader\.(signup|login|requestPasswordReset|resetPassword|verifyEmail)|admin\.login)$/.test(route)) return next();
-  const key = `${req.ip || req.socket?.remoteAddress || req.headers["x-forwarded-for"] || "unknown"}:${route}`;
-  const now2 = Date.now();
-  const current = authAttempts.get(key);
-  if (!current || current.resetAt <= now2) authAttempts.set(key, { count: 1, resetAt: now2 + AUTH_WINDOW_MS });
-  else current.count += 1;
-  const attempt = authAttempts.get(key);
-  res.setHeader("RateLimit-Limit", AUTH_MAX_REQUESTS);
-  res.setHeader("RateLimit-Remaining", Math.max(0, AUTH_MAX_REQUESTS - attempt.count));
-  if (attempt.count > AUTH_MAX_REQUESTS) {
-    res.setHeader("Retry-After", String(Math.ceil((attempt.resetAt - now2) / 1e3)));
-    return res.status(429).json({ error: "Too many authentication requests. Please try again shortly." });
-  }
-  next();
-}
-function checkPasswordAttemptLockout(email) {
-  const normEmail = email.trim().toLowerCase();
-  const record = failedAttemptsMap.get(normEmail);
-  if (!record) return { locked: false };
-  const now2 = Date.now();
-  if (record.lockedUntil && record.lockedUntil > now2) {
-    const remainingSec = Math.ceil((record.lockedUntil - now2) / 1e3);
-    const minutes = Math.ceil(remainingSec / 60);
-    return {
-      locked: true,
-      message: record.resetSent ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address." : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
-      autoResetTriggered: record.resetSent
-    };
-  }
-  if (now2 - record.firstAttemptAt > ATTEMPT_WINDOW_MS && (!record.lockedUntil || record.lockedUntil <= now2)) {
-    failedAttemptsMap.delete(normEmail);
-    return { locked: false };
-  }
-  if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
-    if (!record.lockedUntil || record.lockedUntil <= now2) {
-      record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
-    }
-    const remainingSec = Math.ceil((record.lockedUntil - now2) / 1e3);
-    const minutes = Math.ceil(remainingSec / 60);
-    return {
-      locked: true,
-      message: record.resetSent ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address." : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
-      autoResetTriggered: record.resetSent
-    };
-  }
-  return { locked: false };
-}
-function recordFailedPasswordAttempt(email) {
-  const normEmail = email.trim().toLowerCase();
-  const now2 = Date.now();
-  let record = failedAttemptsMap.get(normEmail);
-  if (!record || now2 - record.firstAttemptAt > ATTEMPT_WINDOW_MS) {
-    record = { count: 1, firstAttemptAt: now2, lockedUntil: null, resetSent: false };
-  } else {
-    record.count += 1;
-  }
-  let locked = false;
-  let autoResetNeeded = false;
-  let message = "Invalid email or password";
-  if (record.count >= MAX_FAILED_BEFORE_AUTO_RESET) {
-    record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
-    locked = true;
-    if (!record.resetSent) {
-      autoResetNeeded = true;
-      record.resetSent = true;
-    }
-    message = "Account locked due to multiple failed login attempts. A password reset link has been automatically sent to your email address.";
-  } else if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
-    record.lockedUntil = now2 + LOCKOUT_DURATION_MS;
-    locked = true;
-    message = "Too many failed password attempts. Account temporarily locked for 15 minutes. Please try again later or reset your password.";
-  } else {
-    const remaining = MAX_FAILED_BEFORE_LOCKOUT - record.count;
-    message = `Invalid email or password. ${remaining} attempt${remaining > 1 ? "s" : ""} remaining before temporary account lock.`;
-  }
-  failedAttemptsMap.set(normEmail, record);
-  return { count: record.count, locked, autoResetNeeded, message };
-}
-function resetPasswordAttempts(email) {
-  failedAttemptsMap.delete(email.trim().toLowerCase());
-}
-
-// server/routers.ts
-init_db();
-init_services();
 
 // server/_core/systemRouter.ts
 import { z } from "zod";
@@ -4094,24 +4199,16 @@ var appRouter = router({
             email = r?.email;
           }
           if (email) {
-            const centralUrl = process.env.CENTRAL_API_URL || "https://aurikrex-central.pxxl.click";
-            const secret2 = process.env.AURIKREX_CENTRAL_S2S_SECRET || "aurikrex-s2s-master-key-2026";
-            const res = await fetch(`${centralUrl}/api/v1/coins/balance?userId=${encodeURIComponent(email)}`, {
-              headers: {
-                "X-Central-Api-Key": secret2
-              }
-            });
-            if (res.ok) {
-              const centralData = await res.json();
-              if (typeof centralData?.balance === "number") {
-                return {
-                  ...centralData,
-                  balance: Math.min(centralData.balance, 2500),
-                  allowance: 2500
-                };
-              }
-              return centralData;
+            const { getCoinBalance: getCoinBalance2 } = await Promise.resolve().then(() => (init_central(), central_exports));
+            const centralData = await getCoinBalance2(email);
+            if (centralData && typeof centralData.balance === "number") {
+              return {
+                ...centralData,
+                balance: Math.min(centralData.balance, 2500),
+                allowance: 2500
+              };
             }
+            if (centralData) return centralData;
           }
         }
       } catch (err) {
@@ -4259,7 +4356,7 @@ var appRouter = router({
         headline: z2.string().min(1).max(120),
         body: z2.string().min(1).max(800),
         category: z2.string().optional(),
-        imageUrl: z2.string().url().optional()
+        imageUrl: z2.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").optional()
       })
     ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
@@ -4315,7 +4412,7 @@ var appRouter = router({
         headline: z2.string().min(1).optional(),
         body: z2.string().min(1).optional(),
         category: z2.string().optional(),
-        imageUrl: z2.string().url().nullable().optional()
+        imageUrl: z2.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").nullable().optional()
       })
     ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
@@ -4580,7 +4677,7 @@ var appRouter = router({
           message: "MAINTENANCE_PASSWORD is not configured in environment variables."
         });
       }
-      if (input.password !== expected) {
+      if (!safeStringEqual(input.password, expected)) {
         throw new TRPCError4({
           code: "FORBIDDEN",
           message: "Incorrect verification password. Action denied."
@@ -4632,7 +4729,7 @@ var appRouter = router({
         name: z2.string().trim().min(1).max(120),
         email: z2.string().email(),
         password: z2.string().min(8),
-        avatarUrl: z2.string().optional().nullable()
+        avatarUrl: z2.string().refine(isSafeAvatarUrl, "Invalid avatar URL").optional().nullable()
       })
     ).mutation(async ({ input }) => {
       if (!isValidPassword(input.password))
@@ -4741,7 +4838,7 @@ var appRouter = router({
         emailVerified: Boolean(reader?.emailVerified)
       };
     }),
-    updateAvatar: publicProcedure.input(z2.object({ avatarUrl: z2.string() })).mutation(async ({ input, ctx }) => {
+    updateAvatar: publicProcedure.input(z2.object({ avatarUrl: z2.string().refine(isSafeAvatarUrl, "Invalid avatar URL") })).mutation(async ({ input, ctx }) => {
       const reader = await requireReader(ctx);
       return updateReaderAvatar(reader.id, input.avatarUrl);
     }),
@@ -4931,16 +5028,17 @@ var appRouter = router({
         const r = await getReaderById(readerPayload.id);
         return r?.email;
       };
-      if (!input.bypassCache) {
+      const isAdminCaller = input.bypassCache === true ? Boolean(await requireAdmin(ctx).catch(() => null)) : false;
+      if (!isAdminCaller) {
         const cached = await getCachedFollowUp2(contentHash);
         if (cached && cached.answer) {
           try {
             const readerEmail = await resolveReaderEmail();
             if (readerEmail) {
-              const { getCoinBalance } = await Promise.resolve().then(() => (init_central(), central_exports));
-              const bal = await getCoinBalance(readerEmail);
+              const { getCoinBalance: getCoinBalance2 } = await Promise.resolve().then(() => (init_central(), central_exports));
+              const bal = await getCoinBalance2(readerEmail);
               if (bal && typeof bal.balance === "number") {
-                remainingCoins = bal.balance;
+                remainingCoins = Math.min(bal.balance, 2500);
                 nextResetDate = bal.nextResetDate;
               }
             }
@@ -4961,12 +5059,19 @@ var appRouter = router({
         if (readerEmail) {
           const { deductCoins: deductCoins2 } = await Promise.resolve().then(() => (init_central(), central_exports));
           const res = await deductCoins2(readerEmail, "aurikrex_bytes", "ai_summary");
+          if (res?.error && res?.status === 402) {
+            throw new TRPCError4({
+              code: "FORBIDDEN",
+              message: "You have run out of Auri Coins for this month."
+            });
+          }
           if (res && typeof res.remainingCoins === "number") {
-            remainingCoins = res.remainingCoins;
+            remainingCoins = Math.min(res.remainingCoins, 2500);
             nextResetDate = res.nextResetDate;
           }
         }
-      } catch (_) {
+      } catch (coinErr) {
+        if (coinErr instanceof TRPCError4) throw coinErr;
       }
       const generated = await singleFlightFollowUp2(contentHash, async () => {
         const searchQuery = `${post.headline} \u2014 ${input.question}`;
@@ -5158,12 +5263,17 @@ Instructions:
     }),
     reportFollowUp: publicProcedure.input(
       z2.object({
-        contentHash: z2.string().min(16).max(128).trim(),
+        contentHash: z2.string().regex(/^[a-f0-9]{64}$/i, "Valid SHA-256 contentHash required"),
         reason: z2.string().max(200).optional()
       })
-    ).mutation(async ({ input }) => {
+    ).mutation(async ({ input, ctx }) => {
+      const isAdminCaller = Boolean(await requireAdmin(ctx).catch(() => null));
       const { invalidateCachedFollowUp: invalidateCachedFollowUp2 } = await Promise.resolve().then(() => (init_aiCache(), aiCache_exports));
-      const invalidated = await invalidateCachedFollowUp2(input.contentHash, input.reason || "reported");
+      const invalidated = await invalidateCachedFollowUp2(
+        input.contentHash,
+        input.reason || "reported",
+        { force: isAdminCaller }
+      );
       return { success: true, invalidated };
     })
   })
@@ -5336,7 +5446,9 @@ async function readProductionShell() {
 }
 async function fetchRemoteImageBuffer(url) {
   try {
-    const response = await fetch(url);
+    const { isSafePublicHttpsUrl: isSafePublicHttpsUrl2 } = await Promise.resolve().then(() => (init_security(), security_exports));
+    if (!isSafePublicHttpsUrl2(url)) return null;
+    const response = await fetch(url, { signal: AbortSignal.timeout(5e3) });
     if (!response.ok) return null;
     return Buffer.from(await response.arrayBuffer());
   } catch {
@@ -5622,6 +5734,7 @@ function registerSeoRoutes(app) {
 }
 
 // server/_core/vercel.ts
+init_security();
 init_env();
 init_db();
 async function setupApp() {
@@ -5630,6 +5743,7 @@ async function setupApp() {
     console.error(`[Environment] Production configuration incomplete: ${environmentIssues.join("; ")}`);
   }
   const app = express();
+  app.set("trust proxy", 1);
   app.use((req, _res, next) => {
     const matchedPath = req.headers["x-matched-path"];
     if (matchedPath && (matchedPath === "/sitemap.xml" || matchedPath === "/robots.txt" || matchedPath.endsWith("/sitemap.xml"))) {
@@ -5638,6 +5752,10 @@ async function setupApp() {
     next();
   });
   app.use(securityHeaders);
+  app.use(cors({
+    origin: ["https://bytes.aurikrex.com", "https://www.bytes.aurikrex.com", "https://cbt.aurikrex.com", "https://aurikrex.com", "https://aurikrex-central.pxxl.click", "https://bytes.pxxl.click"],
+    credentials: true
+  }));
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
@@ -5669,8 +5787,7 @@ async function setupApp() {
       return res.json({ sent });
     } catch (error) {
       console.error("[Cron] notify failed", error);
-      const detail = error instanceof Error ? error.message : "Unknown notification provider error";
-      return res.status(500).json({ error: "Notify job failed", detail });
+      return res.status(500).json({ error: "Notify job failed" });
     }
   });
   app.get("/api/cron/curate", async (req, res) => {
@@ -5702,8 +5819,7 @@ async function handler(req, res) {
   } catch (error) {
     console.error("Vercel Handler Error:", error);
     res.status(500).json({
-      error: "Fatal Vercel Handler Error",
-      message: error instanceof Error ? error.message : String(error)
+      error: "Internal Server Error"
     });
   }
 }

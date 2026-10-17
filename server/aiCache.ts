@@ -345,34 +345,51 @@ export async function setCachedFollowUp(params: {
   }
 }
 
+export const FOLLOW_UP_REPORT_THRESHOLD = 3;
+
 /**
  * Marks a cached AI follow-up response as invalidated (e.g. when reported or post updated).
  */
 export async function invalidateCachedFollowUp(
   contentHash: string,
   reason = "reported",
-  promptVersion: string = FOLLOW_UP_PROMPT_VERSION
+  options: { force?: boolean; promptVersion?: string } = {}
 ): Promise<boolean> {
+  const promptVersion = options.promptVersion || FOLLOW_UP_PROMPT_VERSION;
+  const force = Boolean(options.force);
   const memKey = `${promptVersion}:${contentHash}`;
   const memRecord = memoryCache.get(memKey);
   if (memRecord) {
-    memRecord.status = "invalidated";
     memRecord.reportCount += 1;
+    if (force || memRecord.reportCount >= FOLLOW_UP_REPORT_THRESHOLD) {
+      memRecord.status = "invalidated";
+    }
   }
 
   try {
     const db = await ensureCacheTable();
-    if (!db) return Boolean(memRecord);
-    await db.run(
-      sql`UPDATE ai_explanation_cache
-          SET status = 'invalidated',
-              report_count = report_count + 1,
-              invalidated_reason = ${reason.slice(0, 200)}
-          WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion}`
-    );
-    return true;
+    if (!db) return Boolean(memRecord && memRecord.status === "invalidated");
+    if (force) {
+      await db.run(
+        sql`UPDATE ai_explanation_cache
+            SET status = 'invalidated',
+                report_count = report_count + 1,
+                invalidated_reason = ${reason.slice(0, 200)}
+            WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion}`
+      );
+      return true;
+    } else {
+      await db.run(
+        sql`UPDATE ai_explanation_cache
+            SET report_count = report_count + 1,
+                status = CASE WHEN report_count + 1 >= ${FOLLOW_UP_REPORT_THRESHOLD} THEN 'invalidated' ELSE status END,
+                invalidated_reason = ${reason.slice(0, 200)}
+            WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion}`
+      );
+      return Boolean(memRecord && memRecord.status === "invalidated");
+    }
   } catch {
-    return Boolean(memRecord);
+    return Boolean(memRecord && memRecord.status === "invalidated");
   }
 }
 
