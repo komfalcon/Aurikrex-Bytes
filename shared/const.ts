@@ -35,3 +35,41 @@ export const decodeOAuthState = (state: string): OAuthState => {
   }
   return { redirectUri: decoded };
 };
+
+export const BYTE_CATEGORIES = [
+  "Tech",
+  "Medicine",
+  "Sports",
+  "Geopolitics",
+  "Science",
+] as const;
+
+export type ByteCategory = (typeof BYTE_CATEGORIES)[number];
+
+export function normalizeByteCategory(raw?: string | null): ByteCategory {
+  if (!raw) return "Tech";
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (lower === "tech" || lower === "technology" || lower === "ai" || lower === "crypto" || lower === "innovation") {
+    return "Tech";
+  }
+  if (lower === "medicine" || lower === "health" || lower === "biotech" || lower === "pharma") {
+    return "Medicine";
+  }
+  if (lower === "sports" || lower === "sport") {
+    return "Sports";
+  }
+  if (lower === "geopolitics" || lower === "politics" || lower === "world" || lower === "global") {
+    return "Geopolitics";
+  }
+  if (lower === "science" || lower === "space" || lower === "physics") {
+    return "Science";
+  }
+
+  for (const cat of BYTE_CATEGORIES) {
+    if (cat.toLowerCase() === lower) return cat;
+  }
+
+  return "Tech";
+}

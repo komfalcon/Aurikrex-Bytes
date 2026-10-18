@@ -17,6 +17,7 @@ import {
 import { ENV } from "./_core/env.js";
 import { updateDailyStreak } from "./streak.js";
 import { hashToken } from "./auth.js";
+import { normalizeByteCategory } from "../shared/const.js";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _schemaRepair: Promise<void> | null = null;
@@ -95,6 +96,9 @@ async function repairVerifiedNewsSchema(db: ReturnType<typeof drizzle>) {
     console.info(`[Database] Applied missing posts.${name} column`);
   }
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS posts_duplicate_key_unique ON posts (duplicate_key)"));
+  try {
+    await db.run(sql.raw("UPDATE posts SET category = 'Tech' WHERE category IS NULL OR category = '' OR category IN ('AI', 'Innovation', 'Crypto')"));
+  } catch {}
 }
 
 async function repairSystemSettingsSchema(db: ReturnType<typeof drizzle>) {
@@ -342,6 +346,7 @@ export async function listPublishedPosts(readerId?: number) {
       headline: posts.headline,
       body: posts.body,
       imageUrl: posts.imageUrl,
+      category: posts.category,
       publishedTime: posts.publishedTime,
       updatedAt: posts.updatedAt,
     })
@@ -489,6 +494,7 @@ export async function listSavedPosts(readerId: number) {
     headline: posts.headline,
     body: posts.body,
     imageUrl: posts.imageUrl,
+    category: posts.category,
     publishedTime: posts.publishedTime,
     updatedAt: posts.updatedAt,
     savedAt: postBookmarks.createdAt,
@@ -498,7 +504,8 @@ export async function listSavedPosts(readerId: number) {
 export async function searchPublishedPosts(
   query: string,
   page: number,
-  pageSize: number
+  pageSize: number,
+  category?: string
 ) {
   const db = await getDb();
   if (!db) return { posts: [], nextPage: null as number | null };
@@ -511,9 +518,14 @@ export async function searchPublishedPosts(
       like(posts.sourcePublisher, `%${normalizedQuery}%`)
     )
     : undefined;
-  const where = search
-    ? and(eq(posts.status, "published"), search)
-    : eq(posts.status, "published");
+
+  const conditions = [eq(posts.status, "published")];
+  if (search) conditions.push(search);
+  if (category && category !== "All") {
+    conditions.push(eq(posts.category, normalizeByteCategory(category)));
+  }
+
+  const where = and(...conditions);
   const rows = await db
     .select()
     .from(posts)
@@ -615,6 +627,7 @@ export async function getAnalytics() {
 export async function createIngestedPost(input: {
   headline: string;
   body: string;
+  category?: string | null;
   imageUrl?: string | null;
   status?: "draft" | "pending_review" | "scheduled" | "published";
   scheduledTime?: Date | null;
@@ -629,6 +642,7 @@ export async function createIngestedPost(input: {
     .values({
       headline: input.headline,
       body: input.body,
+      category: normalizeByteCategory(input.category),
       imageUrl: input.imageUrl || null,
       status,
       scheduledTime: input.scheduledTime || null,

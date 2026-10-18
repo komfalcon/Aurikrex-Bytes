@@ -6,6 +6,7 @@ import { Logo } from "../public/ReaderPages";
 import { useTheme } from "../contexts/ThemeContext";
 import NotFound from "../pages/NotFound";
 import { FormattedInlineText } from "@/components/FormattedBody";
+import { BYTE_CATEGORIES, type ByteCategory, normalizeByteCategory } from "@shared/const";
 
 function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
@@ -311,6 +312,7 @@ export function AdminDashboard() {
   const utils = trpc.useUtils();
 
   const [filter, setFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [batchScheduleTime, setBatchScheduleTime] = useState("");
@@ -346,7 +348,8 @@ export function AdminDashboard() {
 
   const shown = (posts.data || []).filter((p: any) =>
     (filter === "all" || p.status === filter) &&
-    (`${p.headline} ${p.body}`.toLowerCase().includes(query.toLowerCase()))
+    (categoryFilter === "all" || normalizeByteCategory(p.category) === categoryFilter) &&
+    (`${p.headline} ${p.body} ${p.category || ""}`.toLowerCase().includes(query.toLowerCase()))
   );
 
   const allSelected = shown.length > 0 && shown.every((p: any) => selectedIds.includes(p.id));
@@ -403,7 +406,7 @@ export function AdminDashboard() {
         </Link>
       </div>
 
-      <div className="admin-tabs" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
+      <div className="admin-tabs" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.75rem" }}>
         <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
           {[
             ["all", "All"],
@@ -429,6 +432,30 @@ export function AdminDashboard() {
             {allSelected ? "Deselect All" : `Select All (${shown.length})`}
           </button>
         )}
+      </div>
+
+      {/* Category Filter Chips */}
+      <div className="admin-category-filter" style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+        <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--muted)" }}>Category:</span>
+        <button
+          type="button"
+          className={`button button-small ${categoryFilter === "all" ? "" : "button-outline"}`}
+          onClick={() => setCategoryFilter("all")}
+          style={{ borderRadius: "999px", padding: "0.2rem 0.65rem", fontSize: "0.8rem" }}
+        >
+          All Categories
+        </button>
+        {BYTE_CATEGORIES.map(cat => (
+          <button
+            key={cat}
+            type="button"
+            className={`button button-small ${categoryFilter === cat ? "" : "button-outline"}`}
+            onClick={() => setCategoryFilter(cat)}
+            style={{ borderRadius: "999px", padding: "0.2rem 0.65rem", fontSize: "0.8rem" }}
+          >
+            {cat}
+          </button>
+        ))}
       </div>
 
       {/* Sticky Batch Action Bar with Theme-Aware CSS Variables */}
@@ -584,7 +611,23 @@ export function AdminDashboard() {
                     <Link href={`/admin/preview/${post.id}`}>
                       <strong>{post.headline}</strong>
                     </Link>
-                    <small><FormattedInlineText text={post.body.slice(0, 90) + (post.body.length > 90 ? "…" : "")} /></small>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.2rem" }}>
+                      <span
+                        style={{
+                          fontSize: "0.68rem",
+                          fontWeight: 700,
+                          padding: "0.1rem 0.45rem",
+                          borderRadius: "4px",
+                          background: "rgba(59, 130, 246, 0.12)",
+                          color: "var(--blue, #3b82f6)",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.5px"
+                        }}
+                      >
+                        {normalizeByteCategory(post.category)}
+                      </span>
+                      <small><FormattedInlineText text={post.body.slice(0, 85) + (post.body.length > 85 ? "…" : "")} /></small>
+                    </div>
                   </div>
                 </div>
 

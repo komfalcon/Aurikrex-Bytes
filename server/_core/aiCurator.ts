@@ -4,6 +4,7 @@ import { getDb } from "../db.js";
 import { posts } from "../../drizzle/schema.js";
 import { getAiApiKeys, getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig, getCloudflareAiConfigs } from "./aiKeys.js";
 import { generateNvidiaFluxImage } from "./imageGeneration.js";
+import { BYTE_CATEGORIES, type ByteCategory, normalizeByteCategory } from "../../shared/const.js";
 
 export interface CuratedByte {
   headline: string;
@@ -25,6 +26,7 @@ interface NewsCandidate {
   publishedAt: Date;
   duplicateKey: string;
   imageUrl: string | null;
+  category?: ByteCategory;
 }
 
 const TOPIC_POOL = [
@@ -144,7 +146,18 @@ export function cleanHeadline(title: string): string {
   return cleaned;
 }
 
+const CATEGORY_PALETTES: Record<ByteCategory, { accent1: string; accent2: string; circle: string; label: string }> = {
+  Tech: { accent1: "#3b82f6", accent2: "#60a5fa", circle: "#2563eb", label: "AURIKREX BYTES &bull; TECH BRIEFING" },
+  Medicine: { accent1: "#10b981", accent2: "#34d399", circle: "#059669", label: "AURIKREX BYTES &bull; CLINICAL MEDICINE BRIEFING" },
+  Sports: { accent1: "#f59e0b", accent2: "#fbbf24", circle: "#d97706", label: "AURIKREX BYTES &bull; GLOBAL SPORTS DESK" },
+  Geopolitics: { accent1: "#e11d48", accent2: "#fb7185", circle: "#be123c", label: "AURIKREX BYTES &bull; WORLD GEOPOLITICS BRIEFING" },
+  Science: { accent1: "#8b5cf6", accent2: "#a78bfa", circle: "#7c3aed", label: "AURIKREX BYTES &bull; FRONTIER SCIENCE REPORT" },
+};
+
 export function generateEditorialSvgCard(headline: string, category = "Tech"): string {
+  const normCat = normalizeByteCategory(category);
+  const palette = CATEGORY_PALETTES[normCat] || CATEGORY_PALETTES.Tech;
+
   const safeHeadline = cleanHeadline(headline)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -177,23 +190,23 @@ export function generateEditorialSvgCard(headline: string, category = "Tech"): s
       <stop offset="100%" stop-color="#141c2e" />
     </linearGradient>
     <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#3b82f6" />
-      <stop offset="100%" stop-color="#60a5fa" />
+      <stop offset="0%" stop-color="${palette.accent1}" />
+      <stop offset="100%" stop-color="${palette.accent2}" />
     </linearGradient>
   </defs>
   <rect width="1200" height="630" fill="url(#bg)" />
   <circle cx="1100" cy="100" r="300" fill="#1e293b" opacity="0.35" />
-  <circle cx="1100" cy="100" r="200" fill="#2563eb" opacity="0.08" />
+  <circle cx="1100" cy="100" r="200" fill="${palette.circle}" opacity="0.12" />
   <g transform="translate(80, 90)">
-    <rect x="0" y="0" width="130" height="34" rx="17" fill="url(#accent)" />
-    <text x="65" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle" letter-spacing="1">${category.toUpperCase()}</text>
+    <rect x="0" y="0" width="${Math.max(130, normCat.length * 14 + 40)}" height="34" rx="17" fill="url(#accent)" />
+    <text x="${Math.max(65, (normCat.length * 14 + 40) / 2)}" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle" letter-spacing="1">${normCat.toUpperCase()}</text>
   </g>
   <text x="80" y="240" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, serif" font-size="44" font-weight="700" fill="#f8fafc" letter-spacing="-0.5">
     ${tspans}
   </text>
   <g transform="translate(80, 530)">
-    <circle cx="10" cy="-6" r="6" fill="#3b82f6" />
-    <text x="28" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="600" fill="#94a3b8" letter-spacing="0.5">AURIKREX BYTES &bull; VERIFIED TECH BRIEFING</text>
+    <circle cx="10" cy="-6" r="6" fill="${palette.accent1}" />
+    <text x="28" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="600" fill="#94a3b8" letter-spacing="0.5">${palette.label}</text>
   </g>
 </svg>`;
 
@@ -268,8 +281,8 @@ export async function extractSourceArticleImage(url: string): Promise<string | n
   }
 }
 
-async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
-  const feeds = [
+export const CATEGORY_FEEDS: Record<ByteCategory, { name: string; url: string }[]> = {
+  Tech: [
     { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
     { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" },
     { name: "TechCrunch", url: "https://techcrunch.com/feed/" },
@@ -277,11 +290,63 @@ async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<
     { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
     { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
     { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" },
-  ];
+  ],
+  Medicine: [
+    { name: "ScienceDaily Health", url: "https://www.sciencedaily.com/rss/health_medicine.xml" },
+    { name: "STAT News", url: "https://www.statnews.com/feed/" },
+    { name: "MedicalXpress", url: "https://medicalxpress.com/rss-feed/" },
+    { name: "Fierce Biotech", url: "https://www.fiercebiotech.com/rss/xml" },
+    { name: "Nature Medicine", url: "https://www.nature.com/nm.rss" },
+  ],
+  Sports: [
+    { name: "BBC Sport", url: "https://feeds.bbci.co.uk/sport/rss.xml" },
+    { name: "ESPN Headlines", url: "https://www.espn.com/espn/rss/news" },
+    { name: "Sky Sports", url: "https://www.skysports.com/rss/12040" },
+    { name: "Yahoo Sports", url: "https://sports.yahoo.com/rss/" },
+    { name: "CBS Sports", url: "https://www.cbssports.com/rss/headlines/" },
+  ],
+  Geopolitics: [
+    { name: "BBC World", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+    { name: "Al Jazeera", url: "https://www.aljazeera.com/xml/rss/all.xml" },
+    { name: "Foreign Policy", url: "https://foreignpolicy.com/feed/" },
+    { name: "The Diplomat", url: "https://thediplomat.com/feed/" },
+    { name: "Defense One", url: "https://www.defenseone.com/rss/all/" },
+  ],
+  Science: [
+    { name: "ScienceDaily Science", url: "https://www.sciencedaily.com/rss/top/science.xml" },
+    { name: "Phys.org", url: "https://phys.org/rss-feed/" },
+    { name: "Nature", url: "https://www.nature.com/nature.rss" },
+    { name: "NASA Breaking News", url: "https://www.nasa.gov/news-release/feed/" },
+    { name: "Quanta Magazine", url: "https://api.quantamagazine.org/feed/" },
+  ],
+};
+
+async function fetchRssCandidates(
+  start: Date,
+  end: Date,
+  excludeKeys = new Set<string>(),
+  targetCategory?: ByteCategory | "All"
+): Promise<NewsCandidate[]> {
+  const feedsToFetch: { name: string; url: string; category: ByteCategory }[] = [];
+
+  if (targetCategory && targetCategory !== "All") {
+    const list = CATEGORY_FEEDS[targetCategory] || [];
+    for (const f of list) {
+      feedsToFetch.push({ ...f, category: targetCategory });
+    }
+  } else {
+    // "All": sample top feeds from every category for balanced coverage
+    for (const cat of BYTE_CATEGORIES) {
+      const list = CATEGORY_FEEDS[cat] || [];
+      for (const f of list.slice(0, 3)) {
+        feedsToFetch.push({ ...f, category: cat });
+      }
+    }
+  }
 
   const results: NewsCandidate[] = [];
 
-  for (const feed of feeds) {
+  for (const feed of feedsToFetch) {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4000);
@@ -338,6 +403,7 @@ async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<
           publishedAt,
           duplicateKey,
           imageUrl: mediaUrl,
+          category: feed.category,
         });
       }
     } catch (e) {
@@ -348,16 +414,24 @@ async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<
   return results;
 }
 
-async function fetchCandidatesForTimeframe(start: Date, end: Date, excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
+async function fetchCandidatesForTimeframe(
+  start: Date,
+  end: Date,
+  excludeKeys = new Set<string>(),
+  targetCategory?: ByteCategory | "All"
+): Promise<NewsCandidate[]> {
   const startSec = Math.floor(start.getTime() / 1000);
   const endSec = Math.floor(end.getTime() / 1000);
 
-  const hnQueries = [
-    `tags=front_page&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=35`,
-    `query=AI%20OR%20LLM&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
-    `query=chip%20OR%20semiconductor%20OR%20security&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
-    `query=cloud%20OR%20database%20OR%20open%20source&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
-  ];
+  const shouldFetchHn = !targetCategory || targetCategory === "All" || targetCategory === "Tech";
+
+  const hnQueries = shouldFetchHn
+    ? [
+        `tags=front_page&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=35`,
+        `query=AI%20OR%20LLM&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
+        `query=chip%20OR%20semiconductor%20OR%20security&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
+      ]
+    : [];
 
   const hnPromises = hnQueries.map(async queryParams => {
     try {
@@ -371,7 +445,7 @@ async function fetchCandidatesForTimeframe(start: Date, end: Date, excludeKeys =
 
   const [hnResults, rssCandidates] = await Promise.all([
     Promise.all(hnPromises),
-    fetchRssCandidates(start, end, excludeKeys),
+    fetchRssCandidates(start, end, excludeKeys, targetCategory),
   ]);
 
   const candidates = new Map<string, NewsCandidate>();
@@ -409,6 +483,7 @@ async function fetchCandidatesForTimeframe(start: Date, end: Date, excludeKeys =
           publishedAt,
           duplicateKey,
           imageUrl: null,
+          category: "Tech",
         });
       }
     }
@@ -416,21 +491,24 @@ async function fetchCandidatesForTimeframe(start: Date, end: Date, excludeKeys =
 
   return Array.from(candidates.values())
     .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
-    .slice(0, 30);
+    .slice(0, 40);
 }
 
-export async function fetchTodayCandidates(excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
+export async function fetchTodayCandidates(
+  excludeKeys = new Set<string>(),
+  targetCategory?: ByteCategory | "All"
+): Promise<NewsCandidate[]> {
   const now = new Date();
   const { start, end } = getTodayWindow(now);
 
   // 1. Fetch uncurated candidates for today's window
-  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys);
+  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys, targetCategory);
 
-  // 2. If fewer than 15 uncurated candidates in today's window, expand search window to 72 hours
-  if (candidates.length < 15) {
+  // 2. If fewer than 10 uncurated candidates in today's window, expand search window to 72 hours
+  if (candidates.length < 10) {
     const past72h = new Date(now.getTime() - 72 * 3600 * 1000);
-    console.info(`[AICurator] Found ${candidates.length} uncurated candidates today. Expanding search window to 72 hours...`);
-    candidates = await fetchCandidatesForTimeframe(past72h, now, excludeKeys);
+    console.info(`[AICurator] Found ${candidates.length} uncurated candidates for ${targetCategory || "All"}. Expanding window to 72 hours...`);
+    candidates = await fetchCandidatesForTimeframe(past72h, now, excludeKeys, targetCategory);
   }
 
   return candidates;
@@ -606,9 +684,11 @@ export function parseAiJsonResponse(rawJson: string): any[] {
 async function generateSingleCandidateBrief(
   candidate: NewsCandidate,
   mistralKey: string,
-  nvidiaKey: string
-): Promise<{ headline: string; body: string; category: string } | null> {
-  const prompt = `You are the executive tech editor for Aurikrex Bytes.
+  nvidiaKey: string,
+  targetCategory?: ByteCategory
+): Promise<{ headline: string; body: string; category: ByteCategory } | null> {
+  const chosenCat: ByteCategory = targetCategory || candidate.category || "Tech";
+  const prompt = `You are the executive editor for Aurikrex Bytes specializing in ${chosenCat}.
 Write an authoritative, high-signal 3-paragraph editorial brief for this verified news story.
 
 STORY DETAILS:
@@ -619,17 +699,17 @@ STORY DETAILS:
 EDITORIAL RULES:
 1. Base your brief strictly on the candidate facts. Do NOT hallucinate fake dates or fake benchmarks.
 2. Structure into three concise, focused paragraphs:
-   - Paragraph 1 (The Lead): The core event, company, breakthrough, or incident and key technical details.
-   - Paragraph 2 (Why It Matters): Strategic industry impact, architectural implications, market effects, or infrastructure changes.
-   - Paragraph 3 (The Outlook): What happens next, timeline, release dates, or key metrics to watch.
+   - Paragraph 1 (The Lead): The core event, company/entity, breakthrough, or incident and key details.
+   - Paragraph 2 (Why It Matters): Strategic industry impact, architectural implications, market effects, or clinical/global consequences.
+   - Paragraph 3 (The Outlook): What happens next, timeline, upcoming milestones, or key metrics to watch.
 3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 550 and 750 characters.
 4. Headline: Crisp, punchy, active voice, under 90 characters. Never include publisher names or tags like "Show HN:".
-5. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
+5. Category: Choose the single best fit from ["Tech", "Medicine", "Sports", "Geopolitics", "Science"].
 6. Return a valid JSON object ONLY:
    {
      "headline": "Crisp Headline under 90 chars",
      "body": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...",
-     "category": "Tech"
+     "category": "${chosenCat}"
    }`;
 
   // 1. Primary LLM Provider: Mistral AI (mistral-small-latest -> open-mixtral-8x7b -> open-mistral-7b)
@@ -648,7 +728,7 @@ EDITORIAL RULES:
             model,
             response_format: { type: "json_object" },
             messages: [
-              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+              { role: "system", content: "You are an executive editor for Aurikrex Bytes. Output valid JSON only." },
               { role: "user", content: prompt },
             ],
             temperature: 0.3,
@@ -665,9 +745,7 @@ EDITORIAL RULES:
             const headline = extractAiHeadline(item, candidate.title);
             const rawBody = extractAiBody(item);
             const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-              ? String(item.category)
-              : "Tech";
+            const category = normalizeByteCategory(chosenCat || item.category || candidate.category);
 
             if (headline && body && body.length > 100) {
               return { headline, body, category };
@@ -703,7 +781,7 @@ EDITORIAL RULES:
             body: JSON.stringify({
               model,
               messages: [
-                { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+                { role: "system", content: "You are an executive editor for Aurikrex Bytes. Output valid JSON only." },
                 { role: "user", content: prompt },
               ],
               temperature: 0.3,
@@ -720,9 +798,7 @@ EDITORIAL RULES:
               const headline = extractAiHeadline(item, candidate.title);
               const rawBody = extractAiBody(item);
               const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-                ? String(item.category)
-                : "Tech";
+              const category = normalizeByteCategory(chosenCat || item.category || candidate.category);
 
               if (headline && body && body.length > 100) {
                 return { headline, body, category };
@@ -752,7 +828,7 @@ EDITORIAL RULES:
             },
             body: JSON.stringify({
               messages: [
-                { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+                { role: "system", content: "You are an executive editor for Aurikrex Bytes. Output valid JSON only." },
                 { role: "user", content: prompt },
               ],
               max_tokens: 1000,
@@ -768,9 +844,7 @@ EDITORIAL RULES:
               const headline = extractAiHeadline(item, candidate.title);
               const rawBody = extractAiBody(item);
               const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-                ? String(item.category)
-                : "Tech";
+              const category = normalizeByteCategory(chosenCat || item.category || candidate.category);
 
               if (headline && body && body.length > 100) {
                 return { headline, body, category };
@@ -789,11 +863,15 @@ EDITORIAL RULES:
 
 export async function curateTenBytes(
   excludeKeys = new Set<string>(),
-  userIdentifier?: string
+  userIdentifier?: string,
+  options?: { category?: ByteCategory | "All"; count?: number }
 ): Promise<CuratedByte[]> {
+  const targetCategory = options?.category && options.category !== "All" ? options.category : undefined;
+  const maxCount = Math.min(Math.max(options?.count || 10, 1), 30);
+
   let candidates: NewsCandidate[];
   try {
-    candidates = await fetchTodayCandidates(excludeKeys);
+    candidates = await fetchTodayCandidates(excludeKeys, options?.category);
   } catch (error) {
     console.error("[AICurator] News candidate retrieval failed", error);
     return [];
@@ -834,20 +912,20 @@ export async function curateTenBytes(
     candidate: NewsCandidate;
     headline: string;
     body: string;
-    category: string;
+    category: ByteCategory;
   }
 
   const draftItems: DraftStoryItem[] = [];
 
   // Generate AI briefs for candidates ONE BY ONE in small parallel chunks of 3 for max performance & zero rate limits
   const chunkSize = 3;
-  for (let i = 0; i < candidates.length && draftItems.length < 10; i += chunkSize) {
+  for (let i = 0; i < candidates.length && draftItems.length < maxCount; i += chunkSize) {
     const chunk = candidates.slice(i, i + chunkSize);
     const chunkResults = await Promise.all(
       chunk.map(async (candidate) => {
         if (seen.has(candidate.duplicateKey)) return null;
         seen.add(candidate.duplicateKey);
-        const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey);
+        const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey, targetCategory || candidate.category);
         if (!brief) return null;
         return {
           candidate,
@@ -859,7 +937,7 @@ export async function curateTenBytes(
     );
 
     for (const res of chunkResults) {
-      if (res && draftItems.length < 10) {
+      if (res && draftItems.length < maxCount) {
         draftItems.push(res);
       }
     }
@@ -867,7 +945,7 @@ export async function curateTenBytes(
 
   console.info(`[AICurator] Successfully generated ${draftItems.length} authentic AI candidate briefs. Resolving cover images in parallel...`);
 
-  // Resolve cover images for all 10 stories in parallel
+  // Resolve cover images for all stories in parallel
   const curatedBytes: CuratedByte[] = await Promise.all(
     draftItems.map(async (draft) => {
       let imageUrl = draft.candidate.imageUrl;
@@ -911,7 +989,8 @@ export async function curateTenBytes(
 
 export async function runNightlyCuration(
   status: "draft" | "published" = "draft",
-  userIdentifier?: string
+  userIdentifier?: string,
+  options?: { category?: ByteCategory | "All"; count?: number }
 ): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
@@ -920,8 +999,8 @@ export async function runNightlyCuration(
   const existingPosts = await db.select({ duplicateKey: posts.duplicateKey }).from(posts);
   const excludeKeys = new Set(existingPosts.map(p => p.duplicateKey).filter((k): k is string => Boolean(k)));
 
-  // 2. Curate 10 uncurated Bytes
-  const bytes = await curateTenBytes(excludeKeys, userIdentifier);
+  // 2. Curate uncurated Bytes
+  const bytes = await curateTenBytes(excludeKeys, userIdentifier, options);
   if (!bytes.length) return 0;
 
   let count = 0;

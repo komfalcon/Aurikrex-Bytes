@@ -1,4 +1,7 @@
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { BYTE_CATEGORIES, type ByteCategory } from "../shared/const.js";
+
+export { BYTE_CATEGORIES, type ByteCategory };
 
 const now = () => new Date();
 export const POST_STATUSES = [

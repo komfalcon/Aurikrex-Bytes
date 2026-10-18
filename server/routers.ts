@@ -60,7 +60,7 @@ import {
   verificationEmailHtml,
   resetPasswordEmailHtml,
 } from "./services.js";
-import { COOKIE_NAME } from "@shared/const";
+import { COOKIE_NAME, BYTE_CATEGORIES, type ByteCategory, normalizeByteCategory } from "@shared/const";
 import {
   getFirstPartyCookieOptions,
   getSessionCookieOptions,
@@ -329,7 +329,7 @@ export const appRouter = router({
         z.object({
           headline: z.string().min(1).max(120),
           body: z.string().min(1).max(800),
-          category: z.string().optional(),
+          category: z.enum(BYTE_CATEGORIES).optional(),
           imageUrl: z.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").optional(),
         })
       )
@@ -344,22 +344,37 @@ export const appRouter = router({
           });
         const result = await db.insert(posts).values({
           ...input,
-          category: input.category || "Tech",
+          category: normalizeByteCategory(input.category || "Tech"),
           status: "draft",
           createdBy: admin.id,
           updatedAt: new Date(),
         });
         return { success: true, id: Number(result.lastInsertRowid) };
       }),
-    curateNow: publicProcedure.mutation(async ({ ctx }) => {
-      const admin = await requireAdmin(ctx);
-      assertPermission(admin.role, "post:create");
-      const { runNightlyCuration } = await import("./_core/aiCurator.js");
-      const count = await runNightlyCuration("draft", admin.email);
-      return { success: true, count };
-    }),
+    curateNow: publicProcedure
+      .input(
+        z.object({
+          category: z.enum([...BYTE_CATEGORIES, "All"] as [string, ...string[]]).optional(),
+          count: z.number().int().min(1).max(30).optional(),
+        }).optional()
+      )
+      .mutation(async ({ input, ctx }) => {
+        const admin = await requireAdmin(ctx);
+        assertPermission(admin.role, "post:create");
+        const { runNightlyCuration } = await import("./_core/aiCurator.js");
+        const count = await runNightlyCuration("draft", admin.email, {
+          category: input?.category as ByteCategory | "All" | undefined,
+          count: input?.count,
+        });
+        return { success: true, count };
+      }),
     ingestPdf: publicProcedure
-      .input(z.object({ pdfContent: z.string().min(1) }))
+      .input(
+        z.object({
+          pdfContent: z.string().min(1),
+          category: z.enum(BYTE_CATEGORIES).optional(),
+        })
+      )
       .mutation(async ({ input, ctx }) => {
         const admin = await requireAdmin(ctx);
         assertPermission(admin.role, "post:create");
@@ -373,7 +388,7 @@ export const appRouter = router({
           await db.insert(posts).values({
             headline: byte.headline,
             body: byte.body,
-            category: byte.category || "Tech",
+            category: input.category || normalizeByteCategory(byte.category || "Tech"),
             imageUrl: byte.imageUrl,
             status: "draft",
             createdBy: admin.id,
@@ -389,7 +404,7 @@ export const appRouter = router({
           id: z.number().int().positive(),
           headline: z.string().min(1).optional(),
           body: z.string().min(1).optional(),
-          category: z.string().optional(),
+          category: z.enum(BYTE_CATEGORIES).optional(),
           imageUrl: z.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").nullable().optional(),
         })
       )
@@ -400,9 +415,14 @@ export const appRouter = router({
         const post = await getPostById(input.id);
         if (!db || !post) throw genericNotFound();
         const { id, ...changes } = input;
+        const category = changes.category ? normalizeByteCategory(changes.category) : undefined;
         await db
           .update(posts)
-          .set({ ...changes, updatedAt: new Date() })
+          .set({
+            ...changes,
+            ...(category ? { category } : {}),
+            updatedAt: new Date(),
+          })
           .where(eq(posts.id, id));
         return { success: true };
       }),
@@ -427,16 +447,27 @@ export const appRouter = router({
         return { success: true, count: input.ids.length };
       }),
     batchPublishPosts: publicProcedure
-      .input(z.object({ ids: z.array(z.number().int().positive()).min(1) }))
+      .input(
+        z.object({
+          ids: z.array(z.number().int().positive()).min(1),
+          category: z.enum(BYTE_CATEGORIES).optional(),
+        })
+      )
       .mutation(async ({ input, ctx }) => {
         const admin = await requireAdmin(ctx);
         assertPermission(admin.role, "post:publish");
         const db = await getDb();
         if (!db) throw genericNotFound();
         const now = new Date();
+        const category = input.category ? normalizeByteCategory(input.category) : undefined;
         await db
           .update(posts)
-          .set({ status: "published", publishedTime: now, updatedAt: now })
+          .set({
+            status: "published",
+            publishedTime: now,
+            ...(category ? { category } : {}),
+            updatedAt: now,
+          })
           .where(inArray(posts.id, input.ids));
         return { success: true, count: input.ids.length };
       }),
@@ -445,6 +476,7 @@ export const appRouter = router({
         z.object({
           ids: z.array(z.number().int().positive()).min(1),
           scheduledTime: z.coerce.date(),
+          category: z.enum(BYTE_CATEGORIES).optional(),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -453,11 +485,13 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) throw genericNotFound();
         const now = new Date();
+        const category = input.category ? normalizeByteCategory(input.category) : undefined;
         await db
           .update(posts)
           .set({
             status: "scheduled",
             scheduledTime: input.scheduledTime,
+            ...(category ? { category } : {}),
             updatedAt: now,
           })
           .where(inArray(posts.id, input.ids));
@@ -483,7 +517,12 @@ export const appRouter = router({
         return { success: true };
       }),
     publishPost: publicProcedure
-      .input(z.object({ id: z.number().int().positive() }))
+      .input(
+        z.object({
+          id: z.number().int().positive(),
+          category: z.enum(BYTE_CATEGORIES).optional(),
+        })
+      )
       .mutation(async ({ input, ctx }) => {
         const admin = await requireAdmin(ctx);
         assertPermission(admin.role, "post:publish");
@@ -491,12 +530,14 @@ export const appRouter = router({
         const post = await getPostById(input.id);
         if (!db || !post) throw genericNotFound();
         assertPostTransition(admin.role, post.status, "published");
+        const category = input.category ? normalizeByteCategory(input.category) : undefined;
         await db
           .update(posts)
           .set({
             status: "published",
             publishedTime: new Date(),
             scheduledTime: null,
+            ...(category ? { category } : {}),
             updatedAt: new Date(),
           })
           .where(eq(posts.id, input.id));
@@ -507,6 +548,7 @@ export const appRouter = router({
         z.object({
           id: z.number().int().positive(),
           scheduledTime: z.coerce.date(),
+          category: z.enum(BYTE_CATEGORIES).optional(),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -521,11 +563,13 @@ export const appRouter = router({
             code: "BAD_REQUEST",
             message: "scheduledTime must be in the future",
           });
+        const category = input.category ? normalizeByteCategory(input.category) : undefined;
         await db
           .update(posts)
           .set({
             status: "scheduled",
             scheduledTime: input.scheduledTime,
+            ...(category ? { category } : {}),
             updatedAt: new Date(),
           })
           .where(eq(posts.id, input.id));
@@ -556,6 +600,7 @@ export const appRouter = router({
         z.object({
           id: z.number().int().positive(),
           scheduledTime: z.coerce.date().optional(),
+          category: z.enum(BYTE_CATEGORIES).optional(),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -571,6 +616,7 @@ export const appRouter = router({
           });
         const next = input.scheduledTime ? "scheduled" : "published";
         assertPostTransition(admin.role, post.status, next);
+        const category = input.category ? normalizeByteCategory(input.category) : undefined;
         await db
           .update(posts)
           .set({
@@ -578,6 +624,7 @@ export const appRouter = router({
             scheduledTime: input.scheduledTime ?? null,
             publishedTime: input.scheduledTime ? null : new Date(),
             rejectionNote: null,
+            ...(category ? { category } : {}),
             updatedAt: new Date(),
           })
           .where(eq(posts.id, input.id));
@@ -1070,6 +1117,7 @@ export const appRouter = router({
       .input(
         z.object({
           query: z.string().max(120).default(""),
+          category: z.string().optional(),
           page: z.number().int().min(1).default(1),
           pageSize: z.number().int().min(1).max(24).default(12),
         })
@@ -1079,7 +1127,8 @@ export const appRouter = router({
         const result = await searchPublishedPosts(
           input.query,
           input.page,
-          input.pageSize
+          input.pageSize,
+          input.category
         );
         if (input.query.trim() && input.page === 1)
           await recordSearchQuery(input.query);

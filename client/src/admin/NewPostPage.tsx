@@ -5,6 +5,7 @@ import { trpc } from "../lib/trpc";
 import NotFound from "../pages/NotFound";
 import { AdminFrame } from "./AdminPages";
 import { FormattedBody } from "@/components/FormattedBody";
+import { BYTE_CATEGORIES, type ByteCategory, normalizeByteCategory } from "@shared/const";
 
 const HEADLINE_LIMIT = 120;
 const BODY_LIMIT = 1200;
@@ -26,6 +27,7 @@ export function NewPostPage() {
   const [mode, setMode] = useState<"manual" | "pdf" | "ai">("manual");
   const [headline, setHeadline] = useState("");
   const [body, setBody] = useState("");
+  const [category, setCategory] = useState<ByteCategory>("Tech");
   const [imageUrl, setImageUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
@@ -34,11 +36,14 @@ export function NewPostPage() {
   const [hydrated, setHydrated] = useState(false);
 
   // PDF processing states
+  const [pdfCategory, setPdfCategory] = useState<ByteCategory | "">("");
   const [pdfUploading, setPdfUploading] = useState(false);
   const [pdfSuccessCount, setPdfSuccessCount] = useState<number | null>(null);
   const [pdfError, setPdfError] = useState("");
 
   // AI Curation states
+  const [aiCategory, setAiCategory] = useState<ByteCategory | "All">("All");
+  const [aiCount, setAiCount] = useState<number>(10);
   const [aiRunning, setAiRunning] = useState(false);
   const [aiSuccessCount, setAiSuccessCount] = useState<number | null>(null);
   const [aiError, setAiError] = useState("");
@@ -47,6 +52,7 @@ export function NewPostPage() {
     if (existing.data && !hydrated) {
       setHeadline(existing.data.headline);
       setBody(existing.data.body);
+      setCategory(normalizeByteCategory(existing.data.category || "Tech"));
       setImageUrl(existing.data.imageUrl || "");
       setHydrated(true);
     }
@@ -100,9 +106,9 @@ export function NewPostPage() {
     try {
       let id = editId;
       if (editId) {
-        await editPost.mutateAsync({ id: editId, headline: headline.trim(), body: body.trim(), imageUrl });
+        await editPost.mutateAsync({ id: editId, headline: headline.trim(), body: body.trim(), category, imageUrl });
       } else {
-        const result = await createPost.mutateAsync({ headline: headline.trim(), body: body.trim(), imageUrl });
+        const result = await createPost.mutateAsync({ headline: headline.trim(), body: body.trim(), category, imageUrl });
         id = result.id;
       }
       if (destination === "preview" && id) navigate(`/admin/preview/${id}?role=${currentRole}`);
@@ -134,7 +140,10 @@ export function NewPostPage() {
       reader.onload = async (e) => {
         const content = e.target?.result as string;
         try {
-          const res = await ingestPdf.mutateAsync({ pdfContent: content });
+          const res = await ingestPdf.mutateAsync({
+            pdfContent: content,
+            category: pdfCategory ? pdfCategory : undefined,
+          });
           setPdfSuccessCount(res.count);
           void utils.admin.posts.invalidate();
           setTimeout(() => navigate("/admin"), 1500);
@@ -162,7 +171,10 @@ export function NewPostPage() {
     setAiSuccessCount(null);
 
     try {
-      const res = await curateNow.mutateAsync();
+      const res = await curateNow.mutateAsync({
+        category: aiCategory,
+        count: aiCount,
+      });
       setAiSuccessCount(res.count);
       void utils.admin.posts.invalidate();
       setTimeout(() => navigate("/admin"), 1500);
@@ -216,9 +228,26 @@ export function NewPostPage() {
       {mode === "pdf" && !editId && (
         <section className="table-card image-upload-card" style={{ padding: "2rem" }}>
           <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><FileText size={20} /> Upload Multi-Story PDF or Image Document</h3>
-          <p className="muted" style={{ marginBottom: "1.5rem" }}>
+          <p className="muted" style={{ marginBottom: "1.25rem" }}>
             Falke AI will scan your PDF document or image card screenshot, extract up to 20+ distinct news stories, attach high-resolution cover imagery, and bulk-save them as drafts in your newsroom inbox.
           </p>
+
+          <div style={{ marginBottom: "1.25rem" }}>
+            <label className="field-label" htmlFor="pdf-category-override">Category Override <span className="field-help">(Optional)</span></label>
+            <select
+              id="pdf-category-override"
+              className="text-input"
+              value={pdfCategory}
+              onChange={e => setPdfCategory(e.target.value as ByteCategory | "")}
+              style={{ maxWidth: "320px" }}
+              disabled={pdfUploading}
+            >
+              <option value="">Auto-Detect / Multi-Category</option>
+              {BYTE_CATEGORIES.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
 
           {pdfSuccessCount !== null ? (
             <div style={{ background: "rgba(16, 185, 129, 0.1)", border: "1px solid #10b981", padding: "1.5rem", borderRadius: "8px", color: "#10b981", display: "flex", alignItems: "center", gap: "1rem" }}>
@@ -245,16 +274,49 @@ export function NewPostPage() {
 
       {mode === "ai" && !editId && (
         <section className="table-card" style={{ padding: "2rem" }}>
-          <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><Sparkles size={20} /> Falke AI 10-Byte Daily Curation Drop</h3>
-          <p className="muted" style={{ marginBottom: "1.5rem" }}>
-            Click below to immediately trigger Falke AI. It will analyze current technology, AI, science, and world developments to generate 10 fresh Bytes with high-resolution photos.
+          <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><Sparkles size={20} /> Falke AI Automated Curation</h3>
+          <p className="muted" style={{ marginBottom: "1.25rem" }}>
+            Select your desired target category and batch count. Falke AI will analyze current verified developments across dedicated category wire feeds to generate publication-ready Bytes with high-resolution imagery.
           </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
+            <div>
+              <label className="field-label" htmlFor="ai-target-cat">Target Category</label>
+              <select
+                id="ai-target-cat"
+                className="text-input"
+                value={aiCategory}
+                onChange={e => setAiCategory(e.target.value as ByteCategory | "All")}
+                disabled={aiRunning}
+              >
+                <option value="All">All Categories (Balanced Mix)</option>
+                {BYTE_CATEGORIES.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="field-label" htmlFor="ai-batch-count">Batch Count</label>
+              <select
+                id="ai-batch-count"
+                className="text-input"
+                value={aiCount}
+                onChange={e => setAiCount(Number(e.target.value))}
+                disabled={aiRunning}
+              >
+                <option value={5}>5 Bytes</option>
+                <option value={10}>10 Bytes (Standard Drop)</option>
+                <option value={15}>15 Bytes</option>
+                <option value={20}>20 Bytes</option>
+              </select>
+            </div>
+          </div>
 
           {aiSuccessCount !== null ? (
             <div style={{ background: "rgba(16, 185, 129, 0.1)", border: "1px solid #10b981", padding: "1.5rem", borderRadius: "8px", color: "#10b981", display: "flex", alignItems: "center", gap: "1rem" }}>
               <CheckCircle2 size={24} />
               <div>
-                <strong>Successfully curated {aiSuccessCount} fresh Bytes!</strong>
+                <strong>Successfully curated {aiSuccessCount} fresh {aiCategory === "All" ? "" : aiCategory} Bytes!</strong>
                 <p style={{ margin: 0, fontSize: "0.9rem" }}>Redirecting to Publishing Inbox...</p>
               </div>
             </div>
@@ -266,7 +328,7 @@ export function NewPostPage() {
               disabled={aiRunning}
               style={{ padding: "1rem", fontSize: "1.05rem" }}
             >
-              <Sparkles size={18} /> {aiRunning ? "Falke AI is curating 10 Bytes..." : "Run 10-Byte Falke AI Curation Drop Now"}
+              <Sparkles size={18} /> {aiRunning ? `Falke AI is curating ${aiCount} ${aiCategory === "All" ? "" : aiCategory} Bytes...` : `Curate ${aiCount} ${aiCategory === "All" ? "" : aiCategory} Bytes Now`}
             </button>
           )}
 
@@ -303,6 +365,23 @@ export function NewPostPage() {
           </section>
 
           <section className="table-card new-post-fields">
+            <div style={{ marginBottom: "1.25rem" }}>
+              <label className="field-label">Category</label>
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.25rem" }}>
+                {BYTE_CATEGORIES.map(cat => (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={`button ${category === cat ? "" : "button-outline"} button-small`}
+                    onClick={() => setCategory(cat)}
+                    style={{ borderRadius: "999px" }}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <label className="field-label" htmlFor="headline">Headline</label>
             <input
               id="headline"
@@ -376,6 +455,13 @@ export function PreviewPage() {
   const [scheduleTime, setScheduleTime] = useState("");
   const [rejectionNote, setRejectionNote] = useState("");
   const [error, setError] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<ByteCategory>("Tech");
+
+  useEffect(() => {
+    if (post.data?.category) {
+      setSelectedCategory(normalizeByteCategory(post.data.category));
+    }
+  }, [post.data?.category]);
 
   if (session.isLoading || post.isLoading) return <main className="auth-wrap"><p className="muted">Loading preview…</p></main>;
   if (!session.data || !post.data || !params) return <NotFound />;
@@ -394,8 +480,8 @@ export function PreviewPage() {
     if (!scheduleTime) { setError("Choose a specific date and time first."); return; }
     const time = new Date(scheduleTime);
     if (time <= new Date()) { setError("Scheduled time must be in the future."); return; }
-    if (approvePending) approve.mutate({ id, scheduledTime: time });
-    else schedule.mutate({ id, scheduledTime: time });
+    if (approvePending) approve.mutate({ id, scheduledTime: time, category: selectedCategory });
+    else schedule.mutate({ id, scheduledTime: time, category: selectedCategory });
   }
 
   return (
@@ -420,13 +506,50 @@ export function PreviewPage() {
           />
         )}
         <div className="wysiwyg-copy">
-          <p className="eyebrow">Aurikrex Bytes</p>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+            <span
+              style={{
+                fontSize: "0.75rem",
+                textTransform: "uppercase",
+                padding: "0.2rem 0.6rem",
+                borderRadius: "999px",
+                fontWeight: 700,
+                background: "rgba(59, 130, 246, 0.15)",
+                color: "var(--color-primary, #3b82f6)",
+                border: "1px solid rgba(59, 130, 246, 0.3)",
+              }}
+            >
+              {selectedCategory}
+            </span>
+            <span className="eyebrow" style={{ margin: 0 }}>Aurikrex Bytes</span>
+          </div>
           <h2>{item.headline}</h2>
           <FormattedBody body={item.body} />
         </div>
       </div>
       <div className="preview-controls">
-        <Link className="outline-button" href={`/admin/new/${id}`}>Edit</Link>
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "center", marginBottom: "1rem" }}>
+          <Link className="outline-button" href={`/admin/new/${id}`}>Edit Content</Link>
+
+          <div style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+            <label htmlFor="preview-category" style={{ fontSize: "0.9rem", fontWeight: 600, margin: 0 }}>
+              Category:
+            </label>
+            <select
+              id="preview-category"
+              className="text-input"
+              style={{ width: "auto", minWidth: "150px", padding: "0.35rem 0.65rem", fontSize: "0.9rem" }}
+              value={selectedCategory}
+              onChange={e => setSelectedCategory(normalizeByteCategory(e.target.value))}
+              disabled={busy}
+            >
+              {BYTE_CATEGORIES.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         {error && <p className="inline-error">{error}</p>}
         {isReview && (
           <div className="review-note">
@@ -451,7 +574,7 @@ export function PreviewPage() {
                   <input type="datetime-local" value={scheduleTime} onChange={event => setScheduleTime(event.target.value)} />
                 </label>
                 <button className="button preview-action" disabled={busy} onClick={() => run(() => schedulePost(true))}>Approve &amp; Schedule</button>
-                <button className="button preview-action" disabled={busy} onClick={() => run(() => approve.mutate({ id }))}>Approve &amp; Publish Now</button>
+                <button className="button preview-action" disabled={busy} onClick={() => run(() => approve.mutate({ id, category: selectedCategory }))}>Approve &amp; Publish Now</button>
                 <button className="save-draft-button reject-button" disabled={busy} onClick={() => run(() => reject.mutate({ id, rejectionNote: rejectionNote || undefined }))}>Reject</button>
               </>
             ) : isAdmin ? (
@@ -461,7 +584,7 @@ export function PreviewPage() {
                   <input type="datetime-local" value={scheduleTime} onChange={event => setScheduleTime(event.target.value)} />
                 </label>
                 <button className="button preview-action" disabled={busy} onClick={() => run(() => schedulePost(false))}>Schedule</button>
-                <button className="button preview-action" disabled={busy} onClick={() => run(() => publish.mutate({ id }))}>Publish Now</button>
+                <button className="button preview-action" disabled={busy} onClick={() => run(() => publish.mutate({ id, category: selectedCategory }))}>Publish Now</button>
               </>
             ) : (
               <button className="button preview-action" disabled={busy} onClick={() => run(() => submit.mutate({ id }))}>Submit for Review</button>

@@ -51,6 +51,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
 import Seo from "@/components/Seo";
 import { FormattedBody, FormattedInlineText } from "@/components/FormattedBody";
+import { BYTE_CATEGORIES, type ByteCategory, normalizeByteCategory } from "@shared/const";
 
 const getInitial = (nameOrEmail?: string | null) => {
   if (!nameOrEmail) return "U";
@@ -979,6 +980,22 @@ function PostCard({
         </div>
         <div className="post-card-body">
           <div className="post-meta">
+            {post.category && (
+              <>
+                <span
+                  style={{
+                    fontWeight: 700,
+                    fontSize: "0.72rem",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.5px",
+                    color: "var(--blue, #3b82f6)",
+                  }}
+                >
+                  {normalizeByteCategory(post.category)}
+                </span>
+                <span>·</span>
+              </>
+            )}
             <span>{formatDate(post.publishedTime)}</span>
             <span>·</span>
             <span>4 min read</span>
@@ -1448,6 +1465,7 @@ export function ReaderDashboard() {
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
   const utils = trpc.useUtils();
   const [tab, setTab] = useState<"today" | "all">("today");
+  const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [viewMode, setViewMode] = useState<FeedViewMode>(getInitialFeedViewMode);
   const [preferenceHydrated, setPreferenceHydrated] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -1474,12 +1492,18 @@ export function ReaderDashboard() {
   );
   const rawPosts = tab === "today" ? todayPosts : data?.allPosts ?? [];
   const posts = useMemo(() => {
-    if (tab !== "all" || !dashboardSearch.trim()) return rawPosts;
-    const q = dashboardSearch.toLowerCase();
-    return rawPosts.filter((p: any) =>
-      p.headline?.toLowerCase().includes(q) || p.body?.toLowerCase().includes(q)
-    );
-  }, [rawPosts, tab, dashboardSearch]);
+    let list = rawPosts;
+    if (categoryFilter !== "All") {
+      list = list.filter((p: any) => normalizeByteCategory(p.category) === categoryFilter);
+    }
+    if (tab === "all" && dashboardSearch.trim()) {
+      const q = dashboardSearch.toLowerCase();
+      list = list.filter((p: any) =>
+        p.headline?.toLowerCase().includes(q) || p.body?.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [rawPosts, tab, dashboardSearch, categoryFilter]);
 
   useEffect(() => {
     if (!session.isLoading && !session.data) navigate("/login");
@@ -1567,6 +1591,26 @@ export function ReaderDashboard() {
               </div>
             </div>
           </div>
+
+          <div className="brand-filter-chips category-dashboard-chips" role="group" aria-label="Category filters" style={{ marginTop: "12px", marginBottom: "16px" }}>
+            <button
+              type="button"
+              className={`brand-chip ${categoryFilter === "All" ? "active" : ""}`}
+              onClick={() => setCategoryFilter("All")}
+            >
+              All Categories
+            </button>
+            {BYTE_CATEGORIES.map(cat => (
+              <button
+                key={cat}
+                type="button"
+                className={`brand-chip ${categoryFilter === cat ? "active" : ""}`}
+                onClick={() => setCategoryFilter(cat)}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
           {tab === "all" && (
             <div style={{ marginTop: "16px", marginBottom: "20px" }}>
               <div className="search-wrap">
@@ -1634,10 +1678,12 @@ const BRAND_TAGS = ["All", "Apple", "Google", "AI", "Nvidia", "Microsoft", "Meta
 
 export function Archive() {
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<string>("All");
   const [page, setPage] = useState(1);
 
   const archive = trpc.publicPosts.archive.useQuery({
     query,
+    category: category !== "All" ? category : undefined,
     page,
     pageSize: 12,
   });
@@ -1680,6 +1726,33 @@ export function Archive() {
           )}
         </div>
 
+        {/* Category Filter Chips */}
+        <div className="brand-filter-chips category-archive-chips" role="group" aria-label="Category filters" style={{ marginBottom: "0.5rem" }}>
+          <button
+            type="button"
+            className={`brand-chip ${category === "All" ? "active" : ""}`}
+            onClick={() => {
+              setCategory("All");
+              setPage(1);
+            }}
+          >
+            All Categories
+          </button>
+          {BYTE_CATEGORIES.map(cat => (
+            <button
+              key={cat}
+              type="button"
+              className={`brand-chip ${category === cat ? "active" : ""}`}
+              onClick={() => {
+                setCategory(cat);
+                setPage(1);
+              }}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+
         <div className="brand-filter-chips" role="group" aria-label="Brand and trend quick filters">
           {BRAND_TAGS.map(tag => {
             const isActive = tag === "All" ? !query : query.toLowerCase() === tag.toLowerCase();
@@ -1699,12 +1772,12 @@ export function Archive() {
           })}
         </div>
 
-        {query && (
+        {(query || category !== "All") && (
           <div className="search-results-info">
             <span>
-              Showing results for <strong>"{query}"</strong>
+              Showing results {category !== "All" ? <>in <strong>{category}</strong> </> : ""}{query ? <>for <strong>"{query}"</strong></> : ""}
             </span>
-            <button className="text-button" onClick={() => { setQuery(""); setPage(1); }}>
+            <button className="text-button" onClick={() => { setQuery(""); setCategory("All"); setPage(1); }}>
               Clear filter
             </button>
           </div>
@@ -2089,6 +2162,22 @@ export function PostDetail() {
             </button>
             <div className="detail-meta">
               <span className="eyebrow">Aurikrex Bytes</span>
+              {post.data.category && (
+                <>
+                  <span
+                    style={{
+                      fontWeight: 700,
+                      fontSize: "0.75rem",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.5px",
+                      color: "var(--blue, #3b82f6)",
+                    }}
+                  >
+                    {normalizeByteCategory(post.data.category)}
+                  </span>
+                  <span>·</span>
+                </>
+              )}
               <span>{formatDate(post.data.publishedTime)} · 4 min read</span>
             </div>
             <h1>{post.data.headline}</h1>

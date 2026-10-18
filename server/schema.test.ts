@@ -14,4 +14,18 @@ describe("Aurikrex Bytes schema", () => {
     expect(POST_STATUSES).toEqual(["draft", "pending_review", "scheduled", "published"]);
     expect(ADMIN_ROLES).toEqual(["admin", "editor"]);
   });
+
+  it("defines the 5 canonical byte categories and normalizer", async () => {
+    const { BYTE_CATEGORIES, normalizeByteCategory } = await import("../shared/const.js");
+    expect(BYTE_CATEGORIES).toEqual(["Tech", "Medicine", "Sports", "Geopolitics", "Science"]);
+    expect(normalizeByteCategory("Tech")).toBe("Tech");
+    expect(normalizeByteCategory("medicine")).toBe("Medicine");
+    expect(normalizeByteCategory("SPORTS")).toBe("Sports");
+    expect(normalizeByteCategory("geopolitics")).toBe("Geopolitics");
+    expect(normalizeByteCategory("science")).toBe("Science");
+    // Legacy mapping to Tech
+    expect(normalizeByteCategory("AI")).toBe("Tech");
+    expect(normalizeByteCategory("Crypto")).toBe("Tech");
+    expect(normalizeByteCategory("unknown")).toBe("Tech");
+  });
 });

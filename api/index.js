@@ -8,10 +8,70 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// shared/const.ts
+function normalizeByteCategory(raw) {
+  if (!raw) return "Tech";
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === "tech" || lower === "technology" || lower === "ai" || lower === "crypto" || lower === "innovation") {
+    return "Tech";
+  }
+  if (lower === "medicine" || lower === "health" || lower === "biotech" || lower === "pharma") {
+    return "Medicine";
+  }
+  if (lower === "sports" || lower === "sport") {
+    return "Sports";
+  }
+  if (lower === "geopolitics" || lower === "politics" || lower === "world" || lower === "global") {
+    return "Geopolitics";
+  }
+  if (lower === "science" || lower === "space" || lower === "physics") {
+    return "Science";
+  }
+  for (const cat of BYTE_CATEGORIES) {
+    if (cat.toLowerCase() === lower) return cat;
+  }
+  return "Tech";
+}
+var COOKIE_NAME, ONE_YEAR_MS, AXIOS_TIMEOUT_MS, UNAUTHED_ERR_MSG, NOT_ADMIN_ERR_MSG, OAUTH_STATE_COOKIE, decodeOAuthState, BYTE_CATEGORIES;
+var init_const = __esm({
+  "shared/const.ts"() {
+    "use strict";
+    COOKIE_NAME = "app_session_id";
+    ONE_YEAR_MS = 1e3 * 60 * 60 * 24 * 365;
+    AXIOS_TIMEOUT_MS = 3e4;
+    UNAUTHED_ERR_MSG = "Please login (10001)";
+    NOT_ADMIN_ERR_MSG = "You do not have required permission (10002)";
+    OAUTH_STATE_COOKIE = "__Host-oauth_state";
+    decodeOAuthState = (state) => {
+      let decoded;
+      try {
+        decoded = atob(state);
+      } catch {
+        return { redirectUri: "" };
+      }
+      try {
+        const parsed = JSON.parse(decoded);
+        if (parsed && typeof parsed.redirectUri === "string") return parsed;
+      } catch {
+      }
+      return { redirectUri: decoded };
+    };
+    BYTE_CATEGORIES = [
+      "Tech",
+      "Medicine",
+      "Sports",
+      "Geopolitics",
+      "Science"
+    ];
+  }
+});
+
 // drizzle/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
   ADMIN_ROLES: () => ADMIN_ROLES,
+  BYTE_CATEGORIES: () => BYTE_CATEGORIES,
   POST_STATUSES: () => POST_STATUSES,
   adminUsers: () => adminUsers,
   oneSignalSubscriptions: () => oneSignalSubscriptions,
@@ -30,6 +90,7 @@ var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postView
 var init_schema = __esm({
   "drizzle/schema.ts"() {
     "use strict";
+    init_const();
     now = () => /* @__PURE__ */ new Date();
     POST_STATUSES = [
       "draft",
@@ -357,6 +418,10 @@ async function repairVerifiedNewsSchema(db) {
     console.info(`[Database] Applied missing posts.${name} column`);
   }
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS posts_duplicate_key_unique ON posts (duplicate_key)"));
+  try {
+    await db.run(sql.raw("UPDATE posts SET category = 'Tech' WHERE category IS NULL OR category = '' OR category IN ('AI', 'Innovation', 'Crypto')"));
+  } catch {
+  }
 }
 async function repairSystemSettingsSchema(db) {
   await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS system_settings (
@@ -539,6 +604,7 @@ async function listPublishedPosts(readerId) {
     headline: posts.headline,
     body: posts.body,
     imageUrl: posts.imageUrl,
+    category: posts.category,
     publishedTime: posts.publishedTime,
     updatedAt: posts.updatedAt
   }).from(posts).where(eq(posts.status, "published")).orderBy(desc(posts.publishedTime), desc(posts.id));
@@ -659,13 +725,14 @@ async function listSavedPosts(readerId) {
     headline: posts.headline,
     body: posts.body,
     imageUrl: posts.imageUrl,
+    category: posts.category,
     publishedTime: posts.publishedTime,
     updatedAt: posts.updatedAt,
     savedAt: postBookmarks.createdAt
   }).from(postBookmarks).innerJoin(posts, eq(posts.id, postBookmarks.postId)).where(and(eq(postBookmarks.readerId, readerId), eq(posts.status, "published"))).orderBy(desc(postBookmarks.createdAt));
   return addEngagement(rows, readerId);
 }
-async function searchPublishedPosts(query, page, pageSize) {
+async function searchPublishedPosts(query, page, pageSize, category) {
   const db = await getDb();
   if (!db) return { posts: [], nextPage: null };
   const normalizedQuery = query.trim().toLowerCase();
@@ -675,7 +742,12 @@ async function searchPublishedPosts(query, page, pageSize) {
     like(posts.category, `%${normalizedQuery}%`),
     like(posts.sourcePublisher, `%${normalizedQuery}%`)
   ) : void 0;
-  const where = search ? and(eq(posts.status, "published"), search) : eq(posts.status, "published");
+  const conditions = [eq(posts.status, "published")];
+  if (search) conditions.push(search);
+  if (category && category !== "All") {
+    conditions.push(eq(posts.category, normalizeByteCategory(category)));
+  }
+  const where = and(...conditions);
   const rows = await db.select().from(posts).where(where).orderBy(desc(posts.publishedTime), desc(posts.id)).limit(pageSize + 1).offset((page - 1) * pageSize);
   return {
     posts: await addEngagement(rows.slice(0, pageSize)),
@@ -758,6 +830,7 @@ async function createIngestedPost(input) {
   const [created] = await db.insert(posts).values({
     headline: input.headline,
     body: input.body,
+    category: normalizeByteCategory(input.category),
     imageUrl: input.imageUrl || null,
     status,
     scheduledTime: input.scheduledTime || null,
@@ -797,6 +870,7 @@ var init_db = __esm({
     init_env();
     init_streak();
     init_auth();
+    init_const();
     _db = null;
     _schemaRepair = null;
   }
@@ -1347,6 +1421,7 @@ var init_imageGeneration = __esm({
 // server/_core/aiCurator.ts
 var aiCurator_exports = {};
 __export(aiCurator_exports, {
+  CATEGORY_FEEDS: () => CATEGORY_FEEDS,
   buildDuplicateKey: () => buildDuplicateKey,
   canonicalizeUrl: () => canonicalizeUrl,
   clampEditorialBrief: () => clampEditorialBrief,
@@ -1449,6 +1524,8 @@ function cleanHeadline(title) {
   return cleaned;
 }
 function generateEditorialSvgCard(headline, category = "Tech") {
+  const normCat = normalizeByteCategory(category);
+  const palette = CATEGORY_PALETTES[normCat] || CATEGORY_PALETTES.Tech;
   const safeHeadline = cleanHeadline(headline).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const words = safeHeadline.split(" ");
   const lines = [];
@@ -1471,23 +1548,23 @@ function generateEditorialSvgCard(headline, category = "Tech") {
       <stop offset="100%" stop-color="#141c2e" />
     </linearGradient>
     <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#3b82f6" />
-      <stop offset="100%" stop-color="#60a5fa" />
+      <stop offset="0%" stop-color="${palette.accent1}" />
+      <stop offset="100%" stop-color="${palette.accent2}" />
     </linearGradient>
   </defs>
   <rect width="1200" height="630" fill="url(#bg)" />
   <circle cx="1100" cy="100" r="300" fill="#1e293b" opacity="0.35" />
-  <circle cx="1100" cy="100" r="200" fill="#2563eb" opacity="0.08" />
+  <circle cx="1100" cy="100" r="200" fill="${palette.circle}" opacity="0.12" />
   <g transform="translate(80, 90)">
-    <rect x="0" y="0" width="130" height="34" rx="17" fill="url(#accent)" />
-    <text x="65" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle" letter-spacing="1">${category.toUpperCase()}</text>
+    <rect x="0" y="0" width="${Math.max(130, normCat.length * 14 + 40)}" height="34" rx="17" fill="url(#accent)" />
+    <text x="${Math.max(65, (normCat.length * 14 + 40) / 2)}" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle" letter-spacing="1">${normCat.toUpperCase()}</text>
   </g>
   <text x="80" y="240" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, serif" font-size="44" font-weight="700" fill="#f8fafc" letter-spacing="-0.5">
     ${tspans}
   </text>
   <g transform="translate(80, 530)">
-    <circle cx="10" cy="-6" r="6" fill="#3b82f6" />
-    <text x="28" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="600" fill="#94a3b8" letter-spacing="0.5">AURIKREX BYTES &bull; VERIFIED TECH BRIEFING</text>
+    <circle cx="10" cy="-6" r="6" fill="${palette.accent1}" />
+    <text x="28" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="600" fill="#94a3b8" letter-spacing="0.5">${palette.label}</text>
   </g>
 </svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
@@ -1538,18 +1615,23 @@ async function extractSourceArticleImage(url) {
     return null;
   }
 }
-async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new Set()) {
-  const feeds = [
-    { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
-    { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" },
-    { name: "TechCrunch", url: "https://techcrunch.com/feed/" },
-    { name: "Wired", url: "https://www.wired.com/feed/rss" },
-    { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
-    { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
-    { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" }
-  ];
+async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new Set(), targetCategory) {
+  const feedsToFetch = [];
+  if (targetCategory && targetCategory !== "All") {
+    const list = CATEGORY_FEEDS[targetCategory] || [];
+    for (const f of list) {
+      feedsToFetch.push({ ...f, category: targetCategory });
+    }
+  } else {
+    for (const cat of BYTE_CATEGORIES) {
+      const list = CATEGORY_FEEDS[cat] || [];
+      for (const f of list.slice(0, 3)) {
+        feedsToFetch.push({ ...f, category: cat });
+      }
+    }
+  }
   const results = [];
-  for (const feed of feeds) {
+  for (const feed of feedsToFetch) {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4e3);
@@ -1583,7 +1665,8 @@ async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new 
           publisher: feed.name,
           publishedAt,
           duplicateKey,
-          imageUrl: mediaUrl
+          imageUrl: mediaUrl,
+          category: feed.category
         });
       }
     } catch (e) {
@@ -1592,15 +1675,15 @@ async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new 
   }
   return results;
 }
-async function fetchCandidatesForTimeframe(start, end, excludeKeys = /* @__PURE__ */ new Set()) {
+async function fetchCandidatesForTimeframe(start, end, excludeKeys = /* @__PURE__ */ new Set(), targetCategory) {
   const startSec = Math.floor(start.getTime() / 1e3);
   const endSec = Math.floor(end.getTime() / 1e3);
-  const hnQueries = [
+  const shouldFetchHn = !targetCategory || targetCategory === "All" || targetCategory === "Tech";
+  const hnQueries = shouldFetchHn ? [
     `tags=front_page&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=35`,
     `query=AI%20OR%20LLM&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
-    `query=chip%20OR%20semiconductor%20OR%20security&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
-    `query=cloud%20OR%20database%20OR%20open%20source&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`
-  ];
+    `query=chip%20OR%20semiconductor%20OR%20security&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`
+  ] : [];
   const hnPromises = hnQueries.map(async (queryParams) => {
     try {
       const response = await fetch(`https://hn.algolia.com/api/v1/search?${queryParams}`);
@@ -1612,7 +1695,7 @@ async function fetchCandidatesForTimeframe(start, end, excludeKeys = /* @__PURE_
   });
   const [hnResults, rssCandidates] = await Promise.all([
     Promise.all(hnPromises),
-    fetchRssCandidates(start, end, excludeKeys)
+    fetchRssCandidates(start, end, excludeKeys, targetCategory)
   ]);
   const candidates = /* @__PURE__ */ new Map();
   for (const item of rssCandidates) {
@@ -1637,21 +1720,22 @@ async function fetchCandidatesForTimeframe(start, end, excludeKeys = /* @__PURE_
           publisher: publisherFromUrl(url),
           publishedAt,
           duplicateKey,
-          imageUrl: null
+          imageUrl: null,
+          category: "Tech"
         });
       }
     }
   }
-  return Array.from(candidates.values()).sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime()).slice(0, 30);
+  return Array.from(candidates.values()).sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime()).slice(0, 40);
 }
-async function fetchTodayCandidates(excludeKeys = /* @__PURE__ */ new Set()) {
+async function fetchTodayCandidates(excludeKeys = /* @__PURE__ */ new Set(), targetCategory) {
   const now2 = /* @__PURE__ */ new Date();
   const { start, end } = getTodayWindow(now2);
-  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys);
-  if (candidates.length < 15) {
+  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys, targetCategory);
+  if (candidates.length < 10) {
     const past72h = new Date(now2.getTime() - 72 * 3600 * 1e3);
-    console.info(`[AICurator] Found ${candidates.length} uncurated candidates today. Expanding search window to 72 hours...`);
-    candidates = await fetchCandidatesForTimeframe(past72h, now2, excludeKeys);
+    console.info(`[AICurator] Found ${candidates.length} uncurated candidates for ${targetCategory || "All"}. Expanding window to 72 hours...`);
+    candidates = await fetchCandidatesForTimeframe(past72h, now2, excludeKeys, targetCategory);
   }
   return candidates;
 }
@@ -1773,8 +1857,9 @@ function parseAiJsonResponse(rawJson) {
   }
   return objects;
 }
-async function generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey) {
-  const prompt = `You are the executive tech editor for Aurikrex Bytes.
+async function generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey, targetCategory) {
+  const chosenCat = targetCategory || candidate.category || "Tech";
+  const prompt = `You are the executive editor for Aurikrex Bytes specializing in ${chosenCat}.
 Write an authoritative, high-signal 3-paragraph editorial brief for this verified news story.
 
 STORY DETAILS:
@@ -1785,17 +1870,17 @@ STORY DETAILS:
 EDITORIAL RULES:
 1. Base your brief strictly on the candidate facts. Do NOT hallucinate fake dates or fake benchmarks.
 2. Structure into three concise, focused paragraphs:
-   - Paragraph 1 (The Lead): The core event, company, breakthrough, or incident and key technical details.
-   - Paragraph 2 (Why It Matters): Strategic industry impact, architectural implications, market effects, or infrastructure changes.
-   - Paragraph 3 (The Outlook): What happens next, timeline, release dates, or key metrics to watch.
+   - Paragraph 1 (The Lead): The core event, company/entity, breakthrough, or incident and key details.
+   - Paragraph 2 (Why It Matters): Strategic industry impact, architectural implications, market effects, or clinical/global consequences.
+   - Paragraph 3 (The Outlook): What happens next, timeline, upcoming milestones, or key metrics to watch.
 3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 550 and 750 characters.
 4. Headline: Crisp, punchy, active voice, under 90 characters. Never include publisher names or tags like "Show HN:".
-5. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
+5. Category: Choose the single best fit from ["Tech", "Medicine", "Sports", "Geopolitics", "Science"].
 6. Return a valid JSON object ONLY:
    {
      "headline": "Crisp Headline under 90 chars",
      "body": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...",
-     "category": "Tech"
+     "category": "${chosenCat}"
    }`;
   if (mistralKey) {
     const mistralModels = ["mistral-small-latest", "open-mixtral-8x7b", "open-mistral-7b"];
@@ -1812,7 +1897,7 @@ EDITORIAL RULES:
             model,
             response_format: { type: "json_object" },
             messages: [
-              { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+              { role: "system", content: "You are an executive editor for Aurikrex Bytes. Output valid JSON only." },
               { role: "user", content: prompt }
             ],
             temperature: 0.3,
@@ -1828,7 +1913,7 @@ EDITORIAL RULES:
             const headline = extractAiHeadline(item, candidate.title);
             const rawBody = extractAiBody(item);
             const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
+            const category = normalizeByteCategory(chosenCat || item.category || candidate.category);
             if (headline && body && body.length > 100) {
               return { headline, body, category };
             }
@@ -1859,7 +1944,7 @@ EDITORIAL RULES:
             body: JSON.stringify({
               model,
               messages: [
-                { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+                { role: "system", content: "You are an executive editor for Aurikrex Bytes. Output valid JSON only." },
                 { role: "user", content: prompt }
               ],
               temperature: 0.3,
@@ -1875,7 +1960,7 @@ EDITORIAL RULES:
               const headline = extractAiHeadline(item, candidate.title);
               const rawBody = extractAiBody(item);
               const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
+              const category = normalizeByteCategory(chosenCat || item.category || candidate.category);
               if (headline && body && body.length > 100) {
                 return { headline, body, category };
               }
@@ -1901,7 +1986,7 @@ EDITORIAL RULES:
             },
             body: JSON.stringify({
               messages: [
-                { role: "system", content: "You are an executive tech editor for Aurikrex Bytes. Output valid JSON only." },
+                { role: "system", content: "You are an executive editor for Aurikrex Bytes. Output valid JSON only." },
                 { role: "user", content: prompt }
               ],
               max_tokens: 1e3
@@ -1916,7 +2001,7 @@ EDITORIAL RULES:
               const headline = extractAiHeadline(item, candidate.title);
               const rawBody = extractAiBody(item);
               const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
+              const category = normalizeByteCategory(chosenCat || item.category || candidate.category);
               if (headline && body && body.length > 100) {
                 return { headline, body, category };
               }
@@ -1929,10 +2014,12 @@ EDITORIAL RULES:
   }
   return null;
 }
-async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdentifier) {
+async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdentifier, options) {
+  const targetCategory = options?.category && options.category !== "All" ? options.category : void 0;
+  const maxCount = Math.min(Math.max(options?.count || 10, 1), 30);
   let candidates;
   try {
-    candidates = await fetchTodayCandidates(excludeKeys);
+    candidates = await fetchTodayCandidates(excludeKeys, options?.category);
   } catch (error) {
     console.error("[AICurator] News candidate retrieval failed", error);
     return [];
@@ -1965,13 +2052,13 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdent
   const seen = /* @__PURE__ */ new Set();
   const draftItems = [];
   const chunkSize = 3;
-  for (let i = 0; i < candidates.length && draftItems.length < 10; i += chunkSize) {
+  for (let i = 0; i < candidates.length && draftItems.length < maxCount; i += chunkSize) {
     const chunk = candidates.slice(i, i + chunkSize);
     const chunkResults = await Promise.all(
       chunk.map(async (candidate) => {
         if (seen.has(candidate.duplicateKey)) return null;
         seen.add(candidate.duplicateKey);
-        const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey);
+        const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey, targetCategory || candidate.category);
         if (!brief) return null;
         return {
           candidate,
@@ -1982,7 +2069,7 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdent
       })
     );
     for (const res of chunkResults) {
-      if (res && draftItems.length < 10) {
+      if (res && draftItems.length < maxCount) {
         draftItems.push(res);
       }
     }
@@ -2023,12 +2110,12 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdent
   console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
   return curatedBytes;
 }
-async function runNightlyCuration(status = "draft", userIdentifier) {
+async function runNightlyCuration(status = "draft", userIdentifier, options) {
   const db = await getDb();
   if (!db) return 0;
   const existingPosts = await db.select({ duplicateKey: posts.duplicateKey }).from(posts);
   const excludeKeys = new Set(existingPosts.map((p) => p.duplicateKey).filter((k) => Boolean(k)));
-  const bytes = await curateTenBytes(excludeKeys, userIdentifier);
+  const bytes = await curateTenBytes(excludeKeys, userIdentifier, options);
   if (!bytes.length) return 0;
   let count = 0;
   for (const byte of bytes) {
@@ -2058,6 +2145,7 @@ async function runNightlyCuration(status = "draft", userIdentifier) {
   console.info(`[AICurator] Added ${count} validated ${status} Bytes`);
   return count;
 }
+var CATEGORY_PALETTES, CATEGORY_FEEDS;
 var init_aiCurator = __esm({
   "server/_core/aiCurator.ts"() {
     "use strict";
@@ -2065,6 +2153,53 @@ var init_aiCurator = __esm({
     init_schema();
     init_aiKeys();
     init_imageGeneration();
+    init_const();
+    CATEGORY_PALETTES = {
+      Tech: { accent1: "#3b82f6", accent2: "#60a5fa", circle: "#2563eb", label: "AURIKREX BYTES &bull; TECH BRIEFING" },
+      Medicine: { accent1: "#10b981", accent2: "#34d399", circle: "#059669", label: "AURIKREX BYTES &bull; CLINICAL MEDICINE BRIEFING" },
+      Sports: { accent1: "#f59e0b", accent2: "#fbbf24", circle: "#d97706", label: "AURIKREX BYTES &bull; GLOBAL SPORTS DESK" },
+      Geopolitics: { accent1: "#e11d48", accent2: "#fb7185", circle: "#be123c", label: "AURIKREX BYTES &bull; WORLD GEOPOLITICS BRIEFING" },
+      Science: { accent1: "#8b5cf6", accent2: "#a78bfa", circle: "#7c3aed", label: "AURIKREX BYTES &bull; FRONTIER SCIENCE REPORT" }
+    };
+    CATEGORY_FEEDS = {
+      Tech: [
+        { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
+        { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" },
+        { name: "TechCrunch", url: "https://techcrunch.com/feed/" },
+        { name: "Wired", url: "https://www.wired.com/feed/rss" },
+        { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
+        { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
+        { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" }
+      ],
+      Medicine: [
+        { name: "ScienceDaily Health", url: "https://www.sciencedaily.com/rss/health_medicine.xml" },
+        { name: "STAT News", url: "https://www.statnews.com/feed/" },
+        { name: "MedicalXpress", url: "https://medicalxpress.com/rss-feed/" },
+        { name: "Fierce Biotech", url: "https://www.fiercebiotech.com/rss/xml" },
+        { name: "Nature Medicine", url: "https://www.nature.com/nm.rss" }
+      ],
+      Sports: [
+        { name: "BBC Sport", url: "https://feeds.bbci.co.uk/sport/rss.xml" },
+        { name: "ESPN Headlines", url: "https://www.espn.com/espn/rss/news" },
+        { name: "Sky Sports", url: "https://www.skysports.com/rss/12040" },
+        { name: "Yahoo Sports", url: "https://sports.yahoo.com/rss/" },
+        { name: "CBS Sports", url: "https://www.cbssports.com/rss/headlines/" }
+      ],
+      Geopolitics: [
+        { name: "BBC World", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+        { name: "Al Jazeera", url: "https://www.aljazeera.com/xml/rss/all.xml" },
+        { name: "Foreign Policy", url: "https://foreignpolicy.com/feed/" },
+        { name: "The Diplomat", url: "https://thediplomat.com/feed/" },
+        { name: "Defense One", url: "https://www.defenseone.com/rss/all/" }
+      ],
+      Science: [
+        { name: "ScienceDaily Science", url: "https://www.sciencedaily.com/rss/top/science.xml" },
+        { name: "Phys.org", url: "https://phys.org/rss-feed/" },
+        { name: "Nature", url: "https://www.nature.com/nature.rss" },
+        { name: "NASA Breaking News", url: "https://www.nasa.gov/news-release/feed/" },
+        { name: "Quanta Magazine", url: "https://api.quantamagazine.org/feed/" }
+      ]
+    };
   }
 });
 
@@ -2088,6 +2223,43 @@ async function getSharp() {
 }
 function extractEntityKicker(headline, category, source) {
   const h = headline.toLowerCase();
+  const normCat = normalizeByteCategory(category);
+  if (normCat === "Sports" || /football|soccer|nba|nfl|tennis|cricket|formula\s*1|f1|olympics|fifa|tournament|champion|trophy|match\b/.test(h)) {
+    return {
+      kicker: "SPORTS \u2022 GLOBAL DESK",
+      palette: {
+        bg1: "#1a1205",
+        bg2: "#2d1f08",
+        accent1: "#f59e0b",
+        accent2: "#fbbf24",
+        glow: "rgba(245, 158, 11, 0.22)"
+      }
+    };
+  }
+  if (normCat === "Medicine" || /cancer|clinical|vaccine|fda\b|drug|therapy|disease|genomics|hospital|patient|cardiac|pharma|surgery|biotech/.test(h)) {
+    return {
+      kicker: "MEDICINE \u2022 HEALTH & CLINICAL",
+      palette: {
+        bg1: "#061811",
+        bg2: "#0d2b1f",
+        accent1: "#10b981",
+        accent2: "#34d399",
+        glow: "rgba(16, 185, 129, 0.22)"
+      }
+    };
+  }
+  if (normCat === "Geopolitics" || /election|treaty|sanctions|nato|un\b|diplomacy|parliament|congress|president|minister|war\b|conflict|taiwan|ukraine|summit/.test(h)) {
+    return {
+      kicker: "GEOPOLITICS \u2022 WORLD DESK",
+      palette: {
+        bg1: "#1a080c",
+        bg2: "#2e0f17",
+        accent1: "#e11d48",
+        accent2: "#fb7185",
+        glow: "rgba(225, 29, 72, 0.22)"
+      }
+    };
+  }
   if (/deepseek|chatgpt|openai|claude|anthropic|perplexity|llm|agent|gpt|gemini|numbat|model/.test(h)) {
     let entity = "AI SYSTEMS";
     if (h.includes("deepseek")) entity = "DEEPSEEK \u2022 AI";
@@ -2122,10 +2294,9 @@ function extractEntityKicker(headline, category, source) {
       }
     };
   }
-  if (/satellite|orbit|moon|earth|space|cubesat|gaganyaan|astronaut|india|drug|aging|biological|cell|dna|physics/.test(h)) {
+  if (normCat === "Science" || /satellite|orbit|moon|earth|space|cubesat|gaganyaan|astronaut|india|drug|aging|biological|cell|dna|physics|telescope|astronomy|fusion/.test(h)) {
     let entity = "FRONTIER SCIENCE";
     if (h.includes("satellite") || h.includes("moon") || h.includes("orbit")) entity = "AEROSPACE \u2022 DEEP SPACE";
-    else if (h.includes("drug") || h.includes("aging") || h.includes("disease")) entity = "BIOTECH \u2022 LONGEVITY";
     else if (h.includes("astronaut") || h.includes("gaganyaan")) entity = "SPACE \u2022 MISSION CONTROL";
     return {
       kicker: entity,
@@ -2153,20 +2324,8 @@ function extractEntityKicker(headline, category, source) {
       }
     };
   }
-  if (/blockchain|crypto|token|harmony|ethereum|multisig|wallet|bitcoin/.test(h)) {
-    return {
-      kicker: "CRYPTO \u2022 INFRASTRUCTURE",
-      palette: {
-        bg1: "#0d131f",
-        bg2: "#192841",
-        accent1: "#6366f1",
-        accent2: "#a855f7",
-        glow: "rgba(99, 102, 241, 0.22)"
-      }
-    };
-  }
   return {
-    kicker: `${(category || "TECH").toUpperCase()} \u2022 VERIFIED REPORT`,
+    kicker: `${normCat.toUpperCase()} \u2022 VERIFIED REPORT`,
     palette: {
       bg1: "#0b0f19",
       bg2: "#141c2e",
@@ -2434,8 +2593,7 @@ function formatDraftStory(item, fallbackPageNum) {
   }
   const cleanTitle = cleanHeadline(String(item.headline || item.title || "")).slice(0, 119);
   if (!cleanTitle || cleanTitle.toLowerCase().includes("untitled")) return null;
-  const validCategories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
-  const category = validCategories.includes(String(item.category)) ? String(item.category) : "Tech";
+  const category = normalizeByteCategory(item.category);
   const source = item.source && String(item.source).trim() ? String(item.source).trim() : "Unknown";
   const finalBody = clampEditorialBrief(bodyText || cleanTitle, {
     publisher: source,
@@ -2451,8 +2609,8 @@ function formatDraftStory(item, fallbackPageNum) {
   };
 }
 async function extractStoryFromPageImage(pageImg, pageNum, totalPages, mistralKey, nvidiaKey, cfConfigs = []) {
-  const pagePrompt = `You are the executive technology editor for Aurikrex Bytes (https://bytes.aurikrex.com).
-Analyze this news story page from a technology briefing (Page ${pageNum} of ${totalPages}).
+  const pagePrompt = `You are the executive editor for Aurikrex Bytes (https://bytes.aurikrex.com).
+Analyze this news story page from a news briefing (Page ${pageNum} of ${totalPages}).
 
 Extract the news story into a valid JSON array with ONE story object:
 [
@@ -2461,12 +2619,12 @@ Extract the news story into a valid JSON array with ONE story object:
     "headline": "Crisp, active headline (maximum 119 characters)",
     "category": "Tech",
     "body": "The Lead: [what happened] Why It Matters: [implications] The Outlook: [next milestones]",
-    "source": "Publisher name (e.g. Reuters, TechCrunch, or Unknown)"
+    "source": "Publisher name (e.g. Reuters, BBC, STAT, ESPN, or Unknown)"
   }
 ]
 
 RULES:
-- "category" must be one of: "Tech", "AI", "Science", "Innovation", "Crypto".
+- "category" must be one of: "Tech", "Medicine", "Sports", "Geopolitics", "Science".
 - "body": Write a 3-part brief (The Lead, Why It Matters, The Outlook) targeting approximately 650-750 characters total.
 - Return ONLY the JSON array, no markdown fences, no extra text.`;
   if (mistralKey) {
@@ -2772,15 +2930,15 @@ async function parsePdfToBytes(pdfBase64OrText) {
       return resolvedBytes;
     }
   }
-  const promptText = `You are the executive technology editor for Aurikrex Bytes (https://bytes.aurikrex.com).
+  const promptText = `You are the executive editor for Aurikrex Bytes (https://bytes.aurikrex.com).
 Analyze the entire uploaded document.
 CRITICAL INSTRUCTION: The document contains multiple news stories across all pages (approximately 12 stories).
-Extract EVERY distinct technology, science, AI, crypto, or innovation news story found anywhere in the document into the JSON array.
+Extract EVERY distinct news story found anywhere in the document into the JSON array.
 Do not stop after 2 or 3 stories. Extract all distinct stories found.
 
 For each story, provide:
 - "headline": Crisp, active headline (maximum 119 characters).
-- "category": Choose from "Tech", "AI", "Science", "Innovation", "Crypto".
+- "category": Choose from "Tech", "Medicine", "Sports", "Geopolitics", "Science".
 - "body": A 3-part brief (The Lead: ..., Why It Matters: ..., The Outlook: ...) targeting approximately 650-750 characters total.
 - "source": Publisher name (or "Unknown").
 - "pageNumber": (1-based page index).
@@ -2972,6 +3130,7 @@ var init_pdfParser = __esm({
     init_services();
     init_aiKeys();
     init_imageGeneration();
+    init_const();
     cachedSharp = null;
   }
 });
@@ -3456,29 +3615,8 @@ import express from "express";
 import cors from "cors";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 
-// shared/const.ts
-var COOKIE_NAME = "app_session_id";
-var ONE_YEAR_MS = 1e3 * 60 * 60 * 24 * 365;
-var AXIOS_TIMEOUT_MS = 3e4;
-var UNAUTHED_ERR_MSG = "Please login (10001)";
-var NOT_ADMIN_ERR_MSG = "You do not have required permission (10002)";
-var OAUTH_STATE_COOKIE = "__Host-oauth_state";
-var decodeOAuthState = (state) => {
-  let decoded;
-  try {
-    decoded = atob(state);
-  } catch {
-    return { redirectUri: "" };
-  }
-  try {
-    const parsed = JSON.parse(decoded);
-    if (parsed && typeof parsed.redirectUri === "string") return parsed;
-  } catch {
-  }
-  return { redirectUri: decoded };
-};
-
 // server/_core/oauth.ts
+init_const();
 init_db();
 import { parse as parseCookieHeader2 } from "cookie";
 
@@ -3506,6 +3644,9 @@ function getFirstPartyCookieOptions(req) {
     secure: isSecureRequest(req)
   };
 }
+
+// server/_core/sdk.ts
+init_const();
 
 // shared/_core/errors.ts
 var HttpError = class extends Error {
@@ -3946,6 +4087,7 @@ init_auth();
 init_security();
 init_db();
 init_services();
+init_const();
 import { TRPCError as TRPCError4 } from "@trpc/server";
 import axios2 from "axios";
 import { and as and2, eq as eq3, inArray as inArray3 } from "drizzle-orm";
@@ -4038,6 +4180,7 @@ async function notifyOwner(payload) {
 }
 
 // server/_core/trpc.ts
+init_const();
 import { initTRPC, TRPCError as TRPCError2 } from "@trpc/server";
 import superjson from "superjson";
 var t = initTRPC.context().create({
@@ -4355,7 +4498,7 @@ var appRouter = router({
       z2.object({
         headline: z2.string().min(1).max(120),
         body: z2.string().min(1).max(800),
-        category: z2.string().optional(),
+        category: z2.enum(BYTE_CATEGORIES).optional(),
         imageUrl: z2.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").optional()
       })
     ).mutation(async ({ input, ctx }) => {
@@ -4369,21 +4512,34 @@ var appRouter = router({
         });
       const result = await db.insert(posts).values({
         ...input,
-        category: input.category || "Tech",
+        category: normalizeByteCategory(input.category || "Tech"),
         status: "draft",
         createdBy: admin.id,
         updatedAt: /* @__PURE__ */ new Date()
       });
       return { success: true, id: Number(result.lastInsertRowid) };
     }),
-    curateNow: publicProcedure.mutation(async ({ ctx }) => {
+    curateNow: publicProcedure.input(
+      z2.object({
+        category: z2.enum([...BYTE_CATEGORIES, "All"]).optional(),
+        count: z2.number().int().min(1).max(30).optional()
+      }).optional()
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:create");
       const { runNightlyCuration: runNightlyCuration2 } = await Promise.resolve().then(() => (init_aiCurator(), aiCurator_exports));
-      const count = await runNightlyCuration2("draft", admin.email);
+      const count = await runNightlyCuration2("draft", admin.email, {
+        category: input?.category,
+        count: input?.count
+      });
       return { success: true, count };
     }),
-    ingestPdf: publicProcedure.input(z2.object({ pdfContent: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
+    ingestPdf: publicProcedure.input(
+      z2.object({
+        pdfContent: z2.string().min(1),
+        category: z2.enum(BYTE_CATEGORIES).optional()
+      })
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:create");
       const { parsePdfToBytes: parsePdfToBytes2 } = await Promise.resolve().then(() => (init_pdfParser(), pdfParser_exports));
@@ -4396,7 +4552,7 @@ var appRouter = router({
         await db.insert(posts).values({
           headline: byte.headline,
           body: byte.body,
-          category: byte.category || "Tech",
+          category: input.category || normalizeByteCategory(byte.category || "Tech"),
           imageUrl: byte.imageUrl,
           status: "draft",
           createdBy: admin.id,
@@ -4411,7 +4567,7 @@ var appRouter = router({
         id: z2.number().int().positive(),
         headline: z2.string().min(1).optional(),
         body: z2.string().min(1).optional(),
-        category: z2.string().optional(),
+        category: z2.enum(BYTE_CATEGORIES).optional(),
         imageUrl: z2.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").nullable().optional()
       })
     ).mutation(async ({ input, ctx }) => {
@@ -4421,7 +4577,12 @@ var appRouter = router({
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
       const { id, ...changes } = input;
-      await db.update(posts).set({ ...changes, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, id));
+      const category = changes.category ? normalizeByteCategory(changes.category) : void 0;
+      await db.update(posts).set({
+        ...changes,
+        ...category ? { category } : {},
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq3(posts.id, id));
       return { success: true };
     }),
     deletePost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -4440,19 +4601,31 @@ var appRouter = router({
       await db.delete(posts).where(inArray3(posts.id, input.ids));
       return { success: true, count: input.ids.length };
     }),
-    batchPublishPosts: publicProcedure.input(z2.object({ ids: z2.array(z2.number().int().positive()).min(1) })).mutation(async ({ input, ctx }) => {
+    batchPublishPosts: publicProcedure.input(
+      z2.object({
+        ids: z2.array(z2.number().int().positive()).min(1),
+        category: z2.enum(BYTE_CATEGORIES).optional()
+      })
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:publish");
       const db = await getDb();
       if (!db) throw genericNotFound();
       const now2 = /* @__PURE__ */ new Date();
-      await db.update(posts).set({ status: "published", publishedTime: now2, updatedAt: now2 }).where(inArray3(posts.id, input.ids));
+      const category = input.category ? normalizeByteCategory(input.category) : void 0;
+      await db.update(posts).set({
+        status: "published",
+        publishedTime: now2,
+        ...category ? { category } : {},
+        updatedAt: now2
+      }).where(inArray3(posts.id, input.ids));
       return { success: true, count: input.ids.length };
     }),
     batchSchedulePosts: publicProcedure.input(
       z2.object({
         ids: z2.array(z2.number().int().positive()).min(1),
-        scheduledTime: z2.coerce.date()
+        scheduledTime: z2.coerce.date(),
+        category: z2.enum(BYTE_CATEGORIES).optional()
       })
     ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
@@ -4460,9 +4633,11 @@ var appRouter = router({
       const db = await getDb();
       if (!db) throw genericNotFound();
       const now2 = /* @__PURE__ */ new Date();
+      const category = input.category ? normalizeByteCategory(input.category) : void 0;
       await db.update(posts).set({
         status: "scheduled",
         scheduledTime: input.scheduledTime,
+        ...category ? { category } : {},
         updatedAt: now2
       }).where(inArray3(posts.id, input.ids));
       return { success: true, count: input.ids.length };
@@ -4481,17 +4656,24 @@ var appRouter = router({
       }).where(eq3(posts.id, input.id));
       return { success: true };
     }),
-    publishPost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
+    publishPost: publicProcedure.input(
+      z2.object({
+        id: z2.number().int().positive(),
+        category: z2.enum(BYTE_CATEGORIES).optional()
+      })
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:publish");
       const db = await getDb();
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
       assertPostTransition(admin.role, post.status, "published");
+      const category = input.category ? normalizeByteCategory(input.category) : void 0;
       await db.update(posts).set({
         status: "published",
         publishedTime: /* @__PURE__ */ new Date(),
         scheduledTime: null,
+        ...category ? { category } : {},
         updatedAt: /* @__PURE__ */ new Date()
       }).where(eq3(posts.id, input.id));
       return { success: true };
@@ -4499,7 +4681,8 @@ var appRouter = router({
     schedulePost: publicProcedure.input(
       z2.object({
         id: z2.number().int().positive(),
-        scheduledTime: z2.coerce.date()
+        scheduledTime: z2.coerce.date(),
+        category: z2.enum(BYTE_CATEGORIES).optional()
       })
     ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
@@ -4513,9 +4696,11 @@ var appRouter = router({
           code: "BAD_REQUEST",
           message: "scheduledTime must be in the future"
         });
+      const category = input.category ? normalizeByteCategory(input.category) : void 0;
       await db.update(posts).set({
         status: "scheduled",
         scheduledTime: input.scheduledTime,
+        ...category ? { category } : {},
         updatedAt: /* @__PURE__ */ new Date()
       }).where(eq3(posts.id, input.id));
       return { success: true };
@@ -4538,7 +4723,8 @@ var appRouter = router({
     approvePost: publicProcedure.input(
       z2.object({
         id: z2.number().int().positive(),
-        scheduledTime: z2.coerce.date().optional()
+        scheduledTime: z2.coerce.date().optional(),
+        category: z2.enum(BYTE_CATEGORIES).optional()
       })
     ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
@@ -4553,11 +4739,13 @@ var appRouter = router({
         });
       const next = input.scheduledTime ? "scheduled" : "published";
       assertPostTransition(admin.role, post.status, next);
+      const category = input.category ? normalizeByteCategory(input.category) : void 0;
       await db.update(posts).set({
         status: next,
         scheduledTime: input.scheduledTime ?? null,
         publishedTime: input.scheduledTime ? null : /* @__PURE__ */ new Date(),
         rejectionNote: null,
+        ...category ? { category } : {},
         updatedAt: /* @__PURE__ */ new Date()
       }).where(eq3(posts.id, input.id));
       return { success: true, status: next };
@@ -4976,6 +5164,7 @@ var appRouter = router({
     archive: publicProcedure.input(
       z2.object({
         query: z2.string().max(120).default(""),
+        category: z2.string().optional(),
         page: z2.number().int().min(1).default(1),
         pageSize: z2.number().int().min(1).max(24).default(12)
       })
@@ -4984,7 +5173,8 @@ var appRouter = router({
       const result = await searchPublishedPosts(
         input.query,
         input.page,
-        input.pageSize
+        input.pageSize,
+        input.category
       );
       if (input.query.trim() && input.page === 1)
         await recordSearchQuery(input.query);

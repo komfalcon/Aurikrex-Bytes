@@ -2,6 +2,7 @@ import { CuratedByte, cleanHeadline, clampEditorialBrief, parseAiJsonResponse, e
 import { cloudinaryConfigured } from "../services.js";
 import { getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfigs } from "./aiKeys.js";
 import { generateNvidiaFluxImage, getTopicStockImage } from "./imageGeneration.js";
+import { BYTE_CATEGORIES, type ByteCategory, normalizeByteCategory } from "../../shared/const.js";
 import zlib from "zlib";
 import pdfParse from "pdf-parse";
 
@@ -26,6 +27,49 @@ function extractEntityKicker(headline: string, category: string, source?: string
   palette: { bg1: string; bg2: string; accent1: string; accent2: string; glow: string };
 } {
   const h = headline.toLowerCase();
+  const normCat = normalizeByteCategory(category);
+
+  // Sports Desk
+  if (normCat === "Sports" || /football|soccer|nba|nfl|tennis|cricket|formula\s*1|f1|olympics|fifa|tournament|champion|trophy|match\b/.test(h)) {
+    return {
+      kicker: "SPORTS • GLOBAL DESK",
+      palette: {
+        bg1: "#1a1205",
+        bg2: "#2d1f08",
+        accent1: "#f59e0b",
+        accent2: "#fbbf24",
+        glow: "rgba(245, 158, 11, 0.22)",
+      },
+    };
+  }
+
+  // Clinical Medicine & Healthcare
+  if (normCat === "Medicine" || /cancer|clinical|vaccine|fda\b|drug|therapy|disease|genomics|hospital|patient|cardiac|pharma|surgery|biotech/.test(h)) {
+    return {
+      kicker: "MEDICINE • HEALTH & CLINICAL",
+      palette: {
+        bg1: "#061811",
+        bg2: "#0d2b1f",
+        accent1: "#10b981",
+        accent2: "#34d399",
+        glow: "rgba(16, 185, 129, 0.22)",
+      },
+    };
+  }
+
+  // World Geopolitics
+  if (normCat === "Geopolitics" || /election|treaty|sanctions|nato|un\b|diplomacy|parliament|congress|president|minister|war\b|conflict|taiwan|ukraine|summit/.test(h)) {
+    return {
+      kicker: "GEOPOLITICS • WORLD DESK",
+      palette: {
+        bg1: "#1a080c",
+        bg2: "#2e0f17",
+        accent1: "#e11d48",
+        accent2: "#fb7185",
+        glow: "rgba(225, 29, 72, 0.22)",
+      },
+    };
+  }
 
   // AI & LLM Ecosystem
   if (/deepseek|chatgpt|openai|claude|anthropic|perplexity|llm|agent|gpt|gemini|numbat|model/.test(h)) {
@@ -68,10 +112,9 @@ function extractEntityKicker(headline: string, category: string, source?: string
   }
 
   // Space, Deep Tech & Frontier Science
-  if (/satellite|orbit|moon|earth|space|cubesat|gaganyaan|astronaut|india|drug|aging|biological|cell|dna|physics/.test(h)) {
+  if (normCat === "Science" || /satellite|orbit|moon|earth|space|cubesat|gaganyaan|astronaut|india|drug|aging|biological|cell|dna|physics|telescope|astronomy|fusion/.test(h)) {
     let entity = "FRONTIER SCIENCE";
     if (h.includes("satellite") || h.includes("moon") || h.includes("orbit")) entity = "AEROSPACE • DEEP SPACE";
-    else if (h.includes("drug") || h.includes("aging") || h.includes("disease")) entity = "BIOTECH • LONGEVITY";
     else if (h.includes("astronaut") || h.includes("gaganyaan")) entity = "SPACE • MISSION CONTROL";
 
     return {
@@ -104,23 +147,9 @@ function extractEntityKicker(headline: string, category: string, source?: string
     };
   }
 
-  // Crypto & Decentralized Networks
-  if (/blockchain|crypto|token|harmony|ethereum|multisig|wallet|bitcoin/.test(h)) {
-    return {
-      kicker: "CRYPTO • INFRASTRUCTURE",
-      palette: {
-        bg1: "#0d131f",
-        bg2: "#192841",
-        accent1: "#6366f1",
-        accent2: "#a855f7",
-        glow: "rgba(99, 102, 241, 0.22)",
-      },
-    };
-  }
-
   // Default Editorial
   return {
-    kicker: `${(category || "TECH").toUpperCase()} • VERIFIED REPORT`,
+    kicker: `${normCat.toUpperCase()} • VERIFIED REPORT`,
     palette: {
       bg1: "#0b0f19",
       bg2: "#141c2e",
@@ -488,8 +517,7 @@ function formatDraftStory(item: any, fallbackPageNum: number): DraftStory | null
   const cleanTitle = cleanHeadline(String(item.headline || item.title || "")).slice(0, 119);
   if (!cleanTitle || cleanTitle.toLowerCase().includes("untitled")) return null;
 
-  const validCategories = ["Tech", "AI", "Science", "Innovation", "Crypto"];
-  const category = validCategories.includes(String(item.category)) ? String(item.category) : "Tech";
+  const category = normalizeByteCategory(item.category);
   const source = item.source && String(item.source).trim() ? String(item.source).trim() : "Unknown";
   const finalBody = clampEditorialBrief(bodyText || cleanTitle, {
     publisher: source,
@@ -517,8 +545,8 @@ async function extractStoryFromPageImage(
   nvidiaKey?: string,
   cfConfigs: Array<{ accountId: string; apiToken: string }> = []
 ): Promise<DraftStory[]> {
-  const pagePrompt = `You are the executive technology editor for Aurikrex Bytes (https://bytes.aurikrex.com).
-Analyze this news story page from a technology briefing (Page ${pageNum} of ${totalPages}).
+  const pagePrompt = `You are the executive editor for Aurikrex Bytes (https://bytes.aurikrex.com).
+Analyze this news story page from a news briefing (Page ${pageNum} of ${totalPages}).
 
 Extract the news story into a valid JSON array with ONE story object:
 [
@@ -527,12 +555,12 @@ Extract the news story into a valid JSON array with ONE story object:
     "headline": "Crisp, active headline (maximum 119 characters)",
     "category": "Tech",
     "body": "The Lead: [what happened] Why It Matters: [implications] The Outlook: [next milestones]",
-    "source": "Publisher name (e.g. Reuters, TechCrunch, or Unknown)"
+    "source": "Publisher name (e.g. Reuters, BBC, STAT, ESPN, or Unknown)"
   }
 ]
 
 RULES:
-- "category" must be one of: "Tech", "AI", "Science", "Innovation", "Crypto".
+- "category" must be one of: "Tech", "Medicine", "Sports", "Geopolitics", "Science".
 - "body": Write a 3-part brief (The Lead, Why It Matters, The Outlook) targeting approximately 650-750 characters total.
 - Return ONLY the JSON array, no markdown fences, no extra text.`;
 
@@ -893,15 +921,15 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
   // ---------------------------------------------------------------------------
   // PATH 3: Text-based PDF or single uploaded image
   // ---------------------------------------------------------------------------
-  const promptText = `You are the executive technology editor for Aurikrex Bytes (https://bytes.aurikrex.com).
+  const promptText = `You are the executive editor for Aurikrex Bytes (https://bytes.aurikrex.com).
 Analyze the entire uploaded document.
 CRITICAL INSTRUCTION: The document contains multiple news stories across all pages (approximately 12 stories).
-Extract EVERY distinct technology, science, AI, crypto, or innovation news story found anywhere in the document into the JSON array.
+Extract EVERY distinct news story found anywhere in the document into the JSON array.
 Do not stop after 2 or 3 stories. Extract all distinct stories found.
 
 For each story, provide:
 - "headline": Crisp, active headline (maximum 119 characters).
-- "category": Choose from "Tech", "AI", "Science", "Innovation", "Crypto".
+- "category": Choose from "Tech", "Medicine", "Sports", "Geopolitics", "Science".
 - "body": A 3-part brief (The Lead: ..., Why It Matters: ..., The Outlook: ...) targeting approximately 650-750 characters total.
 - "source": Publisher name (or "Unknown").
 - "pageNumber": (1-based page index).
