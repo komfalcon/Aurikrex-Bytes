@@ -138,7 +138,7 @@ export function cleanHeadline(title: string): string {
   cleaned = cleaned.replace(/\s*\((video|pdf|audio|\d{4})\)\s*/gi, " ");
   // Strip trailing publisher tags e.g. " - The Verge", " | Ars Technica", " — TechCrunch"
   cleaned = cleaned.replace(
-    /\s*[-–—|]\s*(the\s+verge|ars\s+technica|techcrunch|reuters|bloomberg|wired|wsj|nyt|bbc|cnbc|the\s+information|engadget)\s*$/i,
+    /\s*[-–—|]\s*(the\s+verge|ars\s+technica|techcrunch|reuters|bloomberg|wired|wsj|nyt|bbc|cnbc|the\s+information|engadget|electrek|insideevs|teslarati|cleantechnica|tom's\s+hardware|cnet|gizmodo|venturebeat|bleepingcomputer|ieee\s+spectrum|siliconangle)\s*$/i,
     ""
   );
   // Normalize whitespace
@@ -290,6 +290,21 @@ export const CATEGORY_FEEDS: Record<ByteCategory, { name: string; url: string }[
     { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
     { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
     { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" },
+    // EV, Mobility, Tesla & Clean Tech
+    { name: "Electrek", url: "https://electrek.co/feed/" },
+    { name: "Teslarati", url: "https://www.teslarati.com/feed/" },
+    { name: "InsideEVs", url: "https://insideevs.com/rss/articles/all/" },
+    { name: "CleanTechnica", url: "https://cleantechnica.com/feed/" },
+    { name: "Ars Technica Cars", url: "https://feeds.arstechnica.com/arstechnica/cars" },
+    // Hardware, Computing, Semiconductors & Mobile
+    { name: "Tom's Hardware", url: "https://www.tomshardware.com/feeds/all" },
+    { name: "9to5Mac", url: "https://9to5mac.com/feed/" },
+    { name: "9to5Google", url: "https://9to5google.com/feed/" },
+    { name: "CNET", url: "https://www.cnet.com/rss/news/" },
+    { name: "Gizmodo", url: "https://gizmodo.com/rss" },
+    { name: "BleepingComputer", url: "https://www.bleepingcomputer.com/feed/" },
+    { name: "IEEE Spectrum", url: "https://spectrum.ieee.org/feeds/feed.rss" },
+    { name: "SiliconANGLE", url: "https://siliconangle.com/feed/" },
   ],
   Medicine: [
     { name: "ScienceDaily Health", url: "https://www.sciencedaily.com/rss/health_medicine.xml" },
@@ -338,7 +353,7 @@ async function fetchRssCandidates(
     // "All": sample top feeds from every category for balanced coverage
     for (const cat of BYTE_CATEGORIES) {
       const list = CATEGORY_FEEDS[cat] || [];
-      for (const f of list.slice(0, 3)) {
+      for (const f of list.slice(0, 4)) {
         feedsToFetch.push({ ...f, category: cat });
       }
     }
@@ -346,21 +361,23 @@ async function fetchRssCandidates(
 
   const results: NewsCandidate[] = [];
 
-  for (const feed of feedsToFetch) {
+  // Fetch feeds concurrently with safety timeout
+  const feedPromises = feedsToFetch.map(async feed => {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 4000);
+      const timeout = setTimeout(() => controller.abort(), 4500);
       const res = await fetch(feed.url, {
         signal: controller.signal,
-        headers: { "User-Agent": "AurikrexBytesBot/1.0" },
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; AurikrexBytesBot/1.0)" },
       });
       clearTimeout(timeout);
-      if (!res.ok) continue;
+      if (!res.ok) return [];
 
       const xml = await res.text();
       const items = xml.match(/<(?:item|entry)[\s\S]*?<\/(?:item|entry)>/gi) || [];
+      const feedItems: NewsCandidate[] = [];
 
-      for (const itemXml of items.slice(0, 20)) {
+      for (const itemXml of items.slice(0, 25)) {
         const titleMatch = itemXml.match(/<title(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
         const linkMatch =
           itemXml.match(/<link[^>]+href=["']([^"']+)["']/i) ||
@@ -396,7 +413,7 @@ async function fetchRssCandidates(
 
         const mediaUrl = mediaMatch ? mediaMatch[1].trim() : null;
 
-        results.push({
+        feedItems.push({
           title: cleanedTitle,
           url,
           publisher: feed.name,
@@ -406,9 +423,16 @@ async function fetchRssCandidates(
           category: feed.category,
         });
       }
+      return feedItems;
     } catch (e) {
       console.warn(`[AICurator] Failed to fetch RSS feed from ${feed.name}:`, e);
+      return [];
     }
+  });
+
+  const feedOutputs = await Promise.all(feedPromises);
+  for (const items of feedOutputs) {
+    results.push(...items);
   }
 
   return results;
@@ -430,6 +454,7 @@ async function fetchCandidatesForTimeframe(
         `tags=front_page&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=35`,
         `query=AI%20OR%20LLM&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
         `query=chip%20OR%20semiconductor%20OR%20security&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
+        `query=Tesla%20OR%20EV%20OR%20robotics%20OR%20hardware&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=25`,
       ]
     : [];
 
@@ -491,7 +516,7 @@ async function fetchCandidatesForTimeframe(
 
   return Array.from(candidates.values())
     .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
-    .slice(0, 40);
+    .slice(0, 80);
 }
 
 export async function fetchTodayCandidates(
@@ -499,16 +524,18 @@ export async function fetchTodayCandidates(
   targetCategory?: ByteCategory | "All"
 ): Promise<NewsCandidate[]> {
   const now = new Date();
-  const { start, end } = getTodayWindow(now);
+  // Rolling 30-hour window ensures we catch breaking news from today and yesterday afternoon/evening regardless of when curation runs
+  const past30h = new Date(now.getTime() - 30 * 3600 * 1000);
+  const future1h = new Date(now.getTime() + 3600 * 1000);
 
-  // 1. Fetch uncurated candidates for today's window
-  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys, targetCategory);
+  // 1. Fetch uncurated candidates for 30-hour window
+  let candidates = await fetchCandidatesForTimeframe(past30h, future1h, excludeKeys, targetCategory);
 
-  // 2. If fewer than 10 uncurated candidates in today's window, expand search window to 72 hours
-  if (candidates.length < 10) {
+  // 2. If fewer than 15 uncurated candidates in 30h window, expand search window to 72 hours
+  if (candidates.length < 15) {
     const past72h = new Date(now.getTime() - 72 * 3600 * 1000);
     console.info(`[AICurator] Found ${candidates.length} uncurated candidates for ${targetCategory || "All"}. Expanding window to 72 hours...`);
-    candidates = await fetchCandidatesForTimeframe(past72h, now, excludeKeys, targetCategory);
+    candidates = await fetchCandidatesForTimeframe(past72h, future1h, excludeKeys, targetCategory);
   }
 
   return candidates;

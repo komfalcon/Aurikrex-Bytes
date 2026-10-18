@@ -1517,7 +1517,7 @@ function cleanHeadline(title) {
   cleaned = cleaned.replace(/\s*\[(video|pdf|audio|\d{4})\]\s*/gi, " ");
   cleaned = cleaned.replace(/\s*\((video|pdf|audio|\d{4})\)\s*/gi, " ");
   cleaned = cleaned.replace(
-    /\s*[-–—|]\s*(the\s+verge|ars\s+technica|techcrunch|reuters|bloomberg|wired|wsj|nyt|bbc|cnbc|the\s+information|engadget)\s*$/i,
+    /\s*[-–—|]\s*(the\s+verge|ars\s+technica|techcrunch|reuters|bloomberg|wired|wsj|nyt|bbc|cnbc|the\s+information|engadget|electrek|insideevs|teslarati|cleantechnica|tom's\s+hardware|cnet|gizmodo|venturebeat|bleepingcomputer|ieee\s+spectrum|siliconangle)\s*$/i,
     ""
   );
   cleaned = cleaned.replace(/\s+/g, " ").trim();
@@ -1625,25 +1625,26 @@ async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new 
   } else {
     for (const cat of BYTE_CATEGORIES) {
       const list = CATEGORY_FEEDS[cat] || [];
-      for (const f of list.slice(0, 3)) {
+      for (const f of list.slice(0, 4)) {
         feedsToFetch.push({ ...f, category: cat });
       }
     }
   }
   const results = [];
-  for (const feed of feedsToFetch) {
+  const feedPromises = feedsToFetch.map(async (feed) => {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 4e3);
+      const timeout = setTimeout(() => controller.abort(), 4500);
       const res = await fetch(feed.url, {
         signal: controller.signal,
-        headers: { "User-Agent": "AurikrexBytesBot/1.0" }
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; AurikrexBytesBot/1.0)" }
       });
       clearTimeout(timeout);
-      if (!res.ok) continue;
+      if (!res.ok) return [];
       const xml = await res.text();
       const items = xml.match(/<(?:item|entry)[\s\S]*?<\/(?:item|entry)>/gi) || [];
-      for (const itemXml of items.slice(0, 20)) {
+      const feedItems = [];
+      for (const itemXml of items.slice(0, 25)) {
         const titleMatch = itemXml.match(/<title(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
         const linkMatch = itemXml.match(/<link[^>]+href=["']([^"']+)["']/i) || itemXml.match(/<link(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/i);
         const dateMatch = itemXml.match(/<pubDate(?:\s+[^>]*)?>([\s\S]*?)<\/pubDate>/i) || itemXml.match(/<published(?:\s+[^>]*)?>([\s\S]*?)<\/published>/i) || itemXml.match(/<updated(?:\s+[^>]*)?>([\s\S]*?)<\/updated>/i);
@@ -1659,7 +1660,7 @@ async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new 
         const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
         if (excludeKeys.has(duplicateKey)) continue;
         const mediaUrl = mediaMatch ? mediaMatch[1].trim() : null;
-        results.push({
+        feedItems.push({
           title: cleanedTitle,
           url,
           publisher: feed.name,
@@ -1669,9 +1670,15 @@ async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new 
           category: feed.category
         });
       }
+      return feedItems;
     } catch (e) {
       console.warn(`[AICurator] Failed to fetch RSS feed from ${feed.name}:`, e);
+      return [];
     }
+  });
+  const feedOutputs = await Promise.all(feedPromises);
+  for (const items of feedOutputs) {
+    results.push(...items);
   }
   return results;
 }
@@ -1682,7 +1689,8 @@ async function fetchCandidatesForTimeframe(start, end, excludeKeys = /* @__PURE_
   const hnQueries = shouldFetchHn ? [
     `tags=front_page&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=35`,
     `query=AI%20OR%20LLM&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
-    `query=chip%20OR%20semiconductor%20OR%20security&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`
+    `query=chip%20OR%20semiconductor%20OR%20security&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=25&hitsPerPage=25`,
+    `query=Tesla%20OR%20EV%20OR%20robotics%20OR%20hardware&tags=story&numericFilters=created_at_i>=${startSec},created_at_i<${endSec},points>=20&hitsPerPage=25`
   ] : [];
   const hnPromises = hnQueries.map(async (queryParams) => {
     try {
@@ -1726,16 +1734,17 @@ async function fetchCandidatesForTimeframe(start, end, excludeKeys = /* @__PURE_
       }
     }
   }
-  return Array.from(candidates.values()).sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime()).slice(0, 40);
+  return Array.from(candidates.values()).sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime()).slice(0, 80);
 }
 async function fetchTodayCandidates(excludeKeys = /* @__PURE__ */ new Set(), targetCategory) {
   const now2 = /* @__PURE__ */ new Date();
-  const { start, end } = getTodayWindow(now2);
-  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys, targetCategory);
-  if (candidates.length < 10) {
+  const past30h = new Date(now2.getTime() - 30 * 3600 * 1e3);
+  const future1h = new Date(now2.getTime() + 3600 * 1e3);
+  let candidates = await fetchCandidatesForTimeframe(past30h, future1h, excludeKeys, targetCategory);
+  if (candidates.length < 15) {
     const past72h = new Date(now2.getTime() - 72 * 3600 * 1e3);
     console.info(`[AICurator] Found ${candidates.length} uncurated candidates for ${targetCategory || "All"}. Expanding window to 72 hours...`);
-    candidates = await fetchCandidatesForTimeframe(past72h, now2, excludeKeys, targetCategory);
+    candidates = await fetchCandidatesForTimeframe(past72h, future1h, excludeKeys, targetCategory);
   }
   return candidates;
 }
@@ -2169,7 +2178,22 @@ var init_aiCurator = __esm({
         { name: "Wired", url: "https://www.wired.com/feed/rss" },
         { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
         { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
-        { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" }
+        { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" },
+        // EV, Mobility, Tesla & Clean Tech
+        { name: "Electrek", url: "https://electrek.co/feed/" },
+        { name: "Teslarati", url: "https://www.teslarati.com/feed/" },
+        { name: "InsideEVs", url: "https://insideevs.com/rss/articles/all/" },
+        { name: "CleanTechnica", url: "https://cleantechnica.com/feed/" },
+        { name: "Ars Technica Cars", url: "https://feeds.arstechnica.com/arstechnica/cars" },
+        // Hardware, Computing, Semiconductors & Mobile
+        { name: "Tom's Hardware", url: "https://www.tomshardware.com/feeds/all" },
+        { name: "9to5Mac", url: "https://9to5mac.com/feed/" },
+        { name: "9to5Google", url: "https://9to5google.com/feed/" },
+        { name: "CNET", url: "https://www.cnet.com/rss/news/" },
+        { name: "Gizmodo", url: "https://gizmodo.com/rss" },
+        { name: "BleepingComputer", url: "https://www.bleepingcomputer.com/feed/" },
+        { name: "IEEE Spectrum", url: "https://spectrum.ieee.org/feeds/feed.rss" },
+        { name: "SiliconANGLE", url: "https://siliconangle.com/feed/" }
       ],
       Medicine: [
         { name: "ScienceDaily Health", url: "https://www.sciencedaily.com/rss/health_medicine.xml" },
