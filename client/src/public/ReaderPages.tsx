@@ -322,6 +322,7 @@ function ProfileLightboxModal({
 }
 
 export function SiteHeader() {
+  const [location] = useLocation();
   const [menu, setMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const utils = trpc.useUtils();
@@ -338,16 +339,27 @@ export function SiteHeader() {
   });
   const signedIn = Boolean(session.data);
   const homePath = signedIn ? "/dashboard" : "/";
+  const isDiscoverActive = location === "/" || location === "/dashboard";
+  const isSavedActive = location === "/saved";
+  const isArchiveActive = location.startsWith("/archive");
+  const isAboutActive = location === "/how-it-works";
   return (
     <header className="site-header">
-      <Logo href={homePath} />
-      <nav className="main-nav" aria-label="Primary">
-        <Link href={homePath}>{signedIn ? "Dashboard" : "Today"}</Link>
-        {signedIn && <Link href="/saved">Saved</Link>}
-        <Link href="/archive">All Bytes</Link>
-        <Link href="/how-it-works">About</Link>
-      </nav>
+      <div className="site-header-left">
+        <Logo href={homePath} />
+        <nav className="main-nav" aria-label="Primary">
+          <Link href={homePath} className={isDiscoverActive ? "active" : ""}>{signedIn ? "Discover" : "Today"}</Link>
+          <Link href="/archive" className={isArchiveActive ? "active" : ""}>All Bytes</Link>
+          {signedIn && <Link href="/saved" className={isSavedActive ? "active" : ""}>Saved</Link>}
+          <Link href="/how-it-works" className={isAboutActive ? "active" : ""}>About</Link>
+        </nav>
+      </div>
       <div className="header-actions">
+        <Link href="/archive" className="px-header-search-pill" aria-label="Search Bytes and topics">
+          <Search size={14} />
+          <span>Search Bytes &amp; topics…</span>
+          <kbd>/</kbd>
+        </Link>
         <AuriCoinBadge className="header-coin-badge" />
         <PushSubscribeButton variant="header" />
         <AurikrexAppsSwitcher currentAppId="bytes" />
@@ -452,7 +464,7 @@ export function SiteFooter() {
     <footer className="site-footer">
       <div className="footer-inner">
         <div className="footer-brand-block">
-          <Logo compact href={readerHome} showMark={false} />
+          <Logo compact href={readerHome} />
           <p className="footer-note">
             A calmer way to keep up.
             <br />
@@ -528,6 +540,43 @@ export function SiteFooter() {
     </footer>
   );
 }
+function MobileBottomNav() {
+  const [location] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const signedIn = Boolean(session.data);
+  const homePath = signedIn ? "/dashboard" : "/";
+  const isDiscover = location === "/" || location === "/dashboard" || location.startsWith("/post/");
+  const isArchive = location.startsWith("/archive");
+  const isSaved = location === "/saved";
+  const isAbout = location === "/how-it-works" || location === "/help" || location === "/contact";
+  const isAuth = location === "/login" || location === "/signup";
+
+  return (
+    <nav className="px-mobile-bottom-nav" aria-label="Mobile quick navigation">
+      <Link href={homePath} className={"px-bottom-tab " + (isDiscover ? "active" : "")}>
+        <Sparkles size={18} strokeWidth={1.9} />
+        <span>Discover</span>
+      </Link>
+      <Link href="/archive" className={"px-bottom-tab " + (isArchive ? "active" : "")}>
+        <Search size={18} strokeWidth={1.9} />
+        <span>All Bytes</span>
+      </Link>
+      <ProtectedLink href="/saved" className={"px-bottom-tab " + (isSaved ? "active" : "")}>
+        <Bookmark size={18} strokeWidth={1.9} />
+        <span>Saved</span>
+      </ProtectedLink>
+      <Link href="/how-it-works" className={"px-bottom-tab " + (isAbout ? "active" : "")}>
+        <Layers size={18} strokeWidth={1.9} />
+        <span>About</span>
+      </Link>
+      <Link href={signedIn ? "/dashboard" : authRoutes.login} className={"px-bottom-tab " + (isAuth ? "active" : "")}>
+        <User size={18} strokeWidth={1.9} />
+        <span>{signedIn ? "Desk" : "Sign in"}</span>
+      </Link>
+    </nav>
+  );
+}
+
 export function PublicLayout({
   children,
   seo,
@@ -548,6 +597,7 @@ export function PublicLayout({
       <SiteHeader />
       {children}
       <SiteFooter />
+      <MobileBottomNav />
     </>
   );
 }
@@ -731,7 +781,7 @@ function ReadingViewPreviewCard({ post, compact = false, index = 0 }: { post: an
   return (
     <article className={`reading-preview-card ${compact ? "reading-preview-card-compact" : ""}`}>
       <div className="reading-preview-image">
-        {previewPost.imageUrl ? <img src={optimizedImage(previewPost.imageUrl, compact ? 240 : 480)} alt="" /> : <Sparkles size={compact ? 12 : 16} />}
+        <img src={previewPost.imageUrl ? optimizedImage(previewPost.imageUrl, compact ? 240 : 480) : "/logo-512.png"} alt={previewPost.headline || "Aurikrex Bytes"} />
       </div>
       <div className="reading-preview-copy">
         <span className="reading-preview-meta">Today · 4 min read</span>
@@ -905,7 +955,7 @@ function TodayCompletionCard({
 
       {/* Streak Pill */}
       <div className="today-completion-streak">
-        <span className="streak-fire" role="img" aria-label="Fire">🔥</span>
+        <span className="streak-fire" aria-hidden="true"><FireReactionIcon active={true} /></span>
         <span className="streak-divider">|</span>
         <span className="streak-text">{Math.max(1, streak || 1)}-Day Learning Streak</span>
       </div>
@@ -939,6 +989,85 @@ function TodayCompletionCard({
   );
 }
 
+function inferPostTopicAndSources(post: any) {
+  const hay = `${post?.headline || ""} ${post?.body || ""}`.toLowerCase();
+  if (hay.includes("nvidia") || hay.includes("gpu") || hay.includes("chip") || hay.includes("semiconductor")) {
+    return {
+      topic: "AI & Hardware",
+      sources: [
+        { code: "FT", name: "Financial Times", domain: "ft.com" },
+        { code: "R", name: "Reuters Tech", domain: "reuters.com" },
+        { code: "S", name: "SemiAnalysis", domain: "semianalysis.com" },
+        { code: "B", name: "Bloomberg Tech", domain: "bloomberg.com" },
+      ],
+    };
+  }
+  if (hay.includes("apple") || hay.includes("iphone") || hay.includes("ios") || hay.includes("mac")) {
+    return {
+      topic: "Apple & Silicon",
+      sources: [
+        { code: "B", name: "Bloomberg", domain: "bloomberg.com" },
+        { code: "V", name: "The Verge", domain: "theverge.com" },
+        { code: "A", name: "Ars Technica", domain: "arstechnica.com" },
+        { code: "R", name: "Reuters", domain: "reuters.com" },
+      ],
+    };
+  }
+  if (hay.includes("google") || hay.includes("gemini") || hay.includes("deepmind") || hay.includes("android")) {
+    return {
+      topic: "Google & AI",
+      sources: [
+        { code: "G", name: "Google Research", domain: "research.google" },
+        { code: "V", name: "The Verge", domain: "theverge.com" },
+        { code: "T", name: "TechCrunch", domain: "techcrunch.com" },
+        { code: "W", name: "Wired", domain: "wired.com" },
+      ],
+    };
+  }
+  if (hay.includes("security") || hay.includes("cyber") || hay.includes("breach") || hay.includes("zero-day")) {
+    return {
+      topic: "Cybersecurity",
+      sources: [
+        { code: "K", name: "KrebsOnSecurity", domain: "krebsonsecurity.com" },
+        { code: "B", name: "BleepingComputer", domain: "bleepingcomputer.com" },
+        { code: "A", name: "Ars Technica", domain: "arstechnica.com" },
+        { code: "R", name: "Reuters", domain: "reuters.com" },
+      ],
+    };
+  }
+  if (hay.includes("cloud") || hay.includes("aws") || hay.includes("microsoft") || hay.includes("azure")) {
+    return {
+      topic: "Cloud & Infra",
+      sources: [
+        { code: "R", name: "The Register", domain: "theregister.com" },
+        { code: "B", name: "Bloomberg", domain: "bloomberg.com" },
+        { code: "I", name: "The Information", domain: "theinformation.com" },
+        { code: "C", name: "CNCF Dispatch", domain: "cncf.io" },
+      ],
+    };
+  }
+  if (hay.includes("startup") || hay.includes("funding") || hay.includes("venture") || hay.includes("raise")) {
+    return {
+      topic: "Venture & Startups",
+      sources: [
+        { code: "T", name: "TechCrunch", domain: "techcrunch.com" },
+        { code: "I", name: "The Information", domain: "theinformation.com" },
+        { code: "F", name: "Forbes Tech", domain: "forbes.com" },
+        { code: "P", name: "PitchBook", domain: "pitchbook.com" },
+      ],
+    };
+  }
+  return {
+    topic: "AI & Tech Signal",
+    sources: [
+      { code: "R", name: "Reuters Tech", domain: "reuters.com" },
+      { code: "FT", name: "Financial Times", domain: "ft.com" },
+      { code: "A", name: "Ars Technica", domain: "arstechnica.com" },
+      { code: "T", name: "TechCrunch", domain: "techcrunch.com" },
+    ],
+  };
+}
+
 function PostCard({
   post,
   featured = false,
@@ -948,6 +1077,7 @@ function PostCard({
   featured?: boolean;
   isRead?: boolean;
 }) {
+  const { topic, sources } = useMemo(() => inferPostTopicAndSources(post), [post?.headline, post?.body]);
   return (
     <article
       className={`post-card ${featured ? "post-card-featured" : ""} ${isRead ? "is-read" : ""}`}
@@ -967,18 +1097,21 @@ function PostCard({
               loading="lazy"
               decoding="async"
               onError={event => {
-                event.currentTarget.style.display = "none";
+                event.currentTarget.src = "/logo-512.png";
+                event.currentTarget.classList.add("px-brand-cover-mark");
               }}
             />
           ) : (
-            <div className="image-placeholder">
-              <Sparkles size={22} />
-              <span>Bytes / {String(post.id).padStart(2, "0")}</span>
+            <div className="image-placeholder px-brand-cover-wrap">
+              <img src="/logo-512.png" alt="Aurikrex Bytes" className="px-brand-cover-mark" />
+              <span>Aurikrex Bytes</span>
             </div>
           )}
         </div>
         <div className="post-card-body">
           <div className="post-meta">
+            <span className="px-card-topic-pill">{featured ? `Lead Story · ${topic}` : topic}</span>
+            <span>·</span>
             <span>{formatDate(post.publishedTime)}</span>
             <span>·</span>
             <span>4 min read</span>
@@ -989,10 +1122,17 @@ function PostCard({
             )}
           </div>
           <h2>{post.headline}</h2>
-          <p><FormattedInlineText text={excerpt(post.body)} /></p>
-          <span className="read-more">
-            {isRead ? "Read again" : "Read story"} <ArrowRight size={15} />
-          </span>
+          <p><FormattedInlineText text={excerpt(post.body, featured ? 210 : 150)} /></p>
+          <div className="px-card-synthesis-row">
+            <div className="px-source-avatars" aria-hidden="true">
+              {sources.slice(0, 3).map((src, idx) => (
+                <span key={idx} className={`px-source-avatar px-source-avatar-${idx}`}>{src.code}</span>
+              ))}
+            </div>
+            <span className="read-more">
+              {sources.length} sources · {isRead ? "Read again" : "Read briefing"} <ArrowRight size={14} />
+            </span>
+          </div>
         </div>
       </ProtectedLink>
       <div className="post-card-actions"><EngagementActions post={post} /></div>
@@ -1474,12 +1614,12 @@ export function ReaderDashboard() {
   );
   const rawPosts = tab === "today" ? todayPosts : data?.allPosts ?? [];
   const posts = useMemo(() => {
-    if (tab !== "all" || !dashboardSearch.trim()) return rawPosts;
+    if (!dashboardSearch.trim()) return rawPosts;
     const q = dashboardSearch.toLowerCase();
     return rawPosts.filter((p: any) =>
       p.headline?.toLowerCase().includes(q) || p.body?.toLowerCase().includes(q)
     );
-  }, [rawPosts, tab, dashboardSearch]);
+  }, [rawPosts, dashboardSearch]);
 
   useEffect(() => {
     if (!session.isLoading && !session.data) navigate("/login");
@@ -1559,7 +1699,10 @@ export function ReaderDashboard() {
         )}
         <section className="dashboard-feed">
           <div className="section-heading dashboard-heading">
-            <div><span className="eyebrow">Your briefing</span><h2>{tab === "today" ? "Today’s Bytes" : "All Bytes"}</h2></div>
+            <div>
+              <span className="eyebrow"><Sparkles size={13} /> Discover Channel</span>
+              <h2>{tab === "today" ? "Today’s Bytes" : "All Bytes"}</h2>
+            </div>
             <div className="dashboard-heading-tools">
               <div className="reader-tabs" role="tablist" aria-label="Reader feed">
                 <button type="button" role="tab" aria-selected={tab === "today"} className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Today</button>
@@ -1567,8 +1710,8 @@ export function ReaderDashboard() {
               </div>
             </div>
           </div>
-          {tab === "all" && (
-            <div style={{ marginTop: "16px", marginBottom: "20px" }}>
+          <div className="px-discover-controls">
+            {tab === "all" && (
               <div className="search-wrap">
                 <Search size={18} />
                 <input
@@ -1583,23 +1726,34 @@ export function ReaderDashboard() {
                   </button>
                 )}
               </div>
-              <div className="brand-filter-chips" role="group" aria-label="Brand & trend quick filters">
-                {BRAND_TAGS.map(tag => {
-                  const isActive = tag === "All" ? !dashboardSearch : dashboardSearch.toLowerCase() === tag.toLowerCase();
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      className={`brand-chip ${isActive ? "active" : ""}`}
-                      onClick={() => setDashboardSearch(tag === "All" ? "" : tag)}
-                    >
-                      {tag}
-                    </button>
-                  );
-                })}
-              </div>
+            )}
+            <div className="brand-filter-chips" role="group" aria-label="Brand & trend quick filters">
+              {BRAND_TAGS.map(tag => {
+                const isActive = tag === "All" ? !dashboardSearch : dashboardSearch.toLowerCase() === tag.toLowerCase();
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    className={`brand-chip ${isActive ? "active" : ""}`}
+                    onClick={() => {
+                      const nextSearch = tag === "All" ? "" : tag;
+                      setDashboardSearch(nextSearch);
+                      if (nextSearch && tab === "today") {
+                        const matchesToday = todayPosts.some(
+                          (p: any) =>
+                            p.headline?.toLowerCase().includes(nextSearch.toLowerCase()) ||
+                            p.body?.toLowerCase().includes(nextSearch.toLowerCase())
+                        );
+                        if (!matchesToday) setTab("all");
+                      }
+                    }}
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </div>
           {dashboard.isLoading ? (
             <div className={`skeleton-grid skeleton-grid-${viewMode}`}><div /><div /><div /></div>
           ) : posts.length ? (
@@ -1784,9 +1938,8 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
     },
   });
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    const q = question.trim();
+  const triggerQuestion = (rawQuestion: string) => {
+    const q = rawQuestion.trim();
     if (!q || followUp.isPending) return;
     setAsked(q);
     setAnswer(null);
@@ -1795,6 +1948,22 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
     setIsOpen(true);
     followUp.mutate({ postId, question: q });
     setQuestion("");
+  };
+
+  useEffect(() => {
+    const handleExternalTrigger = (event: Event) => {
+      const custom = event as CustomEvent<{ postId: number; question: string }>;
+      if (custom.detail && custom.detail.postId === postId && custom.detail.question) {
+        triggerQuestion(custom.detail.question);
+      }
+    };
+    window.addEventListener("aurikrex:trigger-followup", handleExternalTrigger);
+    return () => window.removeEventListener("aurikrex:trigger-followup", handleExternalTrigger);
+  }, [postId, followUp.isPending]);
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    triggerQuestion(question);
   };
 
   return (
@@ -2033,6 +2202,81 @@ function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline:
   );
 }
 
+function ArticleAudioPlayer({ headline, body }: { headline: string; body: string }) {
+  const [playing, setPlaying] = useState(false);
+  const [rateIndex, setRateIndex] = useState(0);
+  const rates = [1, 1.25, 1.5];
+  const currentRate = rates[rateIndex];
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, [headline]);
+
+  const startSpeech = (rate: number) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      toast.error("Audio briefing is not supported in this browser.");
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const cleanText = `${headline}. ${body.replace(/\*\*|__|\*|_/g, "")}`;
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = rate;
+    utterance.onend = () => setPlaying(false);
+    utterance.onerror = () => setPlaying(false);
+    setPlaying(true);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const togglePlay = () => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      toast.error("Audio briefing is not supported in this browser.");
+      return;
+    }
+    if (playing) {
+      window.speechSynthesis.cancel();
+      setPlaying(false);
+    } else {
+      startSpeech(currentRate);
+    }
+  };
+
+  const cycleRate = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextIdx = (rateIndex + 1) % rates.length;
+    setRateIndex(nextIdx);
+    if (playing) {
+      startSpeech(rates[nextIdx]);
+    }
+  };
+
+  return (
+    <div className={`px-audio-player ${playing ? "is-playing" : ""}`}>
+      <button
+        type="button"
+        className="px-audio-btn"
+        onClick={togglePlay}
+        aria-label={playing ? "Stop audio briefing" : "Listen to audio briefing"}
+      >
+        {playing ? <Square size={12} fill="currentColor" /> : <Zap size={13} fill="currentColor" />}
+        <span>{playing ? "Listening…" : "Listen"}</span>
+      </button>
+      <button
+        type="button"
+        className="px-audio-speed"
+        onClick={cycleRate}
+        title="Change playback speed"
+        aria-label={`Playback speed ${currentRate}x`}
+      >
+        {currentRate}x
+      </button>
+    </div>
+  );
+}
+
 export function PostDetail() {
   const [, params] = useRoute("/post/:id");
   const id = Number(params?.id);
@@ -2041,6 +2285,7 @@ export function PostDetail() {
     { id },
     { enabled: Number.isFinite(id) }
   );
+  const relatedQuery = trpc.publicPosts.carousel.useQuery();
   useEffect(() => {
     if (post.data && Number.isFinite(id)) {
       markPostAsRead(id);
@@ -2048,6 +2293,32 @@ export function PostDetail() {
   }, [id, post.data]);
   const engagement = trpc.reader.engagement.useQuery({ postId: id }, { enabled: Boolean(session.data) && Number.isFinite(id), retry: false });
   const detailPost = post.data ? { ...post.data, ...(engagement.data || {}) } : null;
+  const metaInfo = useMemo(
+    () => (post.data ? inferPostTopicAndSources(post.data) : { topic: "Tech Signal", sources: [] }),
+    [post.data?.headline, post.data?.body]
+  );
+  const relatedPosts = useMemo(
+    () => (relatedQuery.data?.posts ?? []).filter((p: any) => p.id !== id).slice(0, 3),
+    [relatedQuery.data?.posts, id]
+  );
+  const suggestedPrompts = useMemo(() => {
+    const h = post.data?.headline || "this story";
+    return [
+      `What are the second-order industry impacts of ${excerpt(h, 58)}?`,
+      "Which companies or developer ecosystems benefit most from this shift?",
+      "What are the primary technical or regulatory bottlenecks ahead?",
+    ];
+  }, [post.data?.headline]);
+
+  const triggerFollowUpPrompt = (promptText: string) => {
+    if (!post.data) return;
+    window.dispatchEvent(
+      new CustomEvent("aurikrex:trigger-followup", {
+        detail: { postId: post.data.id, question: promptText },
+      })
+    );
+  };
+
   const seo = post.data
     ? {
         title: `${post.data.headline} — Aurikrex Bytes`,
@@ -2073,36 +2344,114 @@ export function PostDetail() {
         {post.isLoading ? (
           <div className="detail-loading" />
         ) : post.data ? (
-          <article>
-            <button
-              type="button"
-              className="back-link text-button"
-              onClick={() => {
-                if (typeof window !== "undefined" && window.history.length > 1) {
-                  window.history.back();
-                } else {
-                  window.location.href = "/archive";
-                }
-              }}
-            >
-              ← Back
-            </button>
-            <div className="detail-meta">
-              <span className="eyebrow">Aurikrex Bytes</span>
-              <span>{formatDate(post.data.publishedTime)} · 4 min read</span>
+          <article className="px-article-shell">
+            <div className="px-detail-topbar">
+              <button
+                type="button"
+                className="back-link text-button"
+                onClick={() => {
+                  if (typeof window !== "undefined" && window.history.length > 1) {
+                    window.history.back();
+                  } else {
+                    window.location.href = "/archive";
+                  }
+                }}
+              >
+                ← Back to Discover
+              </button>
+              <div className="px-detail-topbar-actions">
+                <ArticleAudioPlayer headline={post.data.headline} body={post.data.body} />
+                <EngagementActions post={detailPost || post.data} />
+              </div>
             </div>
-            <h1>{post.data.headline}</h1>
-            {post.data.imageUrl && (
-              <img
-                className="detail-image"
-                src={optimizedImage(post.data.imageUrl, 1400)}
-                alt={post.data.headline}
-                loading="eager"
-                fetchPriority="high"
-              />
-            )}
-            <FormattedBody body={post.data.body} className="detail-body" />
-            <div className="detail-actions"><EngagementActions post={detailPost || post.data} /></div>
+
+            <div className="px-detail-grid">
+              <div className="px-detail-main" id="sec-overview">
+                <div className="detail-meta">
+                  <span className="eyebrow">{metaInfo.topic}</span>
+                  <span>{formatDate(post.data.publishedTime)} · 4 min read</span>
+                </div>
+                <h1>{post.data.headline}</h1>
+
+                {/* Perplexity Synthesized Sources Strip */}
+                <div className="px-sources-strip" aria-label="Synthesized sources context">
+                  {metaInfo.sources.map((src, idx) => (
+                    <div key={idx} className="px-source-card">
+                      <div className="px-source-card-top">
+                        <span className={`px-source-avatar px-source-avatar-${idx % 3}`}>{src.code}</span>
+                        <span className="px-source-domain">{src.domain}</span>
+                      </div>
+                      <p className="px-source-title">{src.name} · Primary Signal #{idx + 1}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {post.data.imageUrl && (
+                  <img
+                    className="detail-image"
+                    src={optimizedImage(post.data.imageUrl, 1400)}
+                    alt={post.data.headline}
+                    loading="eager"
+                    fetchPriority="high"
+                  />
+                )}
+
+                <div id="sec-analysis">
+                  <FormattedBody body={post.data.body} className="detail-body" />
+                </div>
+
+                <div className="detail-actions">
+                  <EngagementActions post={detailPost || post.data} />
+                </div>
+
+                {/* Perplexity Keep Exploring with Falke AI section */}
+                <section className="px-keep-exploring" id="sec-falke" aria-label="Keep exploring with Falke AI">
+                  <div className="px-keep-exploring-header">
+                    <Sparkles size={17} />
+                    <h3>Keep Exploring with Falke AI</h3>
+                  </div>
+                  <div className="px-prompt-list">
+                    {suggestedPrompts.map((promptText, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="px-prompt-row"
+                        onClick={() => triggerFollowUpPrompt(promptText)}
+                      >
+                        <span>{promptText}</span>
+                        <ArrowRight size={15} />
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </div>
+
+              <aside className="px-detail-rail" aria-label="Story context and navigation">
+                <div className="px-rail-card">
+                  <span className="px-rail-label">On this page</span>
+                  <nav className="px-toc-links" aria-label="Table of contents">
+                    <a href="#sec-overview" className="active">Overview &amp; Synthesized Sources</a>
+                    <a href="#sec-analysis">Deep Dive &amp; Context</a>
+                    <a href="#sec-falke">Keep Exploring with Falke AI</a>
+                  </nav>
+                </div>
+
+                {relatedPosts.length > 0 && (
+                  <div className="px-rail-card">
+                    <span className="px-rail-label">More in Today&apos;s Edition</span>
+                    <div className="px-related-list">
+                      {relatedPosts.map((rel: any) => (
+                        <ProtectedLink key={rel.id} href={`/post/${rel.id}`} className="px-related-item">
+                          <span className="px-related-date">{formatDate(rel.publishedTime)} · 4m</span>
+                          <h4>{rel.headline}</h4>
+                        </ProtectedLink>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </aside>
+            </div>
+
             <FollowUpPanel postId={post.data.id} postHeadline={post.data.headline} />
           </article>
         ) : (

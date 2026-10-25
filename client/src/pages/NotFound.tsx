@@ -1,8 +1,6 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { AlertCircle, Home } from "lucide-react";
-import { useLocation } from "wouter";
-import Seo from "@/components/Seo";
+import { ArrowRight, Compass, Home, Search } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { PublicLayout } from "@/public/ReaderPages";
 
 export default function NotFound() {
   const [, setLocation] = useLocation();
@@ -12,42 +10,40 @@ export default function NotFound() {
   };
 
   return (
-    <><Seo title="Page not found — Aurikrex Bytes" description="The Aurikrex Bytes page you requested could not be found." path="/404" robots="noindex,nofollow" /><div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
-      <Card className="w-full max-w-lg mx-4 shadow-lg border-0 bg-white/80 backdrop-blur-sm">
-        <CardContent className="pt-8 pb-8 text-center">
-          <div className="flex justify-center mb-6">
-            <div className="relative">
-              <div className="absolute inset-0 bg-red-100 rounded-full animate-pulse" />
-              <AlertCircle className="relative h-16 w-16 text-red-500" />
-            </div>
+    <PublicLayout
+      seo={{
+        title: "Page not found — Aurikrex Bytes",
+        description: "The Aurikrex Bytes page you requested could not be found.",
+        path: "/404",
+        robots: "noindex,nofollow",
+      }}
+    >
+      <main className="container page-main">
+        <div className="empty-state px-not-found-card">
+          <div className="empty-icon">
+            <Compass size={26} />
           </div>
-
-          <h1 className="text-4xl font-bold text-slate-900 mb-2">404</h1>
-
-          <h2 className="text-xl font-semibold text-slate-700 mb-4">
-            Page Not Found
-          </h2>
-
-          <p className="text-slate-600 mb-8 leading-relaxed">
-            Sorry, the page you are looking for doesn't exist.
-            <br />
-            It may have been moved or deleted.
+          <span className="eyebrow">404 · Off the radar</span>
+          <h2>Page not found</h2>
+          <p>
+            The briefing or page you requested does not exist, or may have been moved in the archive.
           </p>
-
           <div
             id="not-found-button-group"
-            className="flex flex-col sm:flex-row gap-3 justify-center"
+            style={{ display: "flex", flexWrap: "wrap", gap: "12px", justifyContent: "center", marginTop: "8px" }}
           >
-            <Button
-              onClick={handleGoHome}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg"
-            >
-              <Home className="w-4 h-4 mr-2" />
-              Go Home
-            </Button>
+            <button type="button" onClick={handleGoHome} className="button">
+              <Home size={15} />
+              <span>Back to Discover</span>
+            </button>
+            <Link href="/archive" className="button button-outline">
+              <Search size={15} />
+              <span>Search All Bytes</span>
+              <ArrowRight size={14} />
+            </Link>
           </div>
-        </CardContent>
-      </Card>
-    </div></>
+        </div>
+      </main>
+    </PublicLayout>
   );
 }
