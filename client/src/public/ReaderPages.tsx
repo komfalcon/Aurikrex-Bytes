@@ -500,8 +500,8 @@ export function SiteHeader() {
             <div className="mobile-nav-section">
               <span className="mobile-nav-label">Explore</span>
               <Link href="/how-it-works" onClick={() => setMenu(false)}><Info size={16} /> About</Link>
-              {signedIn && <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>}
-              {signedIn && <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>}
+              <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>
+              <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>
             </div>
             <div className="mobile-nav-section mobile-nav-preferences">
               <span className="mobile-nav-label">Ecosystem &amp; Preferences</span>
@@ -2739,13 +2739,7 @@ export function ProfilePage() {
     { label: "Saved", value: String(saved.data?.length ?? 0), icon: <Bookmark size={16} /> },
     { label: "AuriCoins", value: coinBalance === null ? "…" : coinBalance.toLocaleString(), icon: <Sparkles size={16} /> },
   ];
-  const links: Array<{ href: string; label: string; icon: ReactNode }> = [
-    { href: "/saved", label: "Saved posts", icon: <Bookmark size={16} /> },
-    { href: "/help", label: "Help center", icon: <CircleHelp size={16} /> },
-    { href: "/contact", label: "Contact", icon: <Mail size={16} /> },
-    { href: "/privacy", label: "Privacy policy", icon: <ShieldCheck size={16} /> },
-    { href: "/terms", label: "Terms of service", icon: <FileText size={16} /> },
-  ];
+
 
   return (
     <PublicLayout seo={{ title: "Your profile — Aurikrex Bytes", description: "Your Aurikrex Bytes profile and settings.", path: "/profile", robots: "noindex,nofollow" }}>
@@ -2790,14 +2784,12 @@ export function ProfilePage() {
         </section>
 
         <section className="px-profile-card">
-          <h2>More</h2>
-          {links.map(link => (
-            <Link key={link.href} href={link.href} className="px-profile-link">
-              <span className="px-profile-link-icon">{link.icon}</span>
-              <span>{link.label}</span>
-              <ChevronRight size={16} />
-            </Link>
-          ))}
+          <h2>Saved Briefings</h2>
+          <Link href="/saved" className="px-profile-link">
+            <span className="px-profile-link-icon"><Bookmark size={16} /></span>
+            <span>Saved posts</span>
+            <ChevronRight size={16} />
+          </Link>
         </section>
 
         <button type="button" className="px-profile-signout" onClick={() => logout.mutate()} disabled={logout.isPending}>
