@@ -8,7 +8,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import PWAInstallPrompt from "./components/PWAInstallPrompt";
 import { ScrollToTopButton } from "./components/ScrollToTopButton";
 import Seo from "./components/Seo";
-import { Archive, Contact, HelpCenter, Home, HowItWorks, PostDetail, ReaderAuth, ReaderDashboard, SavedPosts, SupportPage } from "./public/ReaderPages";
+import { Archive, Contact, HelpCenter, Home, HowItWorks, PostDetail, ProfilePage, ReaderAuth, ReaderDashboard, SavedPosts, SupportPage } from "./public/ReaderPages";
 import MaintenancePage from "./public/MaintenancePage";
 import SsoCallbackPage from "./pages/SsoCallbackPage";
 import { trpc } from "./lib/trpc";
@@ -44,6 +44,7 @@ function Router() {
   return <Switch>
     <Route path="/dashboard" component={ReaderDashboard} />
     <Route path="/saved" component={SavedPosts} />
+    <Route path="/profile" component={ProfilePage} />
     <Route path="/" component={Home} />
     <Route path="/archive" component={Archive} />
     <Route path="/post/:id" component={PostDetail} />

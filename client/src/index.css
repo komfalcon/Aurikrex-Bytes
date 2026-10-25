@@ -9910,9 +9910,9 @@ button.brand-chip.is-active {
 
   .mobile-nav .mobile-nav-account .mobile-nav-btn-signout:hover,
   .mobile-nav .mobile-nav-account .mobile-nav-btn-signout:focus-visible {
-    border-color: color-mix(in srgb, var(--danger) 40%, var(--line)) !important;
-    background: color-mix(in srgb, var(--danger) 8%, transparent) !important;
-    color: var(--danger) !important;
+    border-color: color-mix(in srgb, var(--danger, #dc2626) 40%, var(--line)) !important;
+    background: color-mix(in srgb, var(--danger, #dc2626) 8%, transparent) !important;
+    color: var(--danger, #dc2626) !important;
   }
 
   /* Primary CTA ("Join free") */
@@ -10192,5 +10192,275 @@ button.brand-chip.is-active {
   .px-no-bottom-nav .floating-mobile-cta,
   .px-no-bottom-nav .followup-bottom-bar:not(.followup-bottom-bar-fullscreen) {
     bottom: calc(14px + env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* 15. Selected category chip (class is "active"), archive view toggle, profile page */
+.brand-chip.active,
+button.brand-chip.active {
+  background: var(--blue) !important;
+  border-color: var(--blue) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.24) !important;
+}
+
+.archive-view-toggle {
+  display: none;
+}
+
+@media (max-width: 850px) {
+  .archive-view-toggle {
+    display: block;
+    margin: 4px 0 14px;
+  }
+
+  .archive-view-toggle .feed-view-control {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .archive-view-toggle .feed-view-options {
+    flex: 1;
+  }
+
+  /* Compact (thumbnail) cards on the All Bytes page, mobile only */
+  .post-grid.archive-grid.archive-view-compact > .post-card .post-card-link {
+    display: grid !important;
+    grid-template-columns: 104px minmax(0, 1fr) !important;
+    align-items: stretch !important;
+  }
+
+  .post-grid.archive-grid.archive-view-compact > .post-card .card-image {
+    height: 100% !important;
+    min-height: 108px !important;
+    max-height: none !important;
+    aspect-ratio: auto !important;
+  }
+
+  .post-grid.archive-grid.archive-view-compact > .post-card .post-card-body {
+    padding: 12px 14px !important;
+  }
+
+  .post-grid.archive-grid.archive-view-compact > .post-card h2 {
+    font-size: 16.5px !important;
+    -webkit-line-clamp: 2 !important;
+    margin: 6px 0 4px !important;
+  }
+
+  .post-grid.archive-grid.archive-view-compact > .post-card p {
+    font-size: 12.5px !important;
+    -webkit-line-clamp: 2 !important;
+  }
+}
+
+.px-profile-page {
+  max-width: 720px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-block: 24px 40px;
+}
+
+.px-profile-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.px-profile-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.px-profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.px-profile-identity {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.px-profile-identity h1 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 1.25rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.px-profile-identity p {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.px-profile-photo-btn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.px-profile-photo-btn:hover,
+.px-profile-photo-btn:focus-visible {
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--line));
+  color: var(--blue);
+}
+
+.px-profile-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.px-profile-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.px-profile-stat strong {
+  font-size: 1.3rem;
+  line-height: 1.15;
+}
+
+.px-profile-stat span:last-child {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.px-profile-stat-icon {
+  color: var(--blue);
+}
+
+.px-profile-card {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 14px 8px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.px-profile-card h2 {
+  margin: 10px 0 4px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.px-profile-row,
+.px-profile-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.px-profile-row + .px-profile-row,
+.px-profile-link + .px-profile-link {
+  border-top: 1px solid var(--line);
+}
+
+.px-profile-link > span:nth-child(2) {
+  flex: 1 1 auto;
+}
+
+.px-profile-link-icon,
+.px-profile-link > svg {
+  color: var(--muted);
+}
+
+.px-profile-link:hover,
+.px-profile-link:focus-visible {
+  color: var(--blue);
+}
+
+.px-profile-signout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.px-profile-signout:hover,
+.px-profile-signout:focus-visible {
+  border-color: color-mix(in srgb, var(--danger, #dc2626) 40%, var(--line));
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, transparent);
+  color: var(--danger, #dc2626);
+}
+
+@media (max-width: 850px) {
+  .px-profile-page {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 480px) {
+  .px-profile-header {
+    flex-wrap: wrap;
+  }
+
+  .px-profile-photo-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .px-profile-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

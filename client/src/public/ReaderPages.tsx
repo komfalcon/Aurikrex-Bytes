@@ -84,6 +84,20 @@ const getInitialFeedViewMode = (): FeedViewMode => {
     ? "compact"
     : "editorial";
 };
+function useIsMobileViewport(maxWidth = 850) {
+  const query = `(max-width: ${maxWidth}px)`;
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(query).matches
+  );
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setIsMobile(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+  return isMobile;
+}
 const AUTH_RETURN_KEY = "aurikrex-auth-return-to";
 const safeReturnTo = (value: string | null | undefined) =>
   value && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
@@ -472,13 +486,17 @@ export function SiteHeader() {
         <>
           <button className="mobile-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMenu(false)} />
           <nav id="mobile-navigation-drawer" className="mobile-nav" aria-label="Mobile navigation">
-            {!signedIn && (
-              <div className="mobile-nav-section">
-                <span className="mobile-nav-label">Read</span>
-                <Link href="/" onClick={() => setMenu(false)}><HomeIcon size={16} /> Home</Link>
-                <Link href="/archive" onClick={() => setMenu(false)}><BookOpen size={16} /> All Bytes</Link>
-              </div>
-            )}
+            <div className="mobile-nav-section">
+              <span className="mobile-nav-label">Read</span>
+              {signedIn ? (
+                <Link href="/saved" onClick={() => setMenu(false)}><Bookmark size={16} /> Saved posts</Link>
+              ) : (
+                <>
+                  <Link href="/" onClick={() => setMenu(false)}><HomeIcon size={16} /> Home</Link>
+                  <Link href="/archive" onClick={() => setMenu(false)}><BookOpen size={16} /> All Bytes</Link>
+                </>
+              )}
+            </div>
             <div className="mobile-nav-section">
               <span className="mobile-nav-label">Explore</span>
               <Link href="/how-it-works" onClick={() => setMenu(false)}><Info size={16} /> About</Link>
@@ -646,7 +664,7 @@ function MobileBottomNav() {
   const signedIn = Boolean(session.data);
   const isDiscover = location === "/dashboard" || location.startsWith("/post/");
   const isArchive = location.startsWith("/archive");
-  const isSaved = location === "/saved";
+  const isProfile = location === "/profile";
 
   // Guests never see the bottom bar; all of their navigation lives in the menu.
   if (!signedIn) return null;
@@ -665,9 +683,9 @@ function MobileBottomNav() {
         <Search size={18} strokeWidth={1.9} />
         <span>All Bytes</span>
       </Link>
-      <Link href="/saved" className={"px-bottom-tab " + (isSaved ? "active" : "")}>
-        <Bookmark size={18} strokeWidth={1.9} />
-        <span>Saved</span>
+      <Link href="/profile" className={"px-bottom-tab " + (isProfile ? "active" : "")}>
+        <User size={18} strokeWidth={1.9} />
+        <span>Profile</span>
       </Link>
     </nav>
   );
@@ -1720,6 +1738,8 @@ export function ReaderDashboard() {
   const utils = trpc.useUtils();
   const [tab, setTab] = useState<"today" | "all">("today");
   const [viewMode, setViewMode] = useState<FeedViewMode>(getInitialFeedViewMode);
+  const isMobileViewport = useIsMobileViewport();
+  const effectiveViewMode: FeedViewMode = isMobileViewport ? viewMode : "editorial";
   const [preferenceHydrated, setPreferenceHydrated] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState("");
@@ -1841,11 +1861,13 @@ export function ReaderDashboard() {
             </div>
           </div>
         </section>
-        <div className="dashboard-view-control">
-          <FeedViewModeControl value={viewMode} onChange={mode => persistPreference(mode, false)} />
-          <span className="feed-view-helper">Controls your mobile reading view</span>
-        </div>
-        {showOnboarding && (
+        {isMobileViewport && (
+          <div className="dashboard-view-control">
+            <FeedViewModeControl value={viewMode} onChange={mode => persistPreference(mode, false)} />
+            <span className="feed-view-helper">Controls your mobile reading view</span>
+          </div>
+        )}
+        {showOnboarding && isMobileViewport && (
           <ReadingViewOnboarding
             value={viewMode}
             post={previewPost}
@@ -1912,10 +1934,10 @@ export function ReaderDashboard() {
             </div>
           </div>
           {dashboard.isLoading ? (
-            <div className={`skeleton-grid skeleton-grid-${viewMode}`}><div /><div /><div /></div>
+            <div className={`skeleton-grid skeleton-grid-${effectiveViewMode}`}><div /><div /><div /></div>
           ) : posts.length ? (
             <>
-              <div className={`post-grid post-grid-${viewMode}`}>
+              <div className={`post-grid post-grid-${effectiveViewMode}`}>
                 {visiblePosts.map((post: any, index: number) => (
                   <PostCard
                     key={post.id}
@@ -1963,6 +1985,16 @@ export function Archive() {
   const [accumulatedPosts, setAccumulatedPosts] = useState<any[]>([]);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const readPostIds = useMemo(() => getReadPostIds(), []);
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const savePreference = trpc.reader.setFeedPreference.useMutation();
+  const isMobileViewport = useIsMobileViewport();
+  const [viewMode, setViewMode] = useState<FeedViewMode>(getInitialFeedViewMode);
+  const effectiveViewMode: FeedViewMode = isMobileViewport ? viewMode : "editorial";
+  const changeViewMode = (mode: FeedViewMode) => {
+    setViewMode(mode);
+    window.localStorage.setItem(FEED_VIEW_MODE_KEY, mode);
+    savePreference.mutate({ feedViewMode: mode, onboardingCompleted: true });
+  };
 
   const archive = trpc.publicPosts.archive.useQuery({
     query,
@@ -2055,6 +2087,12 @@ export function Archive() {
           })}
         </div>
 
+        {isMobileViewport && session.data && (
+          <div className="archive-view-toggle">
+            <FeedViewModeControl value={viewMode} onChange={changeViewMode} />
+          </div>
+        )}
+
         {query && (
           <div className="search-results-info">
             <span>
@@ -2074,7 +2112,7 @@ export function Archive() {
           </div>
         ) : displayPosts.length ? (
           <>
-            <div className="post-grid archive-grid">
+            <div className={`post-grid archive-grid archive-view-${effectiveViewMode}`}>
               {displayPosts.map((post: any) => (
                 <PostCard key={post.id} post={post} isRead={readPostIds.has(post.id)} />
               ))}
@@ -2665,6 +2703,108 @@ export function PostDetail() {
           </div>
         )}
       </main>
+    </PublicLayout>
+  );
+}
+
+export function ProfilePage() {
+  const [, navigate] = useLocation();
+  const utils = trpc.useUtils();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const dashboard = trpc.reader.dashboard.useQuery(
+    { timeZone },
+    { enabled: Boolean(session.data), retry: false }
+  );
+  const saved = trpc.reader.saved.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
+  const coins = trpc.auth.coinsBalance.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
+  const [showPhoto, setShowPhoto] = useState(false);
+  const logout = trpc.auth.logout.useMutation({
+    onSuccess: () => {
+      utils.reader.session.setData(undefined, undefined);
+      window.location.replace("/");
+    },
+  });
+  useEffect(() => {
+    if (!session.isLoading && !session.data) navigate("/login");
+  }, [navigate, session.data, session.isLoading]);
+  if (session.isLoading || !session.data) return <div className="route-loading">Opening your profile…</div>;
+
+  const user = session.data;
+  const displayName = user.name?.trim() || user.email?.split("@")[0] || "Reader";
+  const coinBalance = coins.data ? Math.min((coins.data as { balance: number }).balance, 2500) : null;
+  const stats: Array<{ label: string; value: string; icon: ReactNode }> = [
+    { label: "Day streak", value: String(dashboard.data?.streak.currentStreak ?? 0), icon: <Flame size={16} /> },
+    { label: "Bytes read", value: String(getReadPostIds().size), icon: <BookOpen size={16} /> },
+    { label: "Saved", value: String(saved.data?.length ?? 0), icon: <Bookmark size={16} /> },
+    { label: "AuriCoins", value: coinBalance === null ? "…" : coinBalance.toLocaleString(), icon: <Sparkles size={16} /> },
+  ];
+  const links: Array<{ href: string; label: string; icon: ReactNode }> = [
+    { href: "/saved", label: "Saved posts", icon: <Bookmark size={16} /> },
+    { href: "/help", label: "Help center", icon: <CircleHelp size={16} /> },
+    { href: "/contact", label: "Contact", icon: <Mail size={16} /> },
+    { href: "/privacy", label: "Privacy policy", icon: <ShieldCheck size={16} /> },
+    { href: "/terms", label: "Terms of service", icon: <FileText size={16} /> },
+  ];
+
+  return (
+    <PublicLayout seo={{ title: "Your profile — Aurikrex Bytes", description: "Your Aurikrex Bytes profile and settings.", path: "/profile", robots: "noindex,nofollow" }}>
+      <main className="container page-main px-profile-page">
+        <section className="px-profile-header">
+          <div className="px-profile-avatar">
+            {user.avatarUrl ? (
+              <img src={user.avatarUrl} alt={displayName} />
+            ) : (
+              <span>{getInitial(displayName)}</span>
+            )}
+          </div>
+          <div className="px-profile-identity">
+            <h1>{displayName}</h1>
+            {user.email && <p>{user.email}</p>}
+          </div>
+          <button type="button" className="px-profile-photo-btn" onClick={() => setShowPhoto(true)}>
+            <Camera size={15} /> <span>Change photo</span>
+          </button>
+        </section>
+
+        <section className="px-profile-stats" aria-label="Your reading stats">
+          {stats.map(stat => (
+            <div className="px-profile-stat" key={stat.label}>
+              <span className="px-profile-stat-icon">{stat.icon}</span>
+              <strong>{stat.value}</strong>
+              <span>{stat.label}</span>
+            </div>
+          ))}
+        </section>
+
+        <section className="px-profile-card">
+          <h2>Settings</h2>
+          <div className="px-profile-row">
+            <span>Appearance</span>
+            <ThemeToggle />
+          </div>
+          <div className="px-profile-row">
+            <span>Aurikrex Apps</span>
+            <AurikrexAppsSwitcher currentAppId="bytes" />
+          </div>
+        </section>
+
+        <section className="px-profile-card">
+          <h2>More</h2>
+          {links.map(link => (
+            <Link key={link.href} href={link.href} className="px-profile-link">
+              <span className="px-profile-link-icon">{link.icon}</span>
+              <span>{link.label}</span>
+              <ChevronRight size={16} />
+            </Link>
+          ))}
+        </section>
+
+        <button type="button" className="px-profile-signout" onClick={() => logout.mutate()} disabled={logout.isPending}>
+          <LogOut size={16} /> <span>Sign out</span>
+        </button>
+      </main>
+      <ProfileLightboxModal isOpen={showPhoto} onClose={() => setShowPhoto(false)} sessionData={session.data} />
     </PublicLayout>
   );
 }
