@@ -163,10 +163,12 @@ function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
   return (
     <button
+      type="button"
       className="icon-button"
       onClick={toggleTheme}
       aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-      title="Toggle theme"
+      aria-pressed={theme === "dark"}
+      title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
     >
       {theme === "light" ? <Moon size={17} strokeWidth={1.8} /> : <Sun size={17} strokeWidth={1.8} />}
     </button>
@@ -345,6 +347,29 @@ export function SiteHeader() {
   const isAboutActive = location === "/how-it-works";
   const isHelpActive = location === "/help";
   const isContactActive = location === "/contact";
+
+  useEffect(() => {
+    setMenu(false);
+  }, [location]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (!menu) {
+      document.body.style.overflow = "";
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menu]);
+
   return (
     <header className="site-header">
       <div className="site-header-left">
@@ -466,22 +491,47 @@ export function SiteHeader() {
               <Link href="/terms" onClick={() => setMenu(false)}><FileText size={16} /> Terms of service</Link>
             </div>
             <div className="mobile-nav-account">
-              {signedIn ? <>
-                <button
-                  className="mobile-nav-join text-button"
-                  onClick={() => {
-                    setMenu(false);
-                    setShowProfileModal(true);
-                  }}
-                  style={{ marginBottom: "10px" }}
-                >
-                  <User size={16} /> View Profile Photo
-                </button>
-                <button className="mobile-nav-join text-button" onClick={() => logout.mutate()}><LogOut size={16} /> Sign out</button>
-              </> : <>
-                <Link href={authRoutes.login} onClick={() => setMenu(false)}>Sign in</Link>
-                <Link className="mobile-nav-join" href={authRoutes.signup} onClick={() => setMenu(false)}>Join free <ArrowRight size={14} /></Link>
-              </>}
+              {signedIn ? (
+                <>
+                  <button
+                    type="button"
+                    className="mobile-nav-btn mobile-nav-btn-secondary"
+                    onClick={() => {
+                      setMenu(false);
+                      setShowProfileModal(true);
+                    }}
+                  >
+                    <User size={16} />
+                    <span>View Profile Photo</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="mobile-nav-btn mobile-nav-btn-signout"
+                    onClick={() => logout.mutate()}
+                  >
+                    <LogOut size={16} />
+                    <span>Sign out</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    className="mobile-nav-btn mobile-nav-btn-secondary"
+                    href={authRoutes.login}
+                    onClick={() => setMenu(false)}
+                  >
+                    <span>Sign in</span>
+                  </Link>
+                  <Link
+                    className="mobile-nav-btn mobile-nav-btn-primary"
+                    href={authRoutes.signup}
+                    onClick={() => setMenu(false)}
+                  >
+                    <span>Join free</span>
+                    <ArrowRight size={14} />
+                  </Link>
+                </>
+              )}
             </div>
           </nav>
         </>
@@ -1154,15 +1204,17 @@ function PostCard({
         <div className="post-card-body">
           <div className="post-meta">
             <span className="px-card-topic-pill">{featured ? `Lead Story · ${topic}` : topic}</span>
-            <span>·</span>
-            <span>{formatDate(post.publishedTime)}</span>
-            <span>·</span>
-            <span>4 min read</span>
-            {isRead && (
-              <span className="post-card-read-badge">
-                · <Check size={13} /> Read
-              </span>
-            )}
+            <span className="post-meta-info">
+              <span className="post-meta-date">{formatDate(post.publishedTime)}</span>
+              <span className="post-meta-dot" aria-hidden="true">·</span>
+              <span className="post-meta-readtime">4 min read</span>
+              {isRead && (
+                <span className="post-card-read-badge">
+                  <span className="post-meta-dot" aria-hidden="true">·</span>
+                  <Check size={13} /> Read
+                </span>
+              )}
+            </span>
           </div>
           <h2>{post.headline}</h2>
           <p><FormattedInlineText text={excerpt(post.body, featured ? 220 : 155)} /></p>

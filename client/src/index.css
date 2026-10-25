@@ -9293,3 +9293,778 @@ body.has-install-prompt {
   0%, 100% { opacity: 0.35; transform: scale(0.85); }
   50% { opacity: 1; transform: scale(1.15); }
 }
+
+/* ==========================================================================
+   12. MOBILE UI BUG FIXES & RESPONSIVE LAYOUT POLISH
+   ========================================================================== */
+
+/* 12.1 Category Filter Navigation (Horizontal Scroll & Pill Sizing) */
+.px-discover-controls {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.brand-filter-chips {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.brand-chip,
+button.brand-chip {
+  flex: 0 0 auto !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: auto !important;
+  min-width: max-content !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 0 15px !important;
+  border-radius: 999px !important;
+  border: 1px solid var(--line) !important;
+  background: var(--surface) !important;
+  color: var(--muted) !important;
+  font-family: var(--sans) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  letter-spacing: -0.01em !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  transition: background-color 0.16s ease, color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease !important;
+}
+
+.brand-chip:hover,
+button.brand-chip:hover {
+  color: var(--ink) !important;
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--line)) !important;
+  background: var(--surface-2) !important;
+}
+
+.brand-chip.is-active,
+button.brand-chip.is-active {
+  background: var(--blue) !important;
+  border-color: var(--blue) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.24) !important;
+}
+
+/* 12.2 News-Card Metadata Layout (Topic Badge + Date + Read Time) */
+.post-card .post-meta {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 6px 10px !important;
+  margin: 0 0 10px !important;
+  padding: 0 !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  color: var(--muted) !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  line-height: 1.35 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+}
+
+.post-card .px-card-topic-pill {
+  flex: 0 1 auto !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  max-width: 100% !important;
+  padding: 4px 10px !important;
+  border-radius: 7px !important;
+  background: color-mix(in srgb, var(--blue) 12%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--blue) 22%, transparent) !important;
+  color: var(--blue) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+  letter-spacing: 0.03em !important;
+  text-transform: none !important;
+  white-space: normal !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+}
+
+.post-card .post-meta-info {
+  display: inline-flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 4px 6px !important;
+  min-width: 0 !important;
+  color: var(--muted) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  line-height: 1.35 !important;
+  letter-spacing: 0.05em !important;
+  text-transform: uppercase !important;
+}
+
+.post-card .post-meta-date,
+.post-card .post-meta-readtime,
+.post-card .post-card-read-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+.post-card .post-meta-dot {
+  color: color-mix(in srgb, var(--muted) 65%, transparent) !important;
+  white-space: nowrap !important;
+  user-select: none !important;
+}
+
+/* 12.3 News-Card Structure, Spacing, Image Framing, and Footer Actions */
+.post-card {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border-radius: 16px !important;
+  border: 1px solid var(--line) !important;
+  background: var(--surface) !important;
+}
+
+.post-card > .post-card-link,
+.post-card.post-card-featured > .post-card-link {
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.post-card .card-image,
+.post-card.post-card-featured .card-image {
+  margin: 0 !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--line) !important;
+  width: 100% !important;
+  overflow: hidden !important;
+  background: var(--surface-2) !important;
+}
+
+.post-card .card-image img {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 0 !important;
+}
+
+.post-card .post-card-body {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+  padding: 18px 20px 16px !important;
+  gap: 0 !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.post-card .post-card-body h2 {
+  margin: 0 0 8px !important;
+  width: 100% !important;
+  color: var(--ink) !important;
+  font-family: var(--serif) !important;
+  font-weight: 700 !important;
+  line-height: 1.24 !important;
+  letter-spacing: -0.015em !important;
+}
+
+.post-card .post-card-body p {
+  margin: 0 0 12px !important;
+  width: 100% !important;
+  color: var(--muted) !important;
+  font-size: 14px !important;
+  line-height: 1.56 !important;
+}
+
+.post-card .read-more,
+.post-card .px-featured-cta {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  min-height: 0 !important;
+  height: auto !important;
+  padding: 2px 0 !important;
+  margin-top: auto !important;
+  color: var(--blue) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  line-height: 1.3 !important;
+  white-space: nowrap !important;
+}
+
+.post-card .post-card-actions,
+.post-card.post-card-featured .post-card-actions {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 10px !important;
+  width: 100% !important;
+  padding: 10px 20px !important;
+  margin: 0 !important;
+  border-top: 1px solid var(--line) !important;
+  background: color-mix(in srgb, var(--surface-2) 45%, var(--surface)) !important;
+  box-sizing: border-box !important;
+}
+
+.post-card .px-card-synthesis-row {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+  min-height: 32px !important;
+  padding: 2px 0 !important;
+  flex: 0 1 auto !important;
+  white-space: nowrap !important;
+  text-decoration: none !important;
+}
+
+.post-card .px-source-avatars {
+  display: inline-flex !important;
+  align-items: center !important;
+  flex-shrink: 0 !important;
+}
+
+.post-card .px-sources-count-label {
+  display: inline-block !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  line-height: 1.2 !important;
+  color: var(--muted) !important;
+}
+
+.post-card .engagement-bar {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 6px !important;
+  flex: 0 0 auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.post-card .engagement-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  min-width: 32px !important;
+  padding: 0 9px !important;
+  border-radius: 999px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+}
+
+/* 12.4 Mobile Responsive Overrides (<= 850px) */
+@media (max-width: 850px) {
+  html,
+  body {
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+  }
+
+  /* Fix Header Brand Title so "Aurikrex Bytes" is never clipped to "A..." */
+  .site-header {
+    padding: 0 12px !important;
+    gap: 8px !important;
+  }
+
+  .site-header-left {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+  }
+
+  .site-header .brand {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+  }
+
+  .site-header .brand img {
+    width: 30px !important;
+    height: 30px !important;
+    border-radius: 8px !important;
+    flex: 0 0 30px !important;
+  }
+
+  .site-header .brand span {
+    display: inline-block !important;
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+    font-size: 15.5px !important;
+    line-height: 1.15 !important;
+    letter-spacing: -0.02em !important;
+  }
+
+  .header-actions {
+    flex: 0 0 auto !important;
+    gap: 5px !important;
+  }
+
+  .px-header-utility-row {
+    gap: 5px !important;
+  }
+
+  .header-actions .push-toggle,
+  .header-actions .icon-button,
+  .header-actions .mobile-menu,
+  .header-actions .apps-switcher-trigger {
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 0 !important;
+    border-radius: 10px !important;
+  }
+
+  /* Horizontal Category Filter Navigation on Mobile */
+  .brand-filter-chips {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+    width: calc(100% + 8px) !important;
+    margin-inline: -4px !important;
+    padding: 4px 4px 8px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    overscroll-behavior-x: contain !important;
+    scroll-snap-type: x proximity !important;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+
+  .brand-filter-chips::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+
+  .brand-filter-chips .brand-chip,
+  .brand-filter-chips button.brand-chip {
+    flex: 0 0 auto !important;
+    flex-shrink: 0 !important;
+    width: auto !important;
+    min-width: max-content !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 0 15px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+    scroll-snap-align: start !important;
+  }
+
+  /* Mobile Menu Panel, Backdrop, Appearance Toggle & Account Buttons */
+  .mobile-nav-backdrop {
+    position: fixed !important;
+    inset: 60px 0 0 0 !important;
+    z-index: 990 !important;
+    background: rgba(9, 13, 22, 0.48) !important;
+    backdrop-filter: blur(4px) !important;
+    -webkit-backdrop-filter: blur(4px) !important;
+  }
+
+  .mobile-nav {
+    position: fixed !important;
+    top: 68px !important;
+    right: 12px !important;
+    left: auto !important;
+    z-index: 995 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 14px !important;
+    width: min(332px, calc(100vw - 24px)) !important;
+    max-height: calc(100dvh - 84px - env(safe-area-inset-bottom)) !important;
+    padding: 16px 14px calc(16px + env(safe-area-inset-bottom)) !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    overscroll-behavior: contain !important;
+    -webkit-overflow-scrolling: touch !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 18px !important;
+    background: var(--surface) !important;
+    color: var(--ink) !important;
+    box-shadow: 0 24px 64px rgba(2, 6, 23, 0.34), 0 4px 16px rgba(2, 6, 23, 0.14) !important;
+    backdrop-filter: none !important;
+  }
+
+  .mobile-nav-section {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .mobile-nav-label {
+    padding: 0 10px 4px !important;
+    color: var(--muted) !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+  }
+
+  .mobile-nav-section > a {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    min-height: 40px !important;
+    padding: 0 10px !important;
+    border-radius: 10px !important;
+    color: var(--ink) !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    text-decoration: none !important;
+  }
+
+  .mobile-nav-section > a svg {
+    flex: 0 0 auto !important;
+    color: var(--muted) !important;
+  }
+
+  .mobile-nav-section > a:hover,
+  .mobile-nav-section > a:focus-visible {
+    background: var(--surface-2) !important;
+    color: var(--blue) !important;
+  }
+
+  /* Appearance & Ecosystem Preference Rows */
+  .mobile-nav-preferences {
+    gap: 6px !important;
+    padding-top: 10px !important;
+    border-top: 1px solid var(--line) !important;
+  }
+
+  .mobile-nav-preference-row {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    min-height: 42px !important;
+    padding: 4px 10px !important;
+    border-radius: 10px !important;
+    background: color-mix(in srgb, var(--surface-2) 55%, transparent) !important;
+    color: var(--ink) !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+  }
+
+  .mobile-nav-preference-row > span {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    color: var(--ink) !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+  }
+
+  /* Fix Appearance Toggle Button & Icon Centering inside Mobile Menu */
+  .mobile-nav-preference-row .icon-button,
+  .mobile-nav .mobile-nav-preference-row button.icon-button,
+  .mobile-nav-preference-row .apps-switcher-trigger {
+    flex: 0 0 36px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border-radius: 10px !important;
+    border: 1px solid var(--line) !important;
+    background: var(--surface) !important;
+    color: var(--ink) !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.12s ease !important;
+  }
+
+  .mobile-nav-preference-row .icon-button svg,
+  .mobile-nav .mobile-nav-preference-row button.icon-button svg,
+  .mobile-nav-preference-row .apps-switcher-trigger svg {
+    display: block !important;
+    margin: 0 auto !important;
+    color: currentColor !important;
+    flex-shrink: 0 !important;
+  }
+
+  .mobile-nav-preference-row .icon-button:hover,
+  .mobile-nav-preference-row .icon-button:focus-visible,
+  .mobile-nav-preference-row .apps-switcher-trigger:hover,
+  .mobile-nav-preference-row .apps-switcher-trigger:focus-visible {
+    color: var(--blue) !important;
+    border-color: color-mix(in srgb, var(--blue) 45%, var(--line)) !important;
+    background: var(--surface-2) !important;
+    outline: none !important;
+  }
+
+  .mobile-nav-preference-row .icon-button:active,
+  .mobile-nav-preference-row .apps-switcher-trigger:active {
+    transform: scale(0.95) !important;
+  }
+
+  .mobile-nav-legal {
+    padding-top: 10px !important;
+    border-top: 1px solid var(--line) !important;
+  }
+
+  /* Mobile Menu Account Actions Hierarchy ("View Profile Photo", "Sign out", "Sign in", "Join free") */
+  .mobile-nav-account {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    padding: 12px 4px 2px !important;
+    margin-top: 2px !important;
+    border-top: 1px solid var(--line) !important;
+    flex-shrink: 0 !important;
+  }
+
+  .mobile-nav .mobile-nav-account .mobile-nav-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    width: 100% !important;
+    min-height: 42px !important;
+    height: 42px !important;
+    padding: 0 14px !important;
+    margin: 0 !important;
+    border-radius: 11px !important;
+    font-family: var(--sans) !important;
+    font-size: 13.5px !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+    text-decoration: none !important;
+    box-sizing: border-box !important;
+    cursor: pointer !important;
+    transition: background-color 0.16s ease, color 0.16s ease, border-color 0.16s ease, transform 0.12s ease !important;
+  }
+
+  .mobile-nav .mobile-nav-account .mobile-nav-btn svg {
+    color: currentColor !important;
+    flex: 0 0 auto !important;
+  }
+
+  /* Secondary / Outlined action ("View Profile Photo" & "Sign in") */
+  .mobile-nav .mobile-nav-account .mobile-nav-btn-secondary {
+    background: var(--surface-2) !important;
+    border: 1px solid var(--line) !important;
+    color: var(--ink) !important;
+  }
+
+  .mobile-nav .mobile-nav-account .mobile-nav-btn-secondary:hover,
+  .mobile-nav .mobile-nav-account .mobile-nav-btn-secondary:focus-visible {
+    border-color: color-mix(in srgb, var(--blue) 45%, var(--line)) !important;
+    color: var(--blue) !important;
+    background: color-mix(in srgb, var(--blue) 8%, var(--surface-2)) !important;
+  }
+
+  /* Sign out action (restrained muted/danger-hover outline treatment) */
+  .mobile-nav .mobile-nav-account .mobile-nav-btn-signout {
+    background: transparent !important;
+    border: 1px solid var(--line) !important;
+    color: var(--muted) !important;
+  }
+
+  .mobile-nav .mobile-nav-account .mobile-nav-btn-signout:hover,
+  .mobile-nav .mobile-nav-account .mobile-nav-btn-signout:focus-visible {
+    border-color: color-mix(in srgb, var(--danger) 40%, var(--line)) !important;
+    background: color-mix(in srgb, var(--danger) 8%, transparent) !important;
+    color: var(--danger) !important;
+  }
+
+  /* Primary CTA ("Join free") */
+  .mobile-nav .mobile-nav-account .mobile-nav-btn-primary {
+    background: var(--blue) !important;
+    border: 1px solid var(--blue) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.22) !important;
+  }
+
+  .mobile-nav .mobile-nav-account .mobile-nav-btn-primary:hover,
+  .mobile-nav .mobile-nav-account .mobile-nav-btn-primary:focus-visible {
+    background: var(--blue-dark) !important;
+    border-color: var(--blue-dark) !important;
+    color: #ffffff !important;
+  }
+
+  /* News-Card Mobile Alignment, Image Proportions & Footer Spacing */
+  .post-grid.post-grid-editorial > .post-card .post-card-link,
+  .post-grid.post-grid-editorial > .post-card.post-card-featured .post-card-link,
+  .story-carousel .post-card .post-card-link,
+  .story-carousel .post-card.post-card-featured .post-card-link,
+  .post-grid.archive-grid > .post-card .post-card-link,
+  .saved-page .post-grid > .post-card .post-card-link {
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 0 !important;
+  }
+
+  .post-grid.post-grid-editorial > .post-card .card-image,
+  .post-grid.post-grid-editorial > .post-card.post-card-featured .card-image,
+  .story-carousel .post-card .card-image,
+  .story-carousel .post-card.post-card-featured .card-image,
+  .post-grid.archive-grid > .post-card .card-image,
+  .saved-page .post-grid > .post-card .card-image {
+    width: 100% !important;
+    aspect-ratio: 16 / 9 !important;
+    height: auto !important;
+    min-height: 176px !important;
+    max-height: 216px !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .post-card .post-card-body,
+  .post-card.post-card-featured .post-card-body {
+    padding: 15px 16px 14px !important;
+  }
+
+  .post-card .post-meta {
+    gap: 6px 8px !important;
+    margin-bottom: 8px !important;
+  }
+
+  .post-card .px-card-topic-pill {
+    font-size: 11px !important;
+    padding: 3.5px 9px !important;
+    border-radius: 6px !important;
+  }
+
+  .post-card .post-meta-info {
+    font-size: 10.5px !important;
+    gap: 4px 6px !important;
+  }
+
+  .post-card .post-card-body h2,
+  .post-card.post-card-featured .post-card-body h2 {
+    font-size: clamp(1.18rem, 4.8vw, 1.38rem) !important;
+    line-height: 1.25 !important;
+    margin: 0 0 7px !important;
+  }
+
+  .post-card .post-card-body p,
+  .post-card.post-card-featured .post-card-body p {
+    font-size: 13.5px !important;
+    line-height: 1.52 !important;
+    margin: 0 0 10px !important;
+    -webkit-line-clamp: 3 !important;
+  }
+
+  .post-card .post-card-actions,
+  .post-card.post-card-featured .post-card-actions {
+    padding: 9px 16px !important;
+    gap: 8px !important;
+  }
+
+  .post-card .px-sources-count-label {
+    font-size: 11.5px !important;
+    white-space: nowrap !important;
+  }
+
+  .post-card .engagement-btn {
+    height: 30px !important;
+    min-height: 30px !important;
+    min-width: 30px !important;
+    padding: 0 8px !important;
+    font-size: 11.5px !important;
+  }
+
+  /* Scroll-to-Top Floating Button: Keep unobtrusive & out of card footer action zone */
+  .scroll-to-top-btn {
+    bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+    left: 14px !important;
+    right: auto !important;
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    min-height: 38px !important;
+    z-index: 90 !important;
+    opacity: 0.9 !important;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.22) !important;
+  }
+}
+
+/* Narrow Mobile Viewports (320px - 380px) */
+@media (max-width: 380px) {
+  .site-header {
+    padding: 0 10px !important;
+  }
+
+  .site-header .brand {
+    gap: 6px !important;
+  }
+
+  .site-header .brand img {
+    width: 26px !important;
+    height: 26px !important;
+    flex: 0 0 26px !important;
+  }
+
+  .site-header .brand span {
+    font-size: 14px !important;
+  }
+
+  .header-actions .push-toggle,
+  .header-actions .icon-button,
+  .header-actions .mobile-menu,
+  .header-actions .apps-switcher-trigger {
+    width: 33px !important;
+    min-width: 33px !important;
+    height: 33px !important;
+    min-height: 33px !important;
+  }
+
+  .post-card .post-card-body,
+  .post-card.post-card-featured .post-card-body {
+    padding: 14px 14px 12px !important;
+  }
+
+  .post-card .post-card-actions,
+  .post-card.post-card-featured .post-card-actions {
+    padding: 8px 14px !important;
+    gap: 6px !important;
+  }
+}
