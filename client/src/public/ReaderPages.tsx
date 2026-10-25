@@ -48,6 +48,7 @@ import { trpc } from "@/lib/trpc";
 import { PushSubscribeButton } from "@/components/PushSubscribeButton";
 import { AurikrexAppsSwitcher } from "@/components/AurikrexAppsSwitcher";
 import { AuriCoinBadge } from "@/components/AuriCoinBadge";
+import { EndOfFeedIllustration } from "@/components/EndOfFeedIllustration";
 import { useTheme } from "@/contexts/ThemeContext";
 import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
 import Seo from "@/components/Seo";
@@ -1045,15 +1046,9 @@ function TodayCompletionCard({
       role="region"
       aria-label="Today's briefing completion status"
     >
-      {/* 3D Illustration Area with ambient circular glow */}
+      {/* Vector Animated Illustration Area with ambient circular glow */}
       <div className="today-completion-art">
-        <img
-          src={isFullyRead ? "/images/briefing-completed.png" : "/images/briefing-uncompleted.png"}
-          alt={isFullyRead ? "Briefing complete illustration" : "Briefing in progress illustration"}
-          className="today-completion-img"
-          loading="lazy"
-          decoding="async"
-        />
+        <EndOfFeedIllustration isFullyRead={isFullyRead} />
       </div>
 
       {/* Pill Badge */}
@@ -1093,7 +1088,7 @@ function TodayCompletionCard({
 
       {/* Streak Pill */}
       <div className="today-completion-streak">
-        <span className="streak-fire" aria-hidden="true"><FireReactionIcon active={true} /></span>
+        <span className="streak-fire" aria-hidden="true"><Flame size={15} fill="currentColor" /></span>
         <span className="streak-divider">|</span>
         <span className="streak-text">{Math.max(1, streak || 1)}-Day Learning Streak</span>
       </div>

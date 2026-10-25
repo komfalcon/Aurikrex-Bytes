@@ -81,6 +81,7 @@ var init_schema = __esm({
     readers = sqliteTable("readers", {
       id: integer("id").primaryKey({ autoIncrement: true }),
       name: text("name").notNull().default(""),
+      nickname: text("nickname"),
       email: text("email").notNull().unique(),
       passwordHash: text("password_hash"),
       googleId: text("google_id").unique(),
@@ -281,6 +282,7 @@ __export(db_exports, {
   togglePostReaction: () => togglePostReaction,
   updateReaderAvatar: () => updateReaderAvatar,
   updateReaderFeedPreference: () => updateReaderFeedPreference,
+  updateReaderProfile: () => updateReaderProfile,
   upsertUser: () => upsertUser
 });
 import { createClient } from "@libsql/client";
@@ -293,6 +295,7 @@ async function repairReaderSchema(db) {
   );
   const repairs = [
     ["name", "text DEFAULT '' NOT NULL"],
+    ["nickname", "text"],
     ["verification_token_used", "text"],
     ["current_streak", "integer DEFAULT 0 NOT NULL"],
     ["longest_streak", "integer DEFAULT 0 NOT NULL"],
@@ -468,6 +471,19 @@ async function getReaderById(id) {
   const result = await db.select().from(readers).where(eq(readers.id, id)).limit(1);
   return result[0];
 }
+async function updateReaderProfile(readerId, data) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const updateSet = {};
+  if (data.name !== void 0) updateSet.name = data.name.trim();
+  if (data.nickname !== void 0) {
+    updateSet.nickname = data.nickname && data.nickname.trim().length > 0 ? data.nickname.trim() : null;
+  }
+  if (Object.keys(updateSet).length > 0) {
+    await db.update(readers).set(updateSet).where(eq(readers.id, readerId));
+  }
+  return getReaderById(readerId);
+}
 async function updateReaderAvatar(readerId, avatarUrl) {
   const db = await getDb();
   if (!db) throw new Error("Database is not configured");
@@ -602,6 +618,7 @@ async function getReaderDashboard(readerId, timeZone = process.env.APP_TIMEZONE 
     reader: {
       id: reader.id,
       name: reader.name,
+      nickname: reader.nickname || null,
       email: reader.email,
       feedViewMode: reader.feedViewMode,
       feedViewOnboardingCompleted: reader.feedViewOnboardingCompleted
@@ -4834,8 +4851,30 @@ var appRouter = router({
       return {
         ...payload,
         name: reader?.name || "",
+        nickname: reader?.nickname || null,
         avatarUrl: reader?.avatarUrl || null,
         emailVerified: Boolean(reader?.emailVerified)
+      };
+    }),
+    updateProfile: publicProcedure.input(
+      z2.object({
+        name: z2.string().trim().min(1, "Name cannot be empty").max(100),
+        nickname: z2.string().trim().max(50).optional().nullable()
+      })
+    ).mutation(async ({ input, ctx }) => {
+      const reader = await requireReader(ctx);
+      const updated = await updateReaderProfile(reader.id, {
+        name: input.name,
+        nickname: input.nickname
+      });
+      return {
+        success: true,
+        reader: updated ? {
+          id: updated.id,
+          name: updated.name,
+          nickname: updated.nickname || null,
+          email: updated.email
+        } : null
       };
     }),
     updateAvatar: publicProcedure.input(z2.object({ avatarUrl: z2.string().refine(isSafeAvatarUrl, "Invalid avatar URL") })).mutation(async ({ input, ctx }) => {
