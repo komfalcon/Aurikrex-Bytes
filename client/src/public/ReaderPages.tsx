@@ -556,18 +556,20 @@ export function SiteFooter() {
             </div>
           </div>
         </div>
-        <div className="footer-links">
-          <span>Explore</span>
-          <Link href={readerHome}>Today's Bytes</Link>
-          <Link href="/archive">All Bytes</Link>
-          <Link href="/how-it-works">How it works</Link>
-        </div>
-        <div className="footer-links">
-          <span>Support</span>
-          <Link href="/help">Help center</Link>
-          <Link href="/contact">Contact</Link>
-          <Link href="/privacy">Privacy</Link>
-          <Link href="/terms">Terms</Link>
+        <div className="footer-columns-pair">
+          <div className="footer-links">
+            <span>Explore</span>
+            <Link href={readerHome}>Today's Bytes</Link>
+            <Link href="/archive">All Bytes</Link>
+            <Link href="/how-it-works">How it works</Link>
+          </div>
+          <div className="footer-links">
+            <span>Support</span>
+            <Link href="/help">Help center</Link>
+            <Link href="/contact">Contact</Link>
+            <Link href="/privacy">Privacy</Link>
+            <Link href="/terms">Terms</Link>
+          </div>
         </div>
       </div>
       <div className="footer-bottom">
@@ -1662,6 +1664,8 @@ export function ReaderDashboard() {
     () => todayPosts.filter((p: any) => readPostIds.has(p.id)).length,
     [todayPosts, readPostIds]
   );
+  const [visibleAllCount, setVisibleAllCount] = useState(12);
+  const dashboardSentinelRef = useRef<HTMLDivElement | null>(null);
   const rawPosts = tab === "today" ? todayPosts : data?.allPosts ?? [];
   const posts = useMemo(() => {
     if (!dashboardSearch.trim()) return rawPosts;
@@ -1670,6 +1674,30 @@ export function ReaderDashboard() {
       p.headline?.toLowerCase().includes(q) || p.body?.toLowerCase().includes(q)
     );
   }, [rawPosts, dashboardSearch]);
+  const visiblePosts = useMemo(
+    () => (tab === "all" ? posts.slice(0, visibleAllCount) : posts),
+    [tab, posts, visibleAllCount]
+  );
+  const hasMoreDashboardAll = tab === "all" && visibleAllCount < posts.length;
+
+  useEffect(() => {
+    setVisibleAllCount(12);
+  }, [tab, dashboardSearch]);
+
+  useEffect(() => {
+    const node = dashboardSentinelRef.current;
+    if (!node || !hasMoreDashboardAll) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleAllCount(prev => Math.min(prev + 12, posts.length));
+        }
+      },
+      { rootMargin: "360px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMoreDashboardAll, posts.length]);
 
   useEffect(() => {
     if (!session.isLoading && !session.data) navigate("/login");
@@ -1809,7 +1837,7 @@ export function ReaderDashboard() {
           ) : posts.length ? (
             <>
               <div className={`post-grid post-grid-${viewMode}`}>
-                {posts.map((post: any, index: number) => (
+                {visiblePosts.map((post: any, index: number) => (
                   <PostCard
                     key={post.id}
                     post={post}
@@ -1818,6 +1846,20 @@ export function ReaderDashboard() {
                   />
                 ))}
               </div>
+              {tab === "all" && posts.length > 0 && (
+                <div ref={dashboardSentinelRef} className="px-infinite-scroll-status" aria-live="polite">
+                  {hasMoreDashboardAll ? (
+                    <span className="px-infinite-loading-pill">
+                      <span className="px-infinite-dot" />
+                      <span>Scrolling more Bytes…</span>
+                    </span>
+                  ) : (
+                    <span className="px-infinite-end-label">
+                      All {posts.length} Bytes in feed loaded
+                    </span>
+                  )}
+                </div>
+              )}
               {tab === "today" && (
                 <TodayCompletionCard
                   streak={data?.streak.currentStreak}
@@ -1839,6 +1881,9 @@ const BRAND_TAGS = ["All", "Apple", "Google", "AI", "Nvidia", "Microsoft", "Meta
 export function Archive() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [accumulatedPosts, setAccumulatedPosts] = useState<any[]>([]);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const readPostIds = useMemo(() => getReadPostIds(), []);
 
   const archive = trpc.publicPosts.archive.useQuery({
     query,
@@ -1846,17 +1891,51 @@ export function Archive() {
     pageSize: 12,
   });
 
+  useEffect(() => {
+    if (!archive.data?.posts) return;
+    if (page === 1) {
+      setAccumulatedPosts(archive.data.posts);
+    } else {
+      setAccumulatedPosts(prev => {
+        const seen = new Set(prev.map((p: any) => p.id));
+        const incoming = archive.data.posts.filter((p: any) => !seen.has(p.id));
+        return [...prev, ...incoming];
+      });
+    }
+  }, [archive.data?.posts, page]);
+
+  const updateQuery = (nextQuery: string) => {
+    setQuery(nextQuery);
+    setPage(1);
+    setAccumulatedPosts([]);
+  };
+
+  const nextPage = archive.data?.nextPage ?? null;
+
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    if (!node || nextPage === null || archive.isFetching) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0]?.isIntersecting && !archive.isFetching && nextPage !== null) {
+          setPage(nextPage);
+        }
+      },
+      { rootMargin: "380px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [nextPage, archive.isFetching]);
+
+  const displayPosts = accumulatedPosts.length > 0 ? accumulatedPosts : (archive.data?.posts ?? []);
+
   return (
     <PublicLayout
       seo={{
         title: "All Bytes — Aurikrex Bytes archive",
         description:
           "Browse and search every published edition of Aurikrex Bytes — your daily curated technology, AI, startup, and software engineering news archive.",
-        path: page > 1 ? `/archive?page=${page}` : "/archive",
-        prev: page > 1 ? `/archive?page=${page - 1}` : null,
-        next: archive.data?.nextPage
-          ? `/archive?page=${archive.data.nextPage}`
-          : null,
+        path: "/archive",
       }}
     >
       <main className="container page-main">
@@ -1870,15 +1949,12 @@ export function Archive() {
           <Search size={18} />
           <input
             value={query}
-            onChange={e => {
-              setQuery(e.target.value);
-              setPage(1);
-            }}
+            onChange={e => updateQuery(e.target.value)}
             placeholder="Search brands & topics (e.g. Apple, Google, AI, Nvidia)..."
             aria-label="Search the archive"
           />
           {query && (
-            <button onClick={() => { setQuery(""); setPage(1); }} aria-label="Clear search">
+            <button onClick={() => updateQuery("")} aria-label="Clear search">
               <X size={16} />
             </button>
           )}
@@ -1892,10 +1968,7 @@ export function Archive() {
                 key={tag}
                 type="button"
                 className={`brand-chip ${isActive ? "active" : ""}`}
-                onClick={() => {
-                  setQuery(tag === "All" ? "" : tag);
-                  setPage(1);
-                }}
+                onClick={() => updateQuery(tag === "All" ? "" : tag)}
               >
                 {tag}
               </button>
@@ -1908,41 +1981,41 @@ export function Archive() {
             <span>
               Showing results for <strong>"{query}"</strong>
             </span>
-            <button className="text-button" onClick={() => { setQuery(""); setPage(1); }}>
+            <button className="text-button" onClick={() => updateQuery("")}>
               Clear filter
             </button>
           </div>
         )}
 
-        {archive.isLoading ? (
+        {archive.isLoading && page === 1 && displayPosts.length === 0 ? (
           <div className="skeleton-grid">
             <div />
             <div />
             <div />
           </div>
-        ) : archive.data?.posts?.length ? (
+        ) : displayPosts.length ? (
           <>
             <div className="post-grid archive-grid">
-              {archive.data.posts.map((post: any) => (
-                <PostCard key={post.id} post={post} />
+              {displayPosts.map((post: any) => (
+                <PostCard key={post.id} post={post} isRead={readPostIds.has(post.id)} />
               ))}
             </div>
-            <div className="pagination">
-              <button
-                className="button button-outline"
-                disabled={page <= 1}
-                onClick={() => setPage(page - 1)}
-              >
-                Previous
-              </button>
-              <span>Page {page}</span>
-              <button
-                className="button button-outline"
-                disabled={archive.data.nextPage === null}
-                onClick={() => setPage(page + 1)}
-              >
-                Next
-              </button>
+            <div ref={loadMoreRef} className="px-infinite-scroll-status" aria-live="polite">
+              {archive.isFetching && page > 1 ? (
+                <span className="px-infinite-loading-pill">
+                  <span className="px-infinite-dot" />
+                  <span>Loading more Bytes…</span>
+                </span>
+              ) : nextPage !== null ? (
+                <span className="px-infinite-loading-pill">
+                  <span className="px-infinite-dot" />
+                  <span>Scroll for more Bytes</span>
+                </span>
+              ) : (
+                <span className="px-infinite-end-label">
+                  All {displayPosts.length} Bytes loaded
+                </span>
+              )}
             </div>
           </>
         ) : (
@@ -1951,7 +2024,7 @@ export function Archive() {
             <h2>No stories found {query ? `matching "${query}"` : ""}</h2>
             <p>Try searching for a different brand, company, or tech topic.</p>
             {query && (
-              <button className="button button-outline" onClick={() => { setQuery(""); setPage(1); }}>
+              <button className="button button-outline" onClick={() => updateQuery("")}>
                 Clear search & view all bytes
               </button>
             )}
