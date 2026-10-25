@@ -381,10 +381,12 @@ export function SiteHeader() {
         </Link>
         <nav className="main-nav" aria-label="Primary">
           <span className="px-sidebar-group-label">Briefing</span>
-          <Link href={homePath} className={isDiscoverActive ? "active" : ""}>
-            <Sparkles size={16} className="px-nav-icon" />
-            <span>{signedIn ? "Discover" : "Today"}</span>
-          </Link>
+          {signedIn && (
+            <Link href={homePath} className={isDiscoverActive ? "active" : ""}>
+              <Sparkles size={16} className="px-nav-icon" />
+              <span>Discover</span>
+            </Link>
+          )}
           <Link href="/archive" className={isArchiveActive ? "active" : ""}>
             <BookOpen size={16} className="px-nav-icon" />
             <span>All Bytes</span>
@@ -464,7 +466,7 @@ export function SiteHeader() {
           <nav id="mobile-navigation-drawer" className="mobile-nav" aria-label="Mobile navigation">
             <div className="mobile-nav-section">
               <span className="mobile-nav-label">Read</span>
-              <Link href={homePath} onClick={() => setMenu(false)}>{signedIn ? "Dashboard" : "Today"}</Link>
+              {signedIn && <Link href={homePath} onClick={() => setMenu(false)}>Dashboard</Link>}
               <Link href="/archive" onClick={() => setMenu(false)}><BookOpen size={16} /> All Bytes</Link>
               {signedIn && <Link href="/saved" onClick={() => setMenu(false)}><Bookmark size={16} /> Saved posts</Link>}
             </div>
@@ -641,11 +643,17 @@ function MobileBottomNav() {
   const isAuth = location === "/login" || location === "/signup";
 
   return (
-    <nav className="px-mobile-bottom-nav" aria-label="Mobile quick navigation">
-      <Link href={homePath} className={"px-bottom-tab " + (isDiscover ? "active" : "")}>
-        <Sparkles size={18} strokeWidth={1.9} />
-        <span>Discover</span>
-      </Link>
+    <nav
+      className="px-mobile-bottom-nav"
+      aria-label="Mobile quick navigation"
+      style={{ gridTemplateColumns: `repeat(${signedIn ? 5 : 4}, minmax(0, 1fr))` }}
+    >
+      {signedIn && (
+        <Link href={homePath} className={"px-bottom-tab " + (isDiscover ? "active" : "")}>
+          <Sparkles size={18} strokeWidth={1.9} />
+          <span>Discover</span>
+        </Link>
+      )}
       <Link href="/archive" className={"px-bottom-tab " + (isArchive ? "active" : "")}>
         <Search size={18} strokeWidth={1.9} />
         <span>All Bytes</span>
