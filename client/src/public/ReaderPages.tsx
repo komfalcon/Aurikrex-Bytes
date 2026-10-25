@@ -365,6 +365,7 @@ export function SiteHeader() {
   const isAboutActive = location === "/how-it-works";
   const isHelpActive = location === "/help";
   const isContactActive = location === "/contact";
+  const isProfileActive = location === "/profile";
 
   useEffect(() => {
     setMenu(false);
@@ -420,6 +421,12 @@ export function SiteHeader() {
               <span>Saved</span>
             </Link>
           )}
+          {signedIn && (
+            <Link href="/profile" className={isProfileActive ? "active" : ""}>
+              <User size={16} className="px-nav-icon" />
+              <span>Profile</span>
+            </Link>
+          )}
           <span className="px-sidebar-group-label px-sidebar-only">Resources</span>
           <Link href="/how-it-works" className={isAboutActive ? "active" : ""}>
             <Layers size={16} className="px-nav-icon" />
@@ -444,11 +451,11 @@ export function SiteHeader() {
         </div>
         <div className="px-header-account-row">
           {signedIn && (
-            <button
-              className="header-avatar-btn"
-              onClick={() => setShowProfileModal(true)}
-              title="View & edit profile picture"
-              aria-label="View & edit profile picture"
+            <Link
+              href="/profile"
+              className={`header-avatar-btn ${isProfileActive ? "active" : ""}`}
+              title="View profile & settings"
+              aria-label="View profile & settings"
             >
               {session.data?.avatarUrl ? (
                 <img src={session.data.avatarUrl} alt={session.data?.name || "Profile"} className="header-avatar-img" />
@@ -460,7 +467,7 @@ export function SiteHeader() {
               <span className="px-sidebar-user-name">
                 {(session.data as any)?.nickname || session.data?.name?.trim().split(/\s+/)[0] || session.data?.email?.split("@")[0] || "Reader"}
               </span>
-            </button>
+            </Link>
           )}
           {signedIn ? (
             <button className="header-login text-button" onClick={() => logout.mutate()}>
@@ -490,7 +497,10 @@ export function SiteHeader() {
             <div className="mobile-nav-section">
               <span className="mobile-nav-label">Read</span>
               {signedIn ? (
-                <Link href="/saved" onClick={() => setMenu(false)}><Bookmark size={16} /> Saved posts</Link>
+                <>
+                  <Link href="/saved" onClick={() => setMenu(false)}><Bookmark size={16} /> Saved posts</Link>
+                  <Link href="/profile" onClick={() => setMenu(false)}><User size={16} /> Profile &amp; account</Link>
+                </>
               ) : (
                 <>
                   <Link href="/" onClick={() => setMenu(false)}><HomeIcon size={16} /> Home</Link>
@@ -523,17 +533,14 @@ export function SiteHeader() {
             <div className="mobile-nav-account">
               {signedIn ? (
                 <>
-                  <button
-                    type="button"
+                  <Link
+                    href="/profile"
                     className="mobile-nav-btn mobile-nav-btn-secondary"
-                    onClick={() => {
-                      setMenu(false);
-                      setShowProfileModal(true);
-                    }}
+                    onClick={() => setMenu(false)}
                   >
                     <User size={16} />
-                    <span>View Profile Photo</span>
-                  </button>
+                    <span>View Profile</span>
+                  </Link>
                   <button
                     type="button"
                     className="mobile-nav-btn mobile-nav-btn-signout"

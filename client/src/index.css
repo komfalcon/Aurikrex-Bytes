@@ -5317,11 +5317,15 @@ body.has-install-prompt {
   background: var(--surface-2);
   cursor: pointer;
   overflow: hidden;
+  text-decoration: none !important;
   transition: transform 0.18s ease, border-color 0.18s ease;
 }
 .header-avatar-btn:hover {
   transform: scale(1.05);
   border-color: var(--blue);
+}
+.header-avatar-btn.active {
+  border-color: var(--blue) !important;
 }
 .header-avatar-img {
   width: 100%;
@@ -7588,6 +7592,12 @@ body.has-install-prompt {
     color: var(--ink) !important;
     min-width: 0 !important;
     min-height: 32px !important;
+    text-decoration: none !important;
+  }
+
+  .px-header-account-row .header-avatar-btn:hover,
+  .px-header-account-row .header-avatar-btn.active {
+    color: var(--blue) !important;
   }
 
   .px-header-account-row .header-avatar-img,
