@@ -18,6 +18,7 @@ import {
   Facebook,
   FileText,
   Flame,
+  Home as HomeIcon,
   Instagram,
   Info,
   Layers,
@@ -88,6 +89,8 @@ const safeReturnTo = (value: string | null | undefined) =>
   value && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
 const authPathWithReturnTo = (returnTo: string) =>
   `${authRoutes.login}?returnTo=${encodeURIComponent(returnTo)}`;
+const authSignupWithReturnTo = (returnTo: string) =>
+  `${authRoutes.signup}?returnTo=${encodeURIComponent(returnTo)}`;
 const rememberAuthReturnTo = (returnTo: string) => {
   if (typeof window !== "undefined") window.sessionStorage.setItem(AUTH_RETURN_KEY, returnTo);
 };
@@ -113,7 +116,7 @@ function ProtectedLink({
         if (!session.isLoading && !session.data) {
           event.preventDefault();
           rememberAuthReturnTo(href);
-          navigate(authPathWithReturnTo(href));
+          navigate(authSignupWithReturnTo(href));
         }
       }}
     >
@@ -381,10 +384,15 @@ export function SiteHeader() {
         </Link>
         <nav className="main-nav" aria-label="Primary">
           <span className="px-sidebar-group-label">Briefing</span>
-          {signedIn && (
+          {signedIn ? (
             <Link href={homePath} className={isDiscoverActive ? "active" : ""}>
               <Sparkles size={16} className="px-nav-icon" />
               <span>Discover</span>
+            </Link>
+          ) : (
+            <Link href="/" className={location === "/" ? "active" : ""}>
+              <HomeIcon size={16} className="px-nav-icon" />
+              <span>Home</span>
             </Link>
           )}
           <Link href="/archive" className={isArchiveActive ? "active" : ""}>
@@ -414,8 +422,8 @@ export function SiteHeader() {
       </div>
       <div className="header-actions">
         <div className="px-header-utility-row">
-          <AuriCoinBadge className="header-coin-badge" />
-          <PushSubscribeButton variant="header" />
+          {signedIn && <AuriCoinBadge className="header-coin-badge" />}
+          {signedIn && <PushSubscribeButton variant="header" />}
           <AurikrexAppsSwitcher currentAppId="bytes" />
           <ThemeToggle />
         </div>
@@ -464,17 +472,18 @@ export function SiteHeader() {
         <>
           <button className="mobile-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMenu(false)} />
           <nav id="mobile-navigation-drawer" className="mobile-nav" aria-label="Mobile navigation">
-            <div className="mobile-nav-section">
-              <span className="mobile-nav-label">Read</span>
-              {signedIn && <Link href={homePath} onClick={() => setMenu(false)}>Dashboard</Link>}
-              <Link href="/archive" onClick={() => setMenu(false)}><BookOpen size={16} /> All Bytes</Link>
-              {signedIn && <Link href="/saved" onClick={() => setMenu(false)}><Bookmark size={16} /> Saved posts</Link>}
-            </div>
+            {!signedIn && (
+              <div className="mobile-nav-section">
+                <span className="mobile-nav-label">Read</span>
+                <Link href="/" onClick={() => setMenu(false)}><HomeIcon size={16} /> Home</Link>
+                <Link href="/archive" onClick={() => setMenu(false)}><BookOpen size={16} /> All Bytes</Link>
+              </div>
+            )}
             <div className="mobile-nav-section">
               <span className="mobile-nav-label">Explore</span>
               <Link href="/how-it-works" onClick={() => setMenu(false)}><Info size={16} /> About</Link>
-              <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>
-              <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>
+              {signedIn && <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>}
+              {signedIn && <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>}
             </div>
             <div className="mobile-nav-section mobile-nav-preferences">
               <span className="mobile-nav-label">Ecosystem &amp; Preferences</span>
@@ -635,40 +644,34 @@ function MobileBottomNav() {
   const [location] = useLocation();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
   const signedIn = Boolean(session.data);
-  const homePath = signedIn ? "/dashboard" : "/";
-  const isDiscover = location === "/" || location === "/dashboard" || location.startsWith("/post/");
+  const isDiscover = location === "/dashboard" || location.startsWith("/post/");
   const isArchive = location.startsWith("/archive");
   const isSaved = location === "/saved";
-  const isAbout = location === "/how-it-works" || location === "/help" || location === "/contact";
-  const isAuth = location === "/login" || location === "/signup";
+
+  // Guests never see the bottom bar; all of their navigation lives in the menu.
+  if (!signedIn) return null;
 
   return (
     <nav
       className="px-mobile-bottom-nav"
       aria-label="Mobile quick navigation"
-      style={{ gridTemplateColumns: `repeat(${signedIn ? 5 : 4}, minmax(0, 1fr))` }}
+      style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
     >
-      {signedIn && (
-        <Link href={homePath} className={"px-bottom-tab " + (isDiscover ? "active" : "")}>
-          <Sparkles size={18} strokeWidth={1.9} />
-          <span>Discover</span>
-        </Link>
-      )}
+      <Link href="/dashboard" className={"px-bottom-tab " + (isDiscover ? "active" : "")}>
+        <Sparkles size={18} strokeWidth={1.9} />
+        <span>Discover</span>
+      </Link>
       <Link href="/archive" className={"px-bottom-tab " + (isArchive ? "active" : "")}>
         <Search size={18} strokeWidth={1.9} />
         <span>All Bytes</span>
       </Link>
-      <ProtectedLink href="/saved" className={"px-bottom-tab " + (isSaved ? "active" : "")}>
+      <Link href="/saved" className={"px-bottom-tab " + (isSaved ? "active" : "")}>
         <Bookmark size={18} strokeWidth={1.9} />
         <span>Saved</span>
-      </ProtectedLink>
-      <Link href="/how-it-works" className={"px-bottom-tab " + (isAbout ? "active" : "")}>
-        <Layers size={18} strokeWidth={1.9} />
-        <span>About</span>
       </Link>
-      <Link href={signedIn ? "/dashboard" : authRoutes.login} className={"px-bottom-tab " + (isAuth ? "active" : "")}>
+      <Link href="/dashboard" className="px-bottom-tab">
         <User size={18} strokeWidth={1.9} />
-        <span>{signedIn ? "Desk" : "Sign in"}</span>
+        <span>Desk</span>
       </Link>
     </nav>
   );
@@ -681,7 +684,14 @@ export function PublicLayout({
   children: ReactNode;
   seo?: ComponentProps<typeof Seo>;
 }) {
-  const [location] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const pending = session.isLoading;
+  const guest = !pending && !session.data;
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.body.classList.toggle("px-no-bottom-nav", guest);
+    return () => document.body.classList.remove("px-no-bottom-nav");
+  }, [guest]);
   return (
     <>
       <Seo
@@ -692,7 +702,7 @@ export function PublicLayout({
           path: "/",
         })}
       />
-      <div className={`px-app-shell${location === "/" ? " px-app-shell-topnav" : ""}`}>
+      <div className={`px-app-shell${guest ? " px-app-shell-topnav" : ""}${pending ? " px-app-shell-pending" : ""}`}>
         <SiteHeader />
         <div className="px-app-main">
           {children}
@@ -705,6 +715,18 @@ export function PublicLayout({
 }
 function ShareButton({ post }: { post: any }) {
   const [open, setOpen] = useState(false);
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const requireSignup = () => {
+    if (session.isLoading) return false;
+    if (!session.data) {
+      const returnTo = `/post/${post.id}`;
+      rememberAuthReturnTo(returnTo);
+      navigate(authSignupWithReturnTo(returnTo));
+      return false;
+    }
+    return true;
+  };
   const shareUrl = `https://www.bytes.aurikrex.com/post/${post.id}`;
   const share = async () => {
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
@@ -758,7 +780,7 @@ function ShareButton({ post }: { post: any }) {
     }
   };
   return <div className="share-control" onClick={e => { e.preventDefault(); e.stopPropagation(); }}>
-    <button type="button" className="engagement-button" onClick={e => { e.preventDefault(); e.stopPropagation(); void share(); }} aria-label="Share post" title="Share post"><Share2 size={15} /></button>
+    <button type="button" className="engagement-button" onClick={e => { e.preventDefault(); e.stopPropagation(); if (requireSignup()) void share(); }} aria-label="Share post" title="Share post"><Share2 size={15} /></button>
     {open && <div className="share-menu" onClick={e => e.stopPropagation()}><button type="button" onClick={e => { e.preventDefault(); void copy(); }}><Check size={14} /> Copy link</button><a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(post.headline)}&url=${encodeURIComponent(shareUrl)}`} target="_blank" rel="noreferrer">Share to X</a><a href={shareUrl} target="_blank" rel="noreferrer">Open post</a></div>}
   </div>;
 }
@@ -819,7 +841,7 @@ function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (save
     if (!session.data) {
       const returnTo = `/post/${post.id}`;
       rememberAuthReturnTo(returnTo);
-      navigate(authPathWithReturnTo(returnTo));
+      navigate(authSignupWithReturnTo(returnTo));
       return false;
     }
     return true;

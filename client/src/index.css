@@ -10168,3 +10168,29 @@ button.brand-chip.is-active {
     padding: 6px 16px !important;
   }
 }
+
+/* 14. Guest layout: no bottom bar, top-nav instead of sidebar */
+@media (min-width: 851px) {
+  .px-app-shell-pending .site-header {
+    visibility: hidden;
+  }
+
+  .px-no-bottom-nav .followup-bottom-bar:not(.followup-bottom-bar-fullscreen) {
+    left: 50% !important;
+  }
+}
+
+@media (max-width: 850px) {
+  .px-no-bottom-nav .site-footer {
+    padding-bottom: calc(28px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .px-no-bottom-nav .scroll-to-top-btn {
+    bottom: calc(18px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .px-no-bottom-nav .floating-mobile-cta,
+  .px-no-bottom-nav .followup-bottom-bar:not(.followup-bottom-bar-fullscreen) {
+    bottom: calc(14px + env(safe-area-inset-bottom)) !important;
+  }
+}
