@@ -10068,3 +10068,103 @@ button.brand-chip.is-active {
     gap: 6px !important;
   }
 }
+
+/* 13. Desktop landing page: top navigation bar instead of sidebar */
+@media (min-width: 851px) {
+  .px-app-shell.px-app-shell-topnav {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  .px-app-shell-topnav > .px-app-main {
+    min-height: 0 !important;
+    flex: 1 !important;
+  }
+
+  .px-app-shell-topnav .site-header {
+    position: sticky !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: 66px !important;
+    min-height: 66px !important;
+    padding: 0 max(32px, calc((100% - 1120px) / 2)) !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 24px !important;
+    overflow: visible !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--line) !important;
+    background: color-mix(in srgb, var(--surface) 94%, transparent) !important;
+    backdrop-filter: blur(14px);
+  }
+
+  .px-app-shell-topnav .site-header-left {
+    flex-direction: row !important;
+    align-items: center !important;
+    width: auto !important;
+    gap: 28px !important;
+    min-width: 0 !important;
+  }
+
+  .px-app-shell-topnav .site-header .brand {
+    padding: 0 !important;
+    flex: 0 0 auto !important;
+  }
+
+  .px-app-shell-topnav .px-header-search-pill,
+  .px-app-shell-topnav .px-sidebar-group-label,
+  .px-app-shell-topnav .px-sidebar-only {
+    display: none !important;
+  }
+
+  .px-app-shell-topnav .site-header .main-nav {
+    flex-direction: row !important;
+    align-items: center !important;
+    width: auto !important;
+    gap: 4px !important;
+    margin: 0 !important;
+  }
+
+  .px-app-shell-topnav .site-header .main-nav a {
+    width: auto !important;
+    min-height: 36px !important;
+    padding: 6px 12px !important;
+    white-space: nowrap !important;
+  }
+
+  .px-app-shell-topnav .site-header .header-actions {
+    flex-direction: row !important;
+    align-items: center !important;
+    width: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-top: 0 !important;
+    gap: 12px !important;
+  }
+
+  .px-app-shell-topnav .px-header-utility-row {
+    width: auto !important;
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+  }
+
+  .px-app-shell-topnav .px-header-account-row {
+    width: auto !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+  }
+
+  .px-app-shell-topnav .px-guest-auth-btns {
+    width: auto !important;
+    gap: 10px !important;
+  }
+
+  .px-app-shell-topnav .px-guest-auth-btns .button-small {
+    flex: 0 0 auto !important;
+    padding: 6px 16px !important;
+  }
+}

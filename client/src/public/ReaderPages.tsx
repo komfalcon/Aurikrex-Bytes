@@ -673,6 +673,7 @@ export function PublicLayout({
   children: ReactNode;
   seo?: ComponentProps<typeof Seo>;
 }) {
+  const [location] = useLocation();
   return (
     <>
       <Seo
@@ -683,7 +684,7 @@ export function PublicLayout({
           path: "/",
         })}
       />
-      <div className="px-app-shell">
+      <div className={`px-app-shell${location === "/" ? " px-app-shell-topnav" : ""}`}>
         <SiteHeader />
         <div className="px-app-main">
           {children}
