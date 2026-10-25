@@ -655,7 +655,7 @@ function MobileBottomNav() {
     <nav
       className="px-mobile-bottom-nav"
       aria-label="Mobile quick navigation"
-      style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
+      style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
     >
       <Link href="/dashboard" className={"px-bottom-tab " + (isDiscover ? "active" : "")}>
         <Sparkles size={18} strokeWidth={1.9} />
@@ -668,10 +668,6 @@ function MobileBottomNav() {
       <Link href="/saved" className={"px-bottom-tab " + (isSaved ? "active" : "")}>
         <Bookmark size={18} strokeWidth={1.9} />
         <span>Saved</span>
-      </Link>
-      <Link href="/dashboard" className="px-bottom-tab">
-        <User size={18} strokeWidth={1.9} />
-        <span>Desk</span>
       </Link>
     </nav>
   );
