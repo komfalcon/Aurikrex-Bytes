@@ -143,7 +143,7 @@ export function AurikrexAppsSwitcher({ currentAppId = 'bytes' }: { currentAppId?
       <button
         onClick={() => setIsOpen(!isOpen)}
         type="button"
-        className="flex items-center gap-2 px-2.5 py-1.5 text-sm font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+        className="px-apps-switcher-btn"
         title="Aurikrex Ecosystem Apps"
       >
         <span className="inline-flex items-center justify-center shrink-0">

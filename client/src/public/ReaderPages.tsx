@@ -343,53 +343,86 @@ export function SiteHeader() {
   const isSavedActive = location === "/saved";
   const isArchiveActive = location.startsWith("/archive");
   const isAboutActive = location === "/how-it-works";
+  const isHelpActive = location === "/help";
+  const isContactActive = location === "/contact";
   return (
     <header className="site-header">
       <div className="site-header-left">
         <Logo href={homePath} />
-        <nav className="main-nav" aria-label="Primary">
-          <Link href={homePath} className={isDiscoverActive ? "active" : ""}>{signedIn ? "Discover" : "Today"}</Link>
-          <Link href="/archive" className={isArchiveActive ? "active" : ""}>All Bytes</Link>
-          {signedIn && <Link href="/saved" className={isSavedActive ? "active" : ""}>Saved</Link>}
-          <Link href="/how-it-works" className={isAboutActive ? "active" : ""}>About</Link>
-        </nav>
-      </div>
-      <div className="header-actions">
         <Link href="/archive" className="px-header-search-pill" aria-label="Search Bytes and topics">
           <Search size={14} />
           <span>Search Bytes &amp; topics…</span>
           <kbd>/</kbd>
         </Link>
-        <AuriCoinBadge className="header-coin-badge" />
-        <PushSubscribeButton variant="header" />
-        <AurikrexAppsSwitcher currentAppId="bytes" />
-        <ThemeToggle />
-        {signedIn && (
-          <button
-            className="header-avatar-btn"
-            onClick={() => setShowProfileModal(true)}
-            title="View & edit profile picture"
-            aria-label="View & edit profile picture"
-          >
-            {session.data?.avatarUrl ? (
-              <img src={session.data.avatarUrl} alt={session.data?.name || "Profile"} className="header-avatar-img" />
-            ) : (
-              <span className="header-avatar-initial">
-                {getInitial(session.data?.name || session.data?.email || "U")}
+        <nav className="main-nav" aria-label="Primary">
+          <span className="px-sidebar-group-label">Briefing</span>
+          <Link href={homePath} className={isDiscoverActive ? "active" : ""}>
+            <Sparkles size={16} className="px-nav-icon" />
+            <span>{signedIn ? "Discover" : "Today"}</span>
+          </Link>
+          <Link href="/archive" className={isArchiveActive ? "active" : ""}>
+            <BookOpen size={16} className="px-nav-icon" />
+            <span>All Bytes</span>
+          </Link>
+          {signedIn && (
+            <Link href="/saved" className={isSavedActive ? "active" : ""}>
+              <Bookmark size={16} className="px-nav-icon" />
+              <span>Saved</span>
+            </Link>
+          )}
+          <span className="px-sidebar-group-label px-sidebar-only">Resources</span>
+          <Link href="/how-it-works" className={isAboutActive ? "active" : ""}>
+            <Layers size={16} className="px-nav-icon" />
+            <span>About</span>
+          </Link>
+          <Link href="/help" className={"px-sidebar-only " + (isHelpActive ? "active" : "")}>
+            <CircleHelp size={16} className="px-nav-icon" />
+            <span>Help Center</span>
+          </Link>
+          <Link href="/contact" className={"px-sidebar-only " + (isContactActive ? "active" : "")}>
+            <Mail size={16} className="px-nav-icon" />
+            <span>Contact</span>
+          </Link>
+        </nav>
+      </div>
+      <div className="header-actions">
+        <div className="px-header-utility-row">
+          <AuriCoinBadge className="header-coin-badge" />
+          <PushSubscribeButton variant="header" />
+          <AurikrexAppsSwitcher currentAppId="bytes" />
+          <ThemeToggle />
+        </div>
+        <div className="px-header-account-row">
+          {signedIn && (
+            <button
+              className="header-avatar-btn"
+              onClick={() => setShowProfileModal(true)}
+              title="View & edit profile picture"
+              aria-label="View & edit profile picture"
+            >
+              {session.data?.avatarUrl ? (
+                <img src={session.data.avatarUrl} alt={session.data?.name || "Profile"} className="header-avatar-img" />
+              ) : (
+                <span className="header-avatar-initial">
+                  {getInitial(session.data?.name || session.data?.email || "U")}
+                </span>
+              )}
+              <span className="px-sidebar-user-name">
+                {session.data?.name?.trim().split(/\s+/)[0] || session.data?.email?.split("@")[0] || "Reader"}
               </span>
-            )}
-          </button>
-        )}
-        {signedIn ? (
-          <button className="header-login text-button" onClick={() => logout.mutate()}>
-            <LogOut size={14} /> Sign out
-          </button>
-        ) : (
-          <>
-            <Link className="header-login" href={authRoutes.login}>Sign in</Link>
-            <Link className="button button-small" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link>
-          </>
-        )}
+            </button>
+          )}
+          {signedIn ? (
+            <button className="header-login text-button" onClick={() => logout.mutate()}>
+              <LogOut size={14} /> <span>Sign out</span>
+            </button>
+          ) : (
+            <div className="px-guest-auth-btns">
+              <Link className="header-login" href={authRoutes.login}>Sign in</Link>
+              <Link className="button button-small" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link>
+            </div>
+          )}
+        </div>
         <button
           className="mobile-menu"
           onClick={() => setMenu(value => !value)}
@@ -417,7 +450,11 @@ export function SiteHeader() {
               <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>
             </div>
             <div className="mobile-nav-section mobile-nav-preferences">
-              <span className="mobile-nav-label">Preferences</span>
+              <span className="mobile-nav-label">Ecosystem &amp; Preferences</span>
+              <div className="mobile-nav-preference-row">
+                <span>Aurikrex Apps</span>
+                <AurikrexAppsSwitcher currentAppId="bytes" />
+              </div>
               <div className="mobile-nav-preference-row">
                 <span>Appearance</span>
                 <ThemeToggle />
@@ -594,9 +631,13 @@ export function PublicLayout({
           path: "/",
         })}
       />
-      <SiteHeader />
-      {children}
-      <SiteFooter />
+      <div className="px-app-shell">
+        <SiteHeader />
+        <div className="px-app-main">
+          {children}
+          <SiteFooter />
+        </div>
+      </div>
       <MobileBottomNav />
     </>
   );
@@ -1122,20 +1163,29 @@ function PostCard({
             )}
           </div>
           <h2>{post.headline}</h2>
-          <p><FormattedInlineText text={excerpt(post.body, featured ? 210 : 150)} /></p>
-          <div className="px-card-synthesis-row">
-            <div className="px-source-avatars" aria-hidden="true">
-              {sources.slice(0, 3).map((src, idx) => (
-                <span key={idx} className={`px-source-avatar px-source-avatar-${idx}`}>{src.code}</span>
-              ))}
-            </div>
-            <span className="read-more">
-              {sources.length} sources · {isRead ? "Read again" : "Read briefing"} <ArrowRight size={14} />
-            </span>
-          </div>
+          <p><FormattedInlineText text={excerpt(post.body, featured ? 220 : 155)} /></p>
+          <span className="read-more px-featured-cta">
+            {isRead ? "Read briefing again" : "Read full briefing"} <ArrowRight size={14} />
+          </span>
         </div>
       </ProtectedLink>
-      <div className="post-card-actions"><EngagementActions post={post} /></div>
+      <div className="post-card-actions">
+        <ProtectedLink
+          href={`/post/${post.id}`}
+          className="px-card-synthesis-row"
+          onClick={() => markPostAsRead(post.id)}
+        >
+          <div className="px-source-avatars" aria-hidden="true">
+            {sources.slice(0, 3).map((src, idx) => (
+              <span key={idx} className={`px-source-avatar px-source-avatar-${idx}`}>{src.code}</span>
+            ))}
+          </div>
+          <span className="px-sources-count-label">
+            {sources.length} sources
+          </span>
+        </ProtectedLink>
+        <EngagementActions post={post} />
+      </div>
     </article>
   );
 }
@@ -3051,7 +3101,7 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
       <div className="auth-shell">
         <div className="auth-side">
           <Logo />
-          <div>
+          <div className="px-auth-side-hero">
             <span className="eyebrow">A considered daily read</span>
             <h1>
               Your briefing,
@@ -3061,6 +3111,29 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
             <p>
               Five to ten stories. Better context. A calmer start to the day.
             </p>
+            <div className="px-auth-feature-list">
+              <div className="px-auth-feature-item">
+                <div className="px-auth-feature-icon"><Clock3 size={16} /></div>
+                <div>
+                  <strong>5-Minute Daily Briefing</strong>
+                  <span>Synthesized intelligence across AI, systems, and frontier technology.</span>
+                </div>
+              </div>
+              <div className="px-auth-feature-item">
+                <div className="px-auth-feature-icon"><Sparkles size={16} /></div>
+                <div>
+                  <strong>Grounded Falke AI Follow-Ups</strong>
+                  <span>Ask interactive follow-up questions anchored directly to each story.</span>
+                </div>
+              </div>
+              <div className="px-auth-feature-item">
+                <div className="px-auth-feature-icon"><Bookmark size={16} /></div>
+                <div>
+                  <strong>Curated Signal, Zero Noise</strong>
+                  <span>Save threads, build reading streaks, and earn AuriCoins as you read.</span>
+                </div>
+              </div>
+            </div>
           </div>
           <span className="auth-quote">“A little signal goes a long way.”</span>
         </div>

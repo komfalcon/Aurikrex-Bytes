@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Clock3, Sparkles } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 
 export interface CoinBalanceData {
@@ -7,6 +8,31 @@ export interface CoinBalanceData {
   costPerRequest: number;
   lastResetDate: string;
   nextResetDate: string;
+}
+
+function AuriCoinSvg({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <circle cx="12" cy="12" r="9.5" fill="url(#auriCoinGrad)" stroke="#F59E0B" strokeWidth="1.5" />
+      <path
+        d="M12 6.8L13.65 10.25L17.45 10.75L14.68 13.4L15.35 17.15L12 15.35L8.65 17.15L9.32 13.4L6.55 10.75L10.35 10.25L12 6.8Z"
+        fill="#FFFBEB"
+      />
+      <defs>
+        <linearGradient id="auriCoinGrad" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FBBF24" />
+          <stop offset="1" stopColor="#D97706" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
 }
 
 export function AuriCoinBadge({ className = '', compact = false }: { className?: string; compact?: boolean }) {
@@ -107,24 +133,20 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
       <button
         onClick={() => setIsOpen(!isOpen)}
         type="button"
-        className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors shadow-sm focus:outline-none ${
-          isLow
-            ? 'bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20'
-            : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
-        } ${className}`}
+        className={`px-coin-pill ${isLow ? 'is-low' : ''} ${className}`}
         title="Auri Coin Ecosystem AI Balance"
         aria-label={`Auri Coin balance: ${balance.toLocaleString()} coins`}
       >
-        <span className="text-sm" aria-hidden="true">🪙</span>
+        <AuriCoinSvg size={15} />
         <span className="tabular-nums">{coinsQuery.isLoading && !balanceData ? '...' : balance.toLocaleString()}</span>
-        <span className={`${compact ? 'hidden xl:inline' : ''} text-[10px] opacity-75 font-normal`}>AuriCoins</span>
+        <span className={`${compact ? 'hidden xl:inline' : ''} px-coin-unit`}>AuriCoins</span>
       </button>
 
       {isOpen && (
         <div className="absolute right-0 top-full mt-2 w-72 rounded-xl bg-slate-900 border border-slate-800 p-4 shadow-2xl z-50 text-left">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2">
-              <span className="text-xl">🪙</span>
+              <AuriCoinSvg size={20} />
               <div>
                 <h4 className="text-xs font-bold text-white uppercase tracking-wider">Auri Coin Balance</h4>
                 <p className="text-[10px] text-slate-400">Aurikrex Ecosystem AI Credits</p>
@@ -154,8 +176,11 @@ export function AuriCoinBadge({ className = '', compact = false }: { className?:
             </div>
           </div>
 
-          <div className="rounded-lg bg-slate-950 p-2.5 text-[11px] text-slate-400 leading-relaxed">
-            💡 Every registered user receives {(balanceData?.allowance || 2500).toLocaleString()} Auri Coins every 30 days ({Math.floor((balanceData?.allowance || 2500) / 5).toLocaleString()} AI requests). Coins reset automatically on your monthly anniversary date.
+          <div className="rounded-lg bg-slate-950 p-2.5 text-[11px] text-slate-400 leading-relaxed flex items-start gap-2">
+            <Sparkles size={14} className="text-amber-400 shrink-0 mt-0.5" />
+            <span>
+              Every registered user receives {(balanceData?.allowance || 2500).toLocaleString()} Auri Coins every 30 days ({Math.floor((balanceData?.allowance || 2500) / 5).toLocaleString()} AI requests). Coins reset automatically on your monthly anniversary date.
+            </span>
           </div>
         </div>
       )}
@@ -186,16 +211,17 @@ export function OutOfCoinsModal({
   return (
     <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
       <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl text-center">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/10 text-3xl">
-          🪙
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/10">
+          <AuriCoinSvg size={28} />
         </div>
         <h3 className="text-lg font-bold text-white">Out of Auri Coins for this Month</h3>
         <p className="mt-2 text-sm text-slate-400 leading-relaxed">
           You've used all 2,500 Auri Coins for your current 30-day period (500 AI requests across Bytes and Phorynt).
         </p>
 
-        <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
-          ⏳ Next 2,500 Coin Refresh in: <strong className="font-bold text-white">{formatDays(nextResetDate)}</strong>
+        <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200 flex items-center justify-center gap-2">
+          <Clock3 size={14} className="text-amber-400 shrink-0" />
+          <span>Next 2,500 Coin Refresh in: <strong className="font-bold text-white">{formatDays(nextResetDate)}</strong></span>
         </div>
 
         <button
