@@ -10,7 +10,7 @@ export function LibraryLogo({ size = 22 }: { size?: number }) {
 }
 
 export function BytesLogo({ size = 22 }: { size?: number }) {
-  return <img src="/bytes-logo.svg" alt="Aurikrex Bytes" style={{ width: size, height: size, objectFit: 'contain', borderRadius: '4px', flexShrink: 0 }} />;
+  return <img src="/logo-512.png" alt="Aurikrex Bytes" style={{ width: size, height: size, objectFit: 'contain', borderRadius: '4px', flexShrink: 0 }} />;
 }
 
 export function PhoryntLogo({ size = 22 }: { size?: number }) {
