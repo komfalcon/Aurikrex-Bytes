@@ -33,6 +33,7 @@ import {
   getReaderByEmail,
   getReaderById,
   updateReaderAvatar,
+  updateReaderProfile,
   getReaderDashboard,
   getReaderPostEngagement,
   getReaderByResetToken,
@@ -903,10 +904,36 @@ export const appRouter = router({
       return {
         ...payload,
         name: reader?.name || "",
+        nickname: reader?.nickname || null,
         avatarUrl: reader?.avatarUrl || null,
         emailVerified: Boolean(reader?.emailVerified),
       };
     }),
+    updateProfile: publicProcedure
+      .input(
+        z.object({
+          name: z.string().trim().min(1, "Name cannot be empty").max(100),
+          nickname: z.string().trim().max(50).optional().nullable(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const reader = await requireReader(ctx);
+        const updated = await updateReaderProfile(reader.id, {
+          name: input.name,
+          nickname: input.nickname,
+        });
+        return {
+          success: true,
+          reader: updated
+            ? {
+                id: updated.id,
+                name: updated.name,
+                nickname: updated.nickname || null,
+                email: updated.email,
+              }
+            : null,
+        };
+      }),
     updateAvatar: publicProcedure
       .input(z.object({ avatarUrl: z.string().refine(isSafeAvatarUrl, "Invalid avatar URL") }))
       .mutation(async ({ input, ctx }) => {

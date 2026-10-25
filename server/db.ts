@@ -28,6 +28,7 @@ async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
   );
   const repairs = [
     ["name", "text DEFAULT '' NOT NULL"],
+    ["nickname", "text"],
     ["verification_token_used", "text"],
     ["current_streak", "integer DEFAULT 0 NOT NULL"],
     ["longest_streak", "integer DEFAULT 0 NOT NULL"],
@@ -240,6 +241,23 @@ export async function getReaderById(id: number) {
     .limit(1);
   return result[0];
 }
+
+export async function updateReaderProfile(
+  readerId: number,
+  data: { name?: string; nickname?: string | null }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const updateSet: Record<string, any> = {};
+  if (data.name !== undefined) updateSet.name = data.name.trim();
+  if (data.nickname !== undefined) {
+    updateSet.nickname = data.nickname && data.nickname.trim().length > 0 ? data.nickname.trim() : null;
+  }
+  if (Object.keys(updateSet).length > 0) {
+    await db.update(readers).set(updateSet).where(eq(readers.id, readerId));
+  }
+  return getReaderById(readerId);
+}
 export async function updateReaderAvatar(readerId: number, avatarUrl: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not configured");
@@ -415,6 +433,7 @@ export async function getReaderDashboard(
     reader: {
       id: reader.id,
       name: reader.name,
+      nickname: reader.nickname || null,
       email: reader.email,
       feedViewMode: reader.feedViewMode,
       feedViewOnboardingCompleted: reader.feedViewOnboardingCompleted,

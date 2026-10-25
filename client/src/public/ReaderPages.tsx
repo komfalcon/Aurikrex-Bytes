@@ -457,7 +457,7 @@ export function SiteHeader() {
                 </span>
               )}
               <span className="px-sidebar-user-name">
-                {session.data?.name?.trim().split(/\s+/)[0] || session.data?.email?.split("@")[0] || "Reader"}
+                {(session.data as any)?.nickname || session.data?.name?.trim().split(/\s+/)[0] || session.data?.email?.split("@")[0] || "Reader"}
               </span>
             </button>
           )}
@@ -1750,6 +1750,18 @@ export function ReaderDashboard() {
   );
   const savePreference = trpc.reader.setFeedPreference.useMutation();
   const [readPostIds, setReadPostIds] = useState<Set<number>>(() => getReadPostIds());
+  const [showNicknamePrompt, setShowNicknamePrompt] = useState(false);
+
+  useEffect(() => {
+    if (session.isLoading || !session.data) return;
+    const user = session.data as any;
+    if (!user.nickname && typeof window !== "undefined") {
+      const dismissed = window.localStorage.getItem("aurikrex:nickname-prompt-dismissed");
+      if (!dismissed) {
+        setShowNicknamePrompt(true);
+      }
+    }
+  }, [session.data, session.isLoading]);
 
   useEffect(() => {
     const handleFocus = () => setReadPostIds(getReadPostIds());
@@ -1832,7 +1844,7 @@ export function ReaderDashboard() {
   if (session.isLoading || (!session.data && !dashboard.error))
     return <div className="route-loading">Opening your briefing…</div>;
   const previewPost = posts[0] ?? data?.allPosts?.[0] ?? { headline: "The useful context behind what matters", body: "A considered look at the stories shaping the day.", imageUrl: null };
-  const firstName = data?.reader.name?.trim().split(/\s+/)[0] || "reader";
+  const firstName = (session.data as any)?.nickname || (data?.reader as any)?.nickname || data?.reader.name?.trim().split(/\s+/)[0] || "reader";
   const weekDays = getWeekDays(data?.streak.lastActiveDate, data?.streak.currentStreak ?? 0, timeZone);
   return (
     <PublicLayout seo={{ title: "Your dashboard — Aurikrex Bytes", description: "Your daily Aurikrex Bytes briefing and reading streak.", path: "/dashboard", robots: "noindex,nofollow" }}>
@@ -1974,6 +1986,24 @@ export function ReaderDashboard() {
           )}
         </section>
       </main>
+      <NicknameOnboardingModal
+        isOpen={showNicknamePrompt}
+        onClose={() => {
+          setShowNicknamePrompt(false);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem("aurikrex:nickname-prompt-dismissed", "true");
+          }
+        }}
+        defaultName={session.data?.name || ""}
+        onSaved={() => {
+          setShowNicknamePrompt(false);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem("aurikrex:nickname-prompt-dismissed", "true");
+          }
+          utils.reader.session.invalidate();
+          utils.reader.dashboard.invalidate();
+        }}
+      />
     </PublicLayout>
   );
 }
@@ -2707,6 +2737,223 @@ export function PostDetail() {
   );
 }
 
+
+function EditDetailsModal({
+  isOpen,
+  onClose,
+  currentName,
+  currentNickname,
+  onSuccess,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  currentName: string;
+  currentNickname?: string | null;
+  onSuccess: () => void;
+}) {
+  const [name, setName] = useState(currentName);
+  const [nickname, setNickname] = useState(currentNickname || "");
+  const updateProfile = trpc.reader.updateProfile.useMutation({
+    onSuccess: () => {
+      toast.success("Details updated successfully");
+      onSuccess();
+      onClose();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to update details");
+    },
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      setName(currentName);
+      setNickname(currentNickname || "");
+    }
+  }, [isOpen, currentName, currentNickname]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      toast.error("Name cannot be empty");
+      return;
+    }
+    updateProfile.mutate({
+      name: name.trim(),
+      nickname: nickname.trim() || null,
+    });
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-md rounded-2xl bg-[var(--surface)] border border-[var(--line)] p-6 shadow-2xl text-left animate-in fade-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[var(--blue)]/10 text-[var(--blue)] flex items-center justify-center">
+              <SquarePen size={17} />
+            </div>
+            <h3 className="text-base font-bold text-[var(--ink)]">Edit Details</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--surface-2)] transition-colors"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--muted)] mb-1.5">
+              Full Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Korede Omotosho"
+              maxLength={100}
+              required
+              className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)] text-sm font-medium focus:outline-none focus:border-[var(--blue)] focus:ring-1 focus:ring-[var(--blue)] transition-all"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
+                Nickname / Preferred Name
+              </label>
+              <span className="text-[11px] text-[var(--muted)]">Optional</span>
+            </div>
+            <input
+              type="text"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder="e.g. Falcon, Sam, Alex"
+              maxLength={50}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)] text-sm font-medium focus:outline-none focus:border-[var(--blue)] focus:ring-1 focus:ring-[var(--blue)] transition-all"
+            />
+            <p className="mt-1 text-[11px] text-[var(--muted)]">
+              What should we call you across your briefing desk and streak updates.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[var(--line)] mt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={updateProfile.isPending}
+              className="px-4 py-2 rounded-xl text-sm font-semibold text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--surface-2)] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={updateProfile.isPending || !name.trim()}
+              className="px-5 py-2 rounded-xl text-sm font-semibold bg-[var(--blue)] hover:bg-[var(--blue-dark,#1d4ed8)] text-white shadow-md disabled:opacity-50 transition-colors"
+            >
+              {updateProfile.isPending ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function NicknameOnboardingModal({
+  isOpen,
+  onClose,
+  defaultName,
+  onSaved,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  defaultName: string;
+  onSaved: () => void;
+}) {
+  const [nickname, setNickname] = useState("");
+  const updateProfile = trpc.reader.updateProfile.useMutation({
+    onSuccess: () => {
+      toast.success("Welcome to Aurikrex Bytes!");
+      onSaved();
+      onClose();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to save nickname");
+    },
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      const suggested = defaultName.trim().split(/\s+/)[0] || "";
+      setNickname(suggested);
+    }
+  }, [isOpen, defaultName]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nickname.trim()) {
+      onClose();
+      return;
+    }
+    updateProfile.mutate({
+      name: defaultName || nickname.trim(),
+      nickname: nickname.trim(),
+    });
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
+      <div className="w-full max-w-sm rounded-2xl bg-[var(--surface)] border border-[var(--line)] p-6 shadow-2xl text-center animate-in fade-in zoom-in-95 duration-150">
+        <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-500 text-2xl">
+          👋
+        </div>
+        <h3 className="text-lg font-bold text-[var(--ink)]">What should we call you?</h3>
+        <p className="mt-1.5 text-xs text-[var(--muted)] leading-relaxed">
+          Pick a preferred first name or nickname for your daily briefings, streak updates, and reading desk.
+        </p>
+
+        <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-3.5">
+          <input
+            type="text"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            placeholder="e.g. Alex, Falcon, Sam"
+            maxLength={50}
+            autoFocus
+            className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)] text-sm font-semibold text-center focus:outline-none focus:border-[var(--blue)] focus:ring-1 focus:ring-[var(--blue)] transition-all"
+          />
+
+          <div className="flex flex-col gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={updateProfile.isPending || !nickname.trim()}
+              className="w-full py-2.5 rounded-xl text-sm font-semibold bg-[var(--blue)] hover:bg-[var(--blue-dark,#1d4ed8)] text-white shadow-md disabled:opacity-50 transition-colors"
+            >
+              {updateProfile.isPending ? "Saving…" : "Save & Continue"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={updateProfile.isPending}
+              className="py-2 text-xs font-semibold text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
+            >
+              Skip for now
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
+  );
+}
 export function ProfilePage() {
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
@@ -2719,6 +2966,7 @@ export function ProfilePage() {
   const saved = trpc.reader.saved.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
   const coins = trpc.auth.coinsBalance.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
   const [showPhoto, setShowPhoto] = useState(false);
+  const [showEditDetails, setShowEditDetails] = useState(false);
   const logout = trpc.auth.logout.useMutation({
     onSuccess: () => {
       utils.reader.session.setData(undefined, undefined);
@@ -2730,8 +2978,9 @@ export function ProfilePage() {
   }, [navigate, session.data, session.isLoading]);
   if (session.isLoading || !session.data) return <div className="route-loading">Opening your profile…</div>;
 
-  const user = session.data;
+  const user = session.data as any;
   const displayName = user.name?.trim() || user.email?.split("@")[0] || "Reader";
+  const nickname = user.nickname?.trim() || null;
   const coinBalance = coins.data ? Math.min((coins.data as { balance: number }).balance, 2500) : null;
   const stats: Array<{ label: string; value: string; icon: ReactNode }> = [
     { label: "Day streak", value: String(dashboard.data?.streak.currentStreak ?? 0), icon: <Flame size={16} /> },
@@ -2749,16 +2998,36 @@ export function ProfilePage() {
             {user.avatarUrl ? (
               <img src={user.avatarUrl} alt={displayName} />
             ) : (
-              <span>{getInitial(displayName)}</span>
+              <span>{getInitial(nickname || displayName)}</span>
             )}
           </div>
           <div className="px-profile-identity">
-            <h1>{displayName}</h1>
+            <div className="px-profile-name-row">
+              <h1>{user.name || displayName}</h1>
+              {nickname && (
+                <span className="px-profile-nickname-badge">
+                  aka <strong>{nickname}</strong>
+                </span>
+              )}
+            </div>
             {user.email && <p>{user.email}</p>}
           </div>
-          <button type="button" className="px-profile-photo-btn" onClick={() => setShowPhoto(true)}>
-            <Camera size={15} /> <span>Change photo</span>
-          </button>
+          <div className="px-profile-header-actions">
+            <button
+              type="button"
+              className="px-profile-action-btn"
+              onClick={() => setShowEditDetails(true)}
+            >
+              <SquarePen size={15} /> <span>Edit details</span>
+            </button>
+            <button
+              type="button"
+              className="px-profile-action-btn"
+              onClick={() => setShowPhoto(true)}
+            >
+              <Camera size={15} /> <span>Change photo</span>
+            </button>
+          </div>
         </section>
 
         <section className="px-profile-stats" aria-label="Your reading stats">
@@ -2797,6 +3066,16 @@ export function ProfilePage() {
         </button>
       </main>
       <ProfileLightboxModal isOpen={showPhoto} onClose={() => setShowPhoto(false)} sessionData={session.data} />
+      <EditDetailsModal
+        isOpen={showEditDetails}
+        onClose={() => setShowEditDetails(false)}
+        currentName={user.name || ""}
+        currentNickname={nickname}
+        onSuccess={() => {
+          utils.reader.session.invalidate();
+          utils.reader.dashboard.invalidate();
+        }}
+      />
     </PublicLayout>
   );
 }
