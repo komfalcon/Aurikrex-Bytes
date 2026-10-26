@@ -39,13 +39,50 @@ export function isSafePublicHttpsUrl(value: string | null | undefined): boolean 
   }
 }
 
+const DEFAULT_ALLOWED_AVATAR_HOSTS = [
+  "res.cloudinary.com",
+  "googleusercontent.com",
+  "gravatar.com",
+  "githubusercontent.com",
+];
+
 export function isSafeAvatarUrl(value: string | null | undefined): boolean {
   if (!value) return true;
   const trimmed = value.trim();
-  if (/^data:image\/(png|jpeg|jpg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
-    return trimmed.length <= 500_000;
+
+  // Reject dangerous protocols, unhosted schemes, and non-HTTPS URLs
+  if (
+    trimmed.startsWith("javascript:") ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("blob:") ||
+    trimmed.startsWith("http:")
+  ) {
+    return false;
   }
-  return isSafePublicHttpsUrl(trimmed);
+
+  // URL length guard
+  if (trimmed.length > 2048) return false;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:") return false;
+
+    // Guard against private IPs, localhost, and SSRF targets
+    if (!isSafePublicHttpsUrl(trimmed)) return false;
+
+    const host = parsed.hostname.toLowerCase();
+    const envHosts = (process.env.ALLOWED_AVATAR_HOSTS || "")
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean);
+    const allowedHosts = [...DEFAULT_ALLOWED_AVATAR_HOSTS, ...envHosts];
+
+    return allowedHosts.some(
+      (allowed) => host === allowed || host.endsWith("." + allowed)
+    );
+  } catch {
+    return false;
+  }
 }
 
 type FailedAttemptRecord = {

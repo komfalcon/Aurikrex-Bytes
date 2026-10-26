@@ -860,10 +860,23 @@ function isSafePublicHttpsUrl(value) {
 function isSafeAvatarUrl(value) {
   if (!value) return true;
   const trimmed = value.trim();
-  if (/^data:image\/(png|jpeg|jpg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
-    return trimmed.length <= 5e5;
+  if (trimmed.startsWith("javascript:") || trimmed.startsWith("data:") || trimmed.startsWith("blob:") || trimmed.startsWith("http:")) {
+    return false;
   }
-  return isSafePublicHttpsUrl(trimmed);
+  if (trimmed.length > 2048) return false;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:") return false;
+    if (!isSafePublicHttpsUrl(trimmed)) return false;
+    const host = parsed.hostname.toLowerCase();
+    const envHosts = (process.env.ALLOWED_AVATAR_HOSTS || "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+    const allowedHosts = [...DEFAULT_ALLOWED_AVATAR_HOSTS, ...envHosts];
+    return allowedHosts.some(
+      (allowed) => host === allowed || host.endsWith("." + allowed)
+    );
+  } catch {
+    return false;
+  }
 }
 function securityHeaders(_req, res, next) {
   res.removeHeader("X-Powered-By");
@@ -967,7 +980,7 @@ function clearAllAuthRateLimitStores() {
   authAttempts.clear();
   failedAttemptsMap.clear();
 }
-var authAttempts, AUTH_WINDOW_MS, AUTH_MAX_REQUESTS, AI_MAX_REQUESTS, failedAttemptsMap, MAX_FAILED_BEFORE_LOCKOUT, LOCKOUT_DURATION_MS, MAX_FAILED_BEFORE_AUTO_RESET, ATTEMPT_WINDOW_MS;
+var authAttempts, AUTH_WINDOW_MS, AUTH_MAX_REQUESTS, AI_MAX_REQUESTS, DEFAULT_ALLOWED_AVATAR_HOSTS, failedAttemptsMap, MAX_FAILED_BEFORE_LOCKOUT, LOCKOUT_DURATION_MS, MAX_FAILED_BEFORE_AUTO_RESET, ATTEMPT_WINDOW_MS;
 var init_security = __esm({
   "server/_core/security.ts"() {
     "use strict";
@@ -975,6 +988,12 @@ var init_security = __esm({
     AUTH_WINDOW_MS = 6e4;
     AUTH_MAX_REQUESTS = 30;
     AI_MAX_REQUESTS = 15;
+    DEFAULT_ALLOWED_AVATAR_HOSTS = [
+      "res.cloudinary.com",
+      "googleusercontent.com",
+      "gravatar.com",
+      "githubusercontent.com"
+    ];
     failedAttemptsMap = /* @__PURE__ */ new Map();
     MAX_FAILED_BEFORE_LOCKOUT = 5;
     LOCKOUT_DURATION_MS = 15 * 60 * 1e3;
@@ -4876,6 +4895,10 @@ var appRouter = router({
           email: updated.email
         } : null
       };
+    }),
+    avatarUploadSignature: publicProcedure.query(async () => {
+      if (!cloudinaryConfigured()) return { configured: false };
+      return { configured: true, ...getCloudinaryUploadSignature("aurikrex/avatars") };
     }),
     updateAvatar: publicProcedure.input(z2.object({ avatarUrl: z2.string().refine(isSafeAvatarUrl, "Invalid avatar URL") })).mutation(async ({ input, ctx }) => {
       const reader = await requireReader(ctx);

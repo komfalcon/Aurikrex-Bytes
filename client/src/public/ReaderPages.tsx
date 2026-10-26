@@ -23,6 +23,7 @@ import {
   Info,
   Layers,
   Linkedin,
+  Loader2,
   LogOut,
   Mail,
   MailOpen,
@@ -204,6 +205,10 @@ function ProfileLightboxModal({
   const utils = trpc.useUtils();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const avatarSignature = trpc.reader.avatarUploadSignature.useQuery(undefined, {
+    enabled: isOpen,
+    staleTime: 60_000,
+  });
   const updateAvatarMutation = trpc.reader.updateAvatar.useMutation({
     onSuccess: async () => {
       await utils.reader.session.invalidate();
@@ -211,7 +216,15 @@ function ProfileLightboxModal({
       setUploading(false);
     },
     onError: (err) => {
-      toast.error(err.message || "Failed to update profile photo.");
+      const rawMsg = err?.message || "";
+      const userMessage =
+        rawMsg &&
+        !rawMsg.includes("[{") &&
+        !rawMsg.includes("Invalid avatar URL") &&
+        !rawMsg.includes("TRPCClientError")
+          ? rawMsg
+          : "Couldn't upload photo, try again";
+      toast.error(userMessage);
       setUploading(false);
     },
   });
@@ -233,12 +246,14 @@ function ProfileLightboxModal({
   if (!isOpen) return null;
   if (typeof document === "undefined") return null;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    if (e.target) e.target.value = "";
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please select a valid image file.");
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Please select a JPG, PNG, or WebP image.");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
@@ -246,15 +261,43 @@ function ProfileLightboxModal({
       return;
     }
 
-    setUploading(true);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (dataUrl) {
-        updateAvatarMutation.mutate({ avatarUrl: dataUrl });
+    try {
+      setUploading(true);
+      const sig = avatarSignature.data || await utils.reader.avatarUploadSignature.fetch();
+      if (!sig?.configured || !sig.signature || !sig.cloudName) {
+        throw new Error("Photo storage is temporarily unavailable. Please try again.");
       }
-    };
-    reader.readAsDataURL(file);
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("api_key", sig.apiKey);
+      form.append("timestamp", String(sig.timestamp));
+      form.append("folder", sig.folder || "aurikrex/avatars");
+      form.append("signature", sig.signature);
+
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${sig.cloudName}/image/upload`,
+        { method: "POST", body: form }
+      );
+      const result = await response.json();
+      if (!response.ok || !result.secure_url) {
+        throw new Error(result.error?.message || "Couldn't upload photo, try again");
+      }
+
+      await updateAvatarMutation.mutateAsync({ avatarUrl: result.secure_url });
+    } catch (err: any) {
+      console.error("[ProfilePhoto] Upload error:", err);
+      const rawMsg = err?.message || "";
+      const userMessage =
+        rawMsg &&
+        !rawMsg.includes("[{") &&
+        !rawMsg.includes("Invalid avatar URL") &&
+        !rawMsg.includes("TRPCClientError")
+          ? rawMsg
+          : "Couldn't upload photo, try again";
+      toast.error(userMessage);
+      setUploading(false);
+    }
   };
 
   const name = sessionData?.name || sessionData?.email?.split("@")[0] || "Reader";
@@ -290,9 +333,10 @@ function ProfileLightboxModal({
         <input
           type="file"
           ref={fileInputRef}
-          accept="image/*"
+          accept="image/jpeg,image/png,image/webp"
           style={{ display: "none" }}
           onChange={handleFileChange}
+          disabled={uploading}
         />
 
         <div className="whatsapp-profile-info">
@@ -332,7 +376,15 @@ function ProfileLightboxModal({
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
           >
-            <Upload size={14} /> {uploading ? "Updating..." : "Change photo"}
+            {uploading ? (
+              <>
+                <Loader2 size={14} className="animate-spin" /> Uploading...
+              </>
+            ) : (
+              <>
+                <Upload size={14} /> Change photo
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -3442,27 +3494,66 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
   const [verificationState, setVerificationState] = useState<
     "idle" | "verified" | "already_verified" | "error"
   >("idle");
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const avatarSignature = trpc.reader.avatarUploadSignature.useQuery(undefined, {
+    enabled: mode === "signup",
+    staleTime: 60_000,
+  });
 
-  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    if (e.target) e.target.value = "";
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please select a valid image file.");
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Please select a JPG, PNG, or WebP image.");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
       toast.error("Image size should be under 5MB.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (dataUrl) {
-        setAvatarUrl(dataUrl);
-        setAvatarPreview(dataUrl);
+
+    try {
+      setAvatarUploading(true);
+      const sig = avatarSignature.data || (await utils.reader.avatarUploadSignature.fetch());
+      if (!sig?.configured || !sig.signature || !sig.cloudName) {
+        throw new Error("Photo storage is temporarily unavailable. Please try again.");
       }
-    };
-    reader.readAsDataURL(file);
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("api_key", sig.apiKey);
+      form.append("timestamp", String(sig.timestamp));
+      form.append("folder", sig.folder || "aurikrex/avatars");
+      form.append("signature", sig.signature);
+
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${sig.cloudName}/image/upload`,
+        { method: "POST", body: form }
+      );
+      const result = await response.json();
+      if (!response.ok || !result.secure_url) {
+        throw new Error(result.error?.message || "Couldn't upload photo, try again");
+      }
+
+      setAvatarUrl(result.secure_url);
+      setAvatarPreview(result.secure_url);
+    } catch (err: any) {
+      console.error("[SignupAvatar] Upload error:", err);
+      const rawMsg = err?.message || "";
+      const userMessage =
+        rawMsg &&
+        !rawMsg.includes("[{") &&
+        !rawMsg.includes("Invalid avatar URL") &&
+        !rawMsg.includes("TRPCClientError")
+          ? rawMsg
+          : "Couldn't upload photo, try again";
+      toast.error(userMessage);
+    } finally {
+      setAvatarUploading(false);
+    }
   };
   const google = trpc.reader.googleStart.useQuery(undefined, {
     enabled: mode === "login" || mode === "signup",
@@ -3489,7 +3580,14 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
       setVerificationEmail(r.email);
       setMessage("");
     },
-    onError: e => setMessage(e.message),
+    onError: e => {
+      const rawMsg = e.message || "";
+      if (rawMsg.includes("[{") || rawMsg.includes("Invalid avatar URL")) {
+        setMessage("Invalid photo or upload failed. Please try again.");
+      } else {
+        setMessage(rawMsg);
+      }
+    },
   });
   const forgot = trpc.reader.requestPasswordReset.useMutation({
     onSuccess: () =>
@@ -3523,6 +3621,10 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
     e.preventDefault();
     if (mode === "login") login.mutate({ email, password, remember: true });
     if (mode === "signup") {
+      if (avatarUploading) {
+        setMessage("Please wait for your photo to finish uploading.");
+        return;
+      }
       if (password !== confirmPassword) {
         setMessage("Passwords do not match.");
         return;
@@ -3745,13 +3847,28 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                               <span>{getInitial(name || email || "U")}</span>
                             )}
                           </div>
-                          <label className="button button-small button-outline signup-avatar-upload-btn">
-                            <Camera size={14} /> {avatarPreview ? "Change photo" : "Upload photo"}
+                          <label
+                            className="button button-small button-outline signup-avatar-upload-btn"
+                            style={{
+                              pointerEvents: avatarUploading ? "none" : undefined,
+                              opacity: avatarUploading ? 0.7 : 1,
+                            }}
+                          >
+                            {avatarUploading ? (
+                              <>
+                                <Loader2 size={14} className="animate-spin" /> Uploading...
+                              </>
+                            ) : (
+                              <>
+                                <Camera size={14} /> {avatarPreview ? "Change photo" : "Upload photo"}
+                              </>
+                            )}
                             <input
                               type="file"
-                              accept="image/*"
+                              accept="image/jpeg,image/png,image/webp"
                               onChange={handleAvatarFileChange}
                               style={{ display: "none" }}
+                              disabled={avatarUploading}
                             />
                           </label>
                           {avatarPreview && (
@@ -3841,7 +3958,11 @@ export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
                       )}
                     </>
                   )}
-                  <button className="button button-full" type="submit">
+                  <button
+                    className="button button-full"
+                    type="submit"
+                    disabled={avatarUploading || signup.isPending || login.isPending || forgot.isPending || reset.isPending}
+                  >
                     {mode === "signup"
                       ? "Create account"
                       : mode === "forgot"

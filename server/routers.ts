@@ -934,6 +934,10 @@ export const appRouter = router({
             : null,
         };
       }),
+    avatarUploadSignature: publicProcedure.query(async () => {
+      if (!cloudinaryConfigured()) return { configured: false as const };
+      return { configured: true as const, ...getCloudinaryUploadSignature("aurikrex/avatars") };
+    }),
     updateAvatar: publicProcedure
       .input(z.object({ avatarUrl: z.string().refine(isSafeAvatarUrl, "Invalid avatar URL") }))
       .mutation(async ({ input, ctx }) => {
