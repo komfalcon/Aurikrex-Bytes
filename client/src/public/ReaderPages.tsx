@@ -47,6 +47,8 @@ import {
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { PushSubscribeButton } from "@/components/PushSubscribeButton";
+import { PushPromptSheet, IosInstallHelpModal } from "@/components/PushPromptSheet";
+import { shouldShowPushPrompt, getOneSignal, waitForSubscriptionId, isIosSafari } from "@/lib/pushClient";
 import { AurikrexAppsSwitcher } from "@/components/AurikrexAppsSwitcher";
 import { AuriCoinBadge } from "@/components/AuriCoinBadge";
 import { EndOfFeedIllustration } from "@/components/EndOfFeedIllustration";
@@ -399,6 +401,8 @@ export function SiteHeader() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const utils = trpc.useUtils();
   const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const appIdQuery = trpc.reader.oneSignalAppId.useQuery();
+  const unregisterSubMutation = trpc.reader.unregisterOneSignalSubscription.useMutation();
   const logout = trpc.auth.logout.useMutation({
     onSuccess: () => {
       // Clear the shared auth snapshot before leaving the dashboard. A normal
@@ -409,6 +413,23 @@ export function SiteHeader() {
       window.location.replace("/");
     },
   });
+
+  const handleHeaderLogout = async () => {
+    if (typeof window !== "undefined" && appIdQuery.data) {
+      try {
+        const OneSignal = await getOneSignal(appIdQuery.data);
+        const subId = OneSignal.User?.PushSubscription?.id;
+        if (subId) {
+          await unregisterSubMutation.mutateAsync({ subscriptionId: subId }).catch(() => undefined);
+        }
+        await OneSignal.User?.PushSubscription?.optOut?.().catch(() => undefined);
+        await OneSignal.logout?.().catch(() => undefined);
+      } catch (err) {
+        console.warn("[PushLogout] Header signout cleanup error:", err);
+      }
+    }
+    logout.mutate();
+  };
   const signedIn = Boolean(session.data);
   const homePath = signedIn ? "/dashboard" : "/";
   const isDiscoverActive = location === "/" || location === "/dashboard";
@@ -522,7 +543,7 @@ export function SiteHeader() {
             </Link>
           )}
           {signedIn ? (
-            <button className="header-login text-button" onClick={() => logout.mutate()}>
+            <button className="header-login text-button" onClick={handleHeaderLogout} disabled={logout.isPending}>
               <LogOut size={14} /> <span>Sign out</span>
             </button>
           ) : (
@@ -596,7 +617,8 @@ export function SiteHeader() {
                   <button
                     type="button"
                     className="mobile-nav-btn mobile-nav-btn-signout"
-                    onClick={() => logout.mutate()}
+                    onClick={handleHeaderLogout}
+                    disabled={logout.isPending}
                   >
                     <LogOut size={16} />
                     <span>Sign out</span>
@@ -751,6 +773,21 @@ function MobileBottomNav() {
   );
 }
 
+function PushPromptListener() {
+  const [showPrompt, setShowPrompt] = useState(false);
+  useEffect(() => {
+    const onTrigger = () => {
+      if (shouldShowPushPrompt()) {
+        setShowPrompt(true);
+      }
+    };
+    window.addEventListener("aurikrex:trigger-push-prompt", onTrigger);
+    return () => window.removeEventListener("aurikrex:trigger-push-prompt", onTrigger);
+  }, []);
+
+  return <PushPromptSheet isOpen={showPrompt} onClose={() => setShowPrompt(false)} />;
+}
+
 export function PublicLayout({
   children,
   seo,
@@ -784,6 +821,7 @@ export function PublicLayout({
         </div>
       </div>
       <MobileBottomNav />
+      <PushPromptListener />
     </>
   );
 }
@@ -909,7 +947,17 @@ function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (save
     },
     onSettled: () => void utils.reader.engagement.invalidate({ postId: post.id }),
   });
-  const bookmark = trpc.reader.toggleBookmark.useMutation({ onSuccess: data => { onBookmark?.(data.isBookmarked); void utils.reader.engagement.invalidate({ postId: post.id }); void utils.reader.dashboard.invalidate(); void utils.reader.saved.invalidate(); } });
+  const bookmark = trpc.reader.toggleBookmark.useMutation({
+    onSuccess: data => {
+      onBookmark?.(data.isBookmarked);
+      void utils.reader.engagement.invalidate({ postId: post.id });
+      void utils.reader.dashboard.invalidate();
+      void utils.reader.saved.invalidate();
+      if (data.isBookmarked && shouldShowPushPrompt()) {
+        window.dispatchEvent(new CustomEvent("aurikrex:trigger-push-prompt"));
+      }
+    },
+  });
   const requireLogin = () => {
     if (session.isLoading) return false;
     if (!session.data) {
@@ -1078,6 +1126,15 @@ function TodayCompletionCard({
   totalCount?: number;
 }) {
   const isFullyRead = totalCount > 0 && readCount >= totalCount;
+
+  useEffect(() => {
+    if (shouldShowPushPrompt()) {
+      const timer = setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("aurikrex:trigger-push-prompt"));
+      }, 700);
+      return () => clearTimeout(timer);
+    }
+  }, []);
 
   const handleShare = () => {
     const text = `I just completed today's tech briefing on Aurikrex Bytes! ${streak}-day streak active.`;
@@ -3008,6 +3065,113 @@ function NicknameOnboardingModal({
     document.body
   );
 }
+function PushNotificationSettingRow() {
+  const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [showIosHelp, setShowIosHelp] = useState(false);
+  const appIdQuery = trpc.reader.oneSignalAppId.useQuery();
+  const registerSub = trpc.reader.registerOneSignalSubscription.useMutation();
+  const unregisterSub = trpc.reader.unregisterOneSignalSubscription.useMutation();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setPermission("unsupported");
+      return;
+    }
+    setPermission(Notification.permission);
+    if (!appIdQuery.data) return;
+    getOneSignal(appIdQuery.data)
+      .then(OneSignal => {
+        setIsSubscribed(Boolean(OneSignal.User?.PushSubscription?.optedIn));
+      })
+      .catch(() => undefined);
+  }, [appIdQuery.data]);
+
+  const handleToggle = async (enable: boolean) => {
+    if (isIosSafari()) {
+      setShowIosHelp(true);
+      return;
+    }
+
+    if (enable) {
+      if (Notification.permission === "denied") {
+        toast.error("Notifications are blocked in your browser settings. Please allow notifications in site settings.");
+        return;
+      }
+      try {
+        setLoading(true);
+        const OneSignal = await getOneSignal(appIdQuery.data || "");
+        await OneSignal.Notifications.requestPermission();
+        setPermission(Notification.permission);
+        if (Notification.permission !== "granted") {
+          toast.error("Notification permission was not granted.");
+          return;
+        }
+        await OneSignal.User?.PushSubscription?.optIn?.();
+        const subId = await waitForSubscriptionId(OneSignal);
+        if (subId) {
+          await registerSub.mutateAsync({ subscriptionId: subId });
+        }
+        setIsSubscribed(true);
+        toast.success("Daily briefing notifications enabled!");
+      } catch (err: any) {
+        toast.error("Failed to enable notifications.");
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      try {
+        setLoading(true);
+        const OneSignal = await getOneSignal(appIdQuery.data || "");
+        const subId = OneSignal.User?.PushSubscription?.id;
+        await OneSignal.User?.PushSubscription?.optOut?.();
+        if (subId) {
+          await unregisterSub.mutateAsync({ subscriptionId: subId });
+        }
+        setIsSubscribed(false);
+        toast.success("Daily notifications disabled.");
+      } catch (err: any) {
+        toast.error("Failed to disable notifications.");
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  return (
+    <>
+      <div className="px-profile-row">
+        <div className="px-profile-setting-info">
+          <span>Daily briefing notifications</span>
+          <p className="muted small" style={{ margin: "2px 0 0", fontSize: "12px" }}>
+            Morning (8:00 AM) and Evening (10:00 PM) drops
+          </p>
+        </div>
+        <div className="px-profile-setting-control">
+          {permission === "denied" ? (
+            <span className="badge-blocked" title="Notifications blocked in your browser settings">
+              Blocked
+            </span>
+          ) : (
+            <label className="switch" title={isSubscribed ? "Click to opt out" : "Click to opt in"}>
+              <input
+                type="checkbox"
+                checked={isSubscribed}
+                disabled={loading || permission === "unsupported"}
+                onChange={e => handleToggle(e.target.checked)}
+              />
+              <span className="slider" />
+            </label>
+          )}
+        </div>
+      </div>
+      {showIosHelp && <IosInstallHelpModal onClose={() => setShowIosHelp(false)} />}
+    </>
+  );
+}
+
 export function ProfilePage() {
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
@@ -3019,6 +3183,8 @@ export function ProfilePage() {
   );
   const saved = trpc.reader.saved.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
   const coins = trpc.auth.coinsBalance.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
+  const appIdQuery = trpc.reader.oneSignalAppId.useQuery();
+  const unregisterSubMutation = trpc.reader.unregisterOneSignalSubscription.useMutation();
   const [showPhoto, setShowPhoto] = useState(false);
   const [showEditDetails, setShowEditDetails] = useState(false);
   const logout = trpc.auth.logout.useMutation({
@@ -3027,6 +3193,23 @@ export function ProfilePage() {
       window.location.replace("/");
     },
   });
+
+  const handleProfileSignout = async () => {
+    if (typeof window !== "undefined" && appIdQuery.data) {
+      try {
+        const OneSignal = await getOneSignal(appIdQuery.data);
+        const subId = OneSignal.User?.PushSubscription?.id;
+        if (subId) {
+          await unregisterSubMutation.mutateAsync({ subscriptionId: subId }).catch(() => undefined);
+        }
+        await OneSignal.User?.PushSubscription?.optOut?.().catch(() => undefined);
+        await OneSignal.logout?.().catch(() => undefined);
+      } catch (err) {
+        console.warn("[PushLogout] Profile signout error:", err);
+      }
+    }
+    logout.mutate();
+  };
   useEffect(() => {
     if (!session.isLoading && !session.data) navigate("/login");
   }, [navigate, session.data, session.isLoading]);
@@ -3100,6 +3283,7 @@ export function ProfilePage() {
             <span>Appearance</span>
             <ThemeToggle />
           </div>
+          <PushNotificationSettingRow />
           <div className="px-profile-row">
             <span>Aurikrex Apps</span>
             <AurikrexAppsSwitcher currentAppId="bytes" />
@@ -3115,7 +3299,7 @@ export function ProfilePage() {
           </Link>
         </section>
 
-        <button type="button" className="px-profile-signout" onClick={() => logout.mutate()} disabled={logout.isPending}>
+        <button type="button" className="px-profile-signout" onClick={handleProfileSignout} disabled={logout.isPending}>
           <LogOut size={16} /> <span>Sign out</span>
         </button>
       </main>

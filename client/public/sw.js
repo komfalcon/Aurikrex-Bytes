@@ -1,4 +1,6 @@
-const CACHE = "aurikrex-bytes-v5";
+importScripts("https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js");
+
+const CACHE = "aurikrex-bytes-v6";
 const SHELL = ["/", "/manifest.webmanifest"];
 
 self.addEventListener("install", event => {
@@ -31,39 +33,36 @@ self.addEventListener("fetch", event => {
   }).catch(() => caches.match("/"))));
 });
 
-self.addEventListener("push", event => {
-  if (!event.data) return;
-  try {
-    const data = event.data.json();
-    event.waitUntil(
-      self.registration.showNotification(data.title || "Aurikrex Bytes", {
-        body: data.body || "New content available!",
-        icon: "/logo-192.png",
-        badge: "/logo-192.png",
-        data: { url: data.url || "/" }
-      })
-    );
-  } catch (err) {
-    console.error("Error parsing push payload", err);
-  }
-});
+// Note: Generic self.addEventListener("push") has been removed.
+// OneSignalSDK.sw.js handles push event rendering with the rich custom payload.
 
 self.addEventListener("notificationclick", event => {
   event.notification.close();
-  const urlToOpen = new URL(event.notification.data?.url || "/", self.location.origin).href;
+  const notifData = event.notification.data || {};
+  let targetUrl = notifData.url || "/";
+  if (event.action === "all-bytes") {
+    targetUrl = "/";
+  } else if (event.action === "read-now") {
+    targetUrl = notifData.url || "/";
+  }
+
+  const urlToOpen = new URL(targetUrl, self.location.origin).href;
+
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(windowClients => {
-      let matchingClient = null;
+      // Find an existing window from the same origin (not exact URL)
       for (let i = 0; i < windowClients.length; i++) {
         const windowClient = windowClients[i];
-        if (windowClient.url === urlToOpen) {
-          matchingClient = windowClient;
-          break;
-        }
+        try {
+          if (new URL(windowClient.url).origin === self.location.origin) {
+            if ("navigate" in windowClient && typeof windowClient.navigate === "function") {
+              return windowClient.navigate(urlToOpen).then(client => (client ? client.focus() : windowClient.focus()));
+            }
+            return windowClient.focus();
+          }
+        } catch {}
       }
-      if (matchingClient) {
-        return matchingClient.focus();
-      } else {
+      if (self.clients.openWindow) {
         return self.clients.openWindow(urlToOpen);
       }
     })

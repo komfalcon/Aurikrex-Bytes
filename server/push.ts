@@ -29,24 +29,175 @@ function getOneSignalConfig() {
   return { appId, apiKey };
 }
 
+export function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) =>
+      String.fromCharCode(parseInt(hex, 16))
+    );
+}
+
+export function stripSourcePrefixes(str: string): string {
+  return str
+    .replace(/^(?:(?:show|ask|tell|launch)\s+hn\s*:\s*|\[[^\]]+\]\s*:?\s*)/i, "")
+    .trim();
+}
+
+export function stripEmoji(str: string): string {
+  return str
+    .replace(
+      /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{200D}]/gu,
+      ""
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const COMMON_TECH_ACRONYMS = new Set([
+  "AI",
+  "API",
+  "AWS",
+  "CPU",
+  "GPU",
+  "HTML",
+  "HTTP",
+  "ID",
+  "IOS",
+  "IP",
+  "JSON",
+  "LLM",
+  "ML",
+  "OS",
+  "PWA",
+  "PR",
+  "RAM",
+  "REST",
+  "SDK",
+  "SEO",
+  "SQL",
+  "SSD",
+  "TCP",
+  "UI",
+  "URI",
+  "URL",
+  "USB",
+  "UX",
+  "VCF",
+]);
+
+export function fixAllCaps(str: string): string {
+  const letters = str.replace(/[^a-zA-Z]/g, "");
+  if (letters.length >= 6) {
+    const upperCount = (str.match(/[A-Z]/g) || []).length;
+    if (upperCount / letters.length > 0.75) {
+      return str
+        .toLowerCase()
+        .split(" ")
+        .map((word, idx) => {
+          const clean = word.replace(/[^a-z]/gi, "").toUpperCase();
+          if (COMMON_TECH_ACRONYMS.has(clean)) {
+            return word.replace(new RegExp(clean, "i"), clean);
+          }
+          if (idx === 0 || word.length > 3) {
+            return word.charAt(0).toUpperCase() + word.slice(1);
+          }
+          return word;
+        })
+        .join(" ");
+    }
+  }
+  return str;
+}
+
+export function truncateHeadline(str: string, maxLen = 90): string {
+  const trimmed = str.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= maxLen) {
+    return trimmed;
+  }
+  // Leave room for ellipsis "…"
+  const slice = trimmed.slice(0, maxLen - 1);
+  const lastSpace = slice.lastIndexOf(" ");
+  const cut = (lastSpace > 30 ? slice.slice(0, lastSpace) : slice).trim();
+  const cleanCut = cut.replace(/[,\-:;\s]+$/, "");
+  return `${cleanCut}…`;
+}
+
+export function formatPushBody(rawHeadline: string): string {
+  const decoded = decodeHtmlEntities(rawHeadline);
+  const withoutPrefix = stripSourcePrefixes(decoded);
+  const withoutEmoji = stripEmoji(withoutPrefix);
+  const casingFixed = fixAllCaps(withoutEmoji);
+  return truncateHeadline(casingFixed, 90);
+}
+
+export function transformPushImage(
+  imageUrl: string | null | undefined,
+  baseUrl: string
+): string {
+  const fallbackUrl = `${baseUrl}/images/briefing-banner-2x1.png`;
+  if (!imageUrl || !imageUrl.startsWith("http")) {
+    return fallbackUrl;
+  }
+  if (imageUrl.includes("res.cloudinary.com") && imageUrl.includes("/upload/")) {
+    return imageUrl.replace(
+      /\/upload\/(?:[a-z]_[^/]+,?)*\/?(v\d+\/)?/i,
+      "/upload/c_fill,ar_2:1,w_1200,g_auto,f_auto,q_auto/$1"
+    );
+  }
+  return imageUrl;
+}
+
 export interface FormattedNotification {
   heading: string;
   content: string;
   url: string;
   imageUrl?: string | null;
+  buttons?: Array<{ id: string; text: string; url: string }>;
+}
+
+export interface FormatOptions {
+  postsCount?: number;
+  timeZone?: string;
+  now?: Date;
+  slot?: PushSlot | null;
 }
 
 export function formatPushNotificationContent(
   story?: {
     id: number;
     headline: string;
-    body: string;
+    body?: string;
     imageUrl?: string | null;
   } | null,
-  timeZone = process.env.APP_TIMEZONE || PUSH_TIMEZONE,
-  now = new Date()
+  optionsOrTimeZone?: FormatOptions | string,
+  legacyNow?: Date
 ): FormattedNotification {
   const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+
+  let postsCount = 1;
+  let timeZone = PUSH_TIMEZONE;
+  let now = new Date();
+  let requestedSlot: PushSlot | null = null;
+
+  if (typeof optionsOrTimeZone === "string") {
+    timeZone = optionsOrTimeZone;
+    if (legacyNow) now = legacyNow;
+  } else if (optionsOrTimeZone && typeof optionsOrTimeZone === "object") {
+    if (optionsOrTimeZone.postsCount !== undefined) {
+      postsCount = optionsOrTimeZone.postsCount;
+    }
+    if (optionsOrTimeZone.timeZone) timeZone = optionsOrTimeZone.timeZone;
+    if (optionsOrTimeZone.now) now = optionsOrTimeZone.now;
+    if (optionsOrTimeZone.slot) requestedSlot = optionsOrTimeZone.slot;
+  }
+
   const hour = Number(
     new Intl.DateTimeFormat("en-US", {
       timeZone,
@@ -54,39 +205,47 @@ export function formatPushNotificationContent(
       hour12: false,
     }).format(now)
   );
-  const isMorning = hour >= 4 && hour < 16;
-  const prefix = isMorning ? "Morning Brief" : "Evening Recap";
+
+  const isMorning = requestedSlot
+    ? requestedSlot === "morning"
+    : hour >= 4 && hour < 16;
+
+  // Title: "Morning Brief · {N} new Bytes" or "Evening Recap · {N} Bytes today" (under ~40 chars)
+  const heading = isMorning
+    ? postsCount === 1
+      ? "Morning Brief · 1 new Byte"
+      : `Morning Brief · ${postsCount} new Bytes`
+    : postsCount === 1
+    ? "Evening Recap · 1 Byte today"
+    : `Evening Recap · ${postsCount} Bytes today`;
+
+  const fallbackBanner = `${baseUrl}/images/briefing-banner-2x1.png`;
 
   if (story) {
-    const cleanTitle = story.headline
-      .replace(/^(show\s+hn|launch\s+hn)\s*:\s*/i, "")
-      .trim();
-    const heading = `${prefix}: ${cleanTitle}`.slice(0, 75);
-
-    // Extract clean first sentence or ~110 chars
-    let bodySnippet = story.body.replace(/\s+/g, " ").trim();
-    if (bodySnippet.length > 110) {
-      const cut = bodySnippet.slice(0, 105);
-      const lastSpace = cut.lastIndexOf(" ");
-      bodySnippet =
-        (lastSpace > 60 ? cut.slice(0, lastSpace) : cut).trim() + "...";
-    }
+    const content = formatPushBody(story.headline);
+    const storyUrl = `${baseUrl}/post/${story.id}`;
+    const imageUrl = transformPushImage(story.imageUrl, baseUrl);
 
     return {
       heading,
-      content: bodySnippet,
-      url: `${baseUrl}/post/${story.id}`,
-      imageUrl:
-        story.imageUrl && story.imageUrl.startsWith("http")
-          ? story.imageUrl
-          : null,
+      content,
+      url: storyUrl,
+      imageUrl,
+      buttons: [
+        { id: "read-now", text: "Read now", url: storyUrl },
+        { id: "all-bytes", text: "All Bytes", url: `${baseUrl}/` },
+      ],
     };
   }
 
   return {
     heading: isMorning ? "Daily Tech Briefing is Ready" : "Evening Tech Roundup",
-    content: "Catch up on what matters in tech today on Aurikrex Bytes.",
-    url: `${baseUrl}/dashboard`,
+    content: "Catch up on today's highest-signal tech stories on Aurikrex Bytes.",
+    url: `${baseUrl}/`,
+    imageUrl: fallbackBanner,
+    buttons: [
+      { id: "all-bytes", text: "All Bytes", url: `${baseUrl}/` },
+    ],
   };
 }
 
@@ -202,7 +361,7 @@ async function sendOneSignalBatchWithRetry(
   throw lastError || new Error("OneSignal batch dispatch failed after retries");
 }
 
-async function sendAdminAlertEmail(subject: string, html: string) {
+export async function sendAdminAlertEmail(subject: string, html: string) {
   const alertEmail = process.env.ADMIN_ALERT_EMAIL?.trim();
   if (!alertEmail) {
     console.warn(
@@ -224,6 +383,8 @@ export interface ProcessPushOptions {
   triggerSource?: string;
   dryRun?: boolean;
   testOnly?: boolean;
+  force?: boolean;
+  resend?: boolean;
   now?: Date;
 }
 
@@ -231,13 +392,17 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
   const now = options.now || new Date();
   const dryRun = Boolean(options.dryRun);
   const testOnly = Boolean(options.testOnly);
-  const triggerSource = options.triggerSource || "manual";
+  const force = Boolean(options.force);
+  const resend = Boolean(options.resend);
+  const triggerSource = force
+    ? "manual"
+    : options.triggerSource || "manual";
 
-  // 1. Resolve slot & window
+  // 1. Resolve slot & window (bypass window check if force, dryRun, or testOnly)
   const resolution = resolvePushSlot(
     options.requestedSlot,
     now,
-    dryRun || testOnly
+    dryRun || testOnly || force
   );
   if (!resolution.isValid) {
     return { status: resolution.status || "outside_window" };
@@ -246,6 +411,10 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
   const slot: PushSlot = resolution.slot!;
   const editionDate: string = resolution.editionDate!;
   const scheduledFor: Date = resolution.scheduledFor!;
+
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+  const iconUrl = `${baseUrl}/logo-192.png`;
+  const badgeUrl = `${baseUrl}/badge-96.png`;
 
   // 2. Test modes (?dryRun=1 and ?testOnly=1)
   if (dryRun) {
@@ -264,11 +433,12 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
     }
 
     const leadStory = editionPosts[0];
-    const notification = formatPushNotificationContent(
-      leadStory,
-      PUSH_TIMEZONE,
-      now
-    );
+    const notification = formatPushNotificationContent(leadStory, {
+      postsCount: editionPosts.length,
+      timeZone: PUSH_TIMEZONE,
+      now,
+      slot,
+    });
 
     const db = await getDb();
     const subs = db
@@ -277,8 +447,6 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
           .from(oneSignalSubscriptions)
       : [];
 
-    const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
-    const iconUrl = `${baseUrl}/logo-192.png`;
     const payload: Record<string, unknown> = {
       headings: { en: notification.heading },
       contents: { en: notification.content },
@@ -286,9 +454,11 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
       priority: 10,
       ttl: 14400,
       chrome_web_icon: iconUrl,
-      chrome_web_badge: iconUrl,
+      chrome_web_badge: badgeUrl,
       firefox_icon: iconUrl,
-      collapse_id: `aurikrex-briefing-${editionDate}-${slot}`,
+      collapse_id: "aurikrex-briefing",
+      web_push_topic: "aurikrex-briefing",
+      web_buttons: notification.buttons,
     };
     if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
       payload.big_picture = notification.imageUrl;
@@ -334,13 +504,13 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
       };
     }
 
-    const notification = formatPushNotificationContent(
-      leadStory,
-      PUSH_TIMEZONE,
-      now
-    );
-    const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
-    const iconUrl = `${baseUrl}/logo-192.png`;
+    const notification = formatPushNotificationContent(leadStory, {
+      postsCount: editionPosts.length,
+      timeZone: PUSH_TIMEZONE,
+      now,
+      slot,
+    });
+
     const payload: Record<string, unknown> = {
       include_subscription_ids: adminSubs,
       headings: { en: `[TEST] ${notification.heading}` },
@@ -349,9 +519,11 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
       priority: 10,
       ttl: 14400,
       chrome_web_icon: iconUrl,
-      chrome_web_badge: iconUrl,
+      chrome_web_badge: badgeUrl,
       firefox_icon: iconUrl,
-      collapse_id: `aurikrex-test-${editionDate}-${slot}`,
+      collapse_id: "aurikrex-test-briefing",
+      web_push_topic: "aurikrex-test-briefing",
+      web_buttons: notification.buttons,
     };
     if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
       payload.big_picture = notification.imageUrl;
@@ -372,17 +544,19 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
     };
   }
 
-  // 3. Live production run: Atomic claim
+  // 3. Live run: Atomic claim in ledger
   const claim = await claimPushSlot({
     editionDate,
     slot,
     triggerSource,
     scheduledFor,
     now,
+    force,
+    resend,
   });
 
   if (!claim.claimed) {
-    return { status: claim.status };
+    return { status: claim.status, message: (claim as any).error };
   }
 
   try {
@@ -414,11 +588,12 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
     }
 
     const leadStory = editionPosts[0];
-    const notification = formatPushNotificationContent(
-      leadStory,
-      PUSH_TIMEZONE,
-      now
-    );
+    const notification = formatPushNotificationContent(leadStory, {
+      postsCount: editionPosts.length,
+      timeZone: PUSH_TIMEZONE,
+      now,
+      slot,
+    });
 
     const db = await getDb();
     if (!db) throw new Error("Database unavailable");
@@ -427,8 +602,6 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
       .select({ subscriptionId: oneSignalSubscriptions.subscriptionId })
       .from(oneSignalSubscriptions);
 
-    const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
-    const iconUrl = `${baseUrl}/logo-192.png`;
     const basePayload: Record<string, unknown> = {
       headings: { en: notification.heading },
       contents: { en: notification.content },
@@ -436,9 +609,11 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
       priority: 10,
       ttl: 14400,
       chrome_web_icon: iconUrl,
-      chrome_web_badge: iconUrl,
+      chrome_web_badge: badgeUrl,
       firefox_icon: iconUrl,
-      collapse_id: `aurikrex-briefing-${editionDate}-${slot}`,
+      collapse_id: "aurikrex-briefing",
+      web_push_topic: "aurikrex-briefing",
+      web_buttons: notification.buttons,
     };
     if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
       basePayload.big_picture = notification.imageUrl;
@@ -555,6 +730,7 @@ export async function sendDailyPushNotifications(
 export async function sendTestPushNotification(subscriptionId: string) {
   const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const iconUrl = `${baseUrl}/logo-192.png`;
+  const badgeUrl = `${baseUrl}/badge-96.png`;
 
   try {
     const { appId, apiKey } = getOneSignalConfig();
@@ -568,14 +744,22 @@ export async function sendTestPushNotification(subscriptionId: string) {
         app_id: appId,
         target_channel: "push",
         include_subscription_ids: [subscriptionId],
-        headings: { en: "Aurikrex Bytes Push Active!" },
+        headings: { en: "Morning Brief · 1 new Byte" },
         contents: {
-          en: "You're all set! Daily tech updates will arrive at 8:00 AM and 10:00 PM.",
+          en: "OpenAI announces reasoning improvements with faster tool execution and lower latency.",
         },
-        url: `${baseUrl}/dashboard`,
+        url: `${baseUrl}/`,
         chrome_web_icon: iconUrl,
-        chrome_web_badge: iconUrl,
+        chrome_web_badge: badgeUrl,
         firefox_icon: iconUrl,
+        big_picture: `${baseUrl}/images/briefing-banner-2x1.png`,
+        chrome_web_image: `${baseUrl}/images/briefing-banner-2x1.png`,
+        collapse_id: "aurikrex-briefing",
+        web_push_topic: "aurikrex-briefing",
+        web_buttons: [
+          { id: "read-now", text: "Read now", url: `${baseUrl}/` },
+          { id: "all-bytes", text: "All Bytes", url: `${baseUrl}/` },
+        ],
       }),
     });
 

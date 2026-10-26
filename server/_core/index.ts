@@ -74,14 +74,37 @@ async function setupApp() {
     if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+
+    if (req.query.testAlert === "1") {
+      try {
+        const { sendAdminAlertEmail } = await import("../push.js");
+        await sendAdminAlertEmail(
+          "[Test Alert] Aurikrex Bytes Alert System Verification",
+          `<p>This is a test alert confirming your <code>ADMIN_ALERT_EMAIL</code> is configured and receiving system alerts.</p>
+           <p>Triggered at: ${new Date().toISOString()}</p>`
+        );
+        return res.status(200).json({
+          status: "test_alert_sent",
+          adminAlertEmailConfigured: Boolean(process.env.ADMIN_ALERT_EMAIL),
+        });
+      } catch (err: any) {
+        return res.status(500).json({
+          error: "Failed to send test alert email",
+          message: err?.message || String(err),
+        });
+      }
+    }
+
     const requestedSlot =
       typeof req.query.slot === "string" ? req.query.slot : undefined;
     const dryRun = req.query.dryRun === "1";
     const testOnly = req.query.testOnly === "1";
+    const force = req.query.force === "1";
+    const resend = req.query.resend === "1";
     const triggerSource =
       (req.headers["x-trigger-source"] as string) ||
       (req.query.triggerSource as string) ||
-      "vercel";
+      (force ? "manual" : "vercel");
 
     try {
       const result = await processPushTrigger({
@@ -89,6 +112,8 @@ async function setupApp() {
         triggerSource,
         dryRun,
         testOnly,
+        force,
+        resend,
       });
       return res.status(200).json(result);
     } catch (error: any) {

@@ -727,6 +727,64 @@ export const appRouter = router({
         await setMaintenanceMode(input.enabled);
         return { success: true, maintenance: input.enabled };
       }),
+    listPushSends: publicProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(100).default(50) }).optional())
+      .query(async ({ input, ctx }) => {
+        await requireAdmin(ctx);
+        const { listRecentPushSends } = await import("./pushLedger.js");
+        return await listRecentPushSends(input?.limit ?? 50);
+      }),
+    resendPushSend: publicProcedure
+      .input(
+        z.object({
+          slot: z.enum(["morning", "evening"]),
+          editionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        await requireAdmin(ctx);
+        const { processPushTrigger } = await import("./push.js");
+        return await processPushTrigger({
+          requestedSlot: input.slot,
+          triggerSource: "admin_manual_resend",
+          force: true,
+          resend: true,
+        });
+      }),
+    testAlertEmail: publicProcedure.mutation(async ({ ctx }) => {
+      await requireAdmin(ctx);
+      const { sendAdminAlertEmail } = await import("./push.js");
+      await sendAdminAlertEmail(
+        "[Test Alert] Admin Triggered Verification",
+        `<p>This is a test alert confirming your <code>ADMIN_ALERT_EMAIL</code> is configured and receiving system alerts.</p>
+         <p>Triggered from: Admin Management Dashboard</p>
+         <p>Time: ${new Date().toISOString()}</p>`
+      );
+      return {
+        success: true,
+        adminAlertEmailConfigured: Boolean(process.env.ADMIN_ALERT_EMAIL),
+      };
+    }),
+    previewPushNotification: publicProcedure
+      .input(z.object({ slot: z.enum(["morning", "evening"]).default("morning") }))
+      .query(async ({ input, ctx }) => {
+        await requireAdmin(ctx);
+        const { formatPushNotificationContent } = await import("./push.js");
+        const { listPublishedPosts } = await import("./db.js");
+        const posts = await listPublishedPosts();
+        const leadStory = posts[0] || null;
+        const formatted = formatPushNotificationContent(leadStory, {
+          postsCount: Math.max(1, posts.length),
+          slot: input.slot,
+        });
+        return {
+          formatted,
+          leadStory: leadStory
+            ? { id: leadStory.id, headline: leadStory.headline }
+            : null,
+          totalPublished: posts.length,
+        };
+      }),
   }),
   reader: router({
     oneSignalAppId: publicProcedure.query(() => ENV.oneSignalAppId),
@@ -738,6 +796,16 @@ export const appRouter = router({
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         await db.delete(oneSignalSubscriptions).where(and(eq(oneSignalSubscriptions.subscriptionId, input.subscriptionId), eq(oneSignalSubscriptions.readerId, session.id)));
         await db.insert(oneSignalSubscriptions).values({ readerId: session.id, subscriptionId: input.subscriptionId });
+        return { success: true };
+      }),
+    unregisterOneSignalSubscription: publicProcedure
+      .input(z.object({ subscriptionId: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        await db
+          .delete(oneSignalSubscriptions)
+          .where(eq(oneSignalSubscriptions.subscriptionId, input.subscriptionId));
         return { success: true };
       }),
     sendTestPush: publicProcedure

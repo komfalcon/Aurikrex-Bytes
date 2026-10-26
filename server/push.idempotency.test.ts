@@ -279,6 +279,17 @@ describe("DryRun & Skip Semantics", () => {
 
   it("skips and does NOT fall back to yesterday's story if target edition has no published posts", async () => {
     const emptyEditionDate = "2028-01-01"; // Future date with no posts
+    const db = await getDb();
+    if (db) {
+      await db
+        .delete(pushSends)
+        .where(
+          and(
+            eq(pushSends.editionDate, emptyEditionDate),
+            eq(pushSends.slot, "morning")
+          )
+        );
+    }
     const res = await processPushTrigger({
       requestedSlot: "morning",
       triggerSource: "manual",
@@ -290,7 +301,6 @@ describe("DryRun & Skip Semantics", () => {
     expect(res.reason).toBe("no_published_posts");
 
     // Verify row in ledger is marked 'skipped'
-    const db = await getDb();
     if (db) {
       const rows = await db
         .select()
@@ -302,5 +312,138 @@ describe("DryRun & Skip Semantics", () => {
       expect(rows[0].status).toBe("skipped");
       expect(rows[0].error).toContain("No published posts");
     }
+  });
+
+  it("handles ?force=1 to reclaim a 'skipped' slot or 'failed' slot that exceeded max attempts", async () => {
+    const db = await getDb();
+    if (!db) return;
+
+    const testDate = "2029-05-10";
+    const slot = "morning";
+    const scheduledFor = new Date("2029-05-10T07:00:00Z");
+
+    await db
+      .delete(pushSends)
+      .where(and(eq(pushSends.editionDate, testDate), eq(pushSends.slot, slot)));
+
+    // 1. Setup a 'skipped' row
+    await db.insert(pushSends).values({
+      editionDate: testDate,
+      slot,
+      status: "skipped",
+      triggerSource: "cron",
+      scheduledFor,
+      startedAt: new Date(),
+      finishedAt: new Date(),
+      attempts: 1,
+    });
+
+    // Without force -> already_done
+    const regularClaim = await claimPushSlot({
+      editionDate: testDate,
+      slot,
+      triggerSource: "cron",
+      scheduledFor,
+    });
+    expect(regularClaim.claimed).toBe(false);
+    expect(regularClaim.status).toBe("already_done");
+
+    // With force=1 -> reclaimed successfully
+    const forceClaim = await claimPushSlot({
+      editionDate: testDate,
+      slot,
+      triggerSource: "cron",
+      scheduledFor,
+      force: true,
+    });
+    expect(forceClaim.claimed).toBe(true);
+
+    // 2. Mark row as 'failed' with 3 attempts (max reached)
+    await updatePushSend(forceClaim.sendId, {
+      status: "failed",
+      error: "Simulated 3rd consecutive timeout",
+    });
+    await db
+      .update(pushSends)
+      .set({ attempts: 3 })
+      .where(eq(pushSends.id, forceClaim.sendId));
+
+    // Without force -> max_attempts_exceeded
+    const nonForceRetry = await claimPushSlot({
+      editionDate: testDate,
+      slot,
+      triggerSource: "cron",
+      scheduledFor,
+    });
+    expect(nonForceRetry.claimed).toBe(false);
+    expect(nonForceRetry.status).toBe("max_attempts_exceeded");
+
+    // With force=1 -> reset attempts to 1 and reclaim
+    const forceRetry = await claimPushSlot({
+      editionDate: testDate,
+      slot,
+      triggerSource: "cron",
+      scheduledFor,
+      force: true,
+    });
+    expect(forceRetry.claimed).toBe(true);
+    expect(forceRetry.attempts).toBe(1);
+  });
+
+  it("refuses to resend an already 'sent' slot unless ?force=1&resend=1 is passed", async () => {
+    const db = await getDb();
+    if (!db) return;
+
+    const testDate = "2029-06-20";
+    const slot = "evening";
+    const scheduledFor = new Date("2029-06-20T21:00:00Z");
+
+    await db
+      .delete(pushSends)
+      .where(and(eq(pushSends.editionDate, testDate), eq(pushSends.slot, slot)));
+
+    // Seed 'sent' row
+    await db.insert(pushSends).values({
+      editionDate: testDate,
+      slot,
+      status: "sent",
+      triggerSource: "cron",
+      scheduledFor,
+      startedAt: new Date(),
+      finishedAt: new Date(),
+      attempts: 1,
+      recipientsCount: 42,
+    });
+
+    // force=1 without resend=1 -> must refuse
+    const forceOnly = await claimPushSlot({
+      editionDate: testDate,
+      slot,
+      triggerSource: "manual",
+      scheduledFor,
+      force: true,
+      resend: false,
+    });
+    expect(forceOnly.claimed).toBe(false);
+    expect(forceOnly.status).toBe("already_done");
+    expect((forceOnly as any).error).toContain("Pass force=1&resend=1 to resend");
+
+    // force=1 with resend=1 -> reclaimed and logged
+    const forceAndResend = await claimPushSlot({
+      editionDate: testDate,
+      slot,
+      triggerSource: "manual",
+      scheduledFor,
+      force: true,
+      resend: true,
+    });
+    expect(forceAndResend.claimed).toBe(true);
+
+    const rows = await db
+      .select()
+      .from(pushSends)
+      .where(and(eq(pushSends.editionDate, testDate), eq(pushSends.slot, slot)));
+    expect(rows[0].status).toBe("sending");
+    expect(rows[0].error).toContain("Manual resend initiated");
   });
 });
