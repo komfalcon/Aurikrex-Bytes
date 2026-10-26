@@ -886,6 +886,7 @@ __export(security_exports, {
   authRateLimit: () => authRateLimit,
   checkPasswordAttemptLockout: () => checkPasswordAttemptLockout,
   clearAllAuthRateLimitStores: () => clearAllAuthRateLimitStores,
+  isCronAuthorized: () => isCronAuthorized,
   isSafeAvatarUrl: () => isSafeAvatarUrl,
   isSafePublicHttpsUrl: () => isSafePublicHttpsUrl,
   recordFailedPasswordAttempt: () => recordFailedPasswordAttempt,
@@ -1023,6 +1024,24 @@ function resetPasswordAttempts(email) {
 function clearAllAuthRateLimitStores() {
   authAttempts.clear();
   failedAttemptsMap.clear();
+}
+function isCronAuthorized(req) {
+  const rawAuth = (req.headers.authorization || "").trim();
+  const xCronSecret = (req.headers["x-cron-secret"] || "").trim();
+  const querySecret = (req.query?.secret || req.query?.key || "").trim();
+  const candidates = [
+    process.env.CRON_SECRET,
+    process.env.AURIKREX_CENTRAL_S2S_SECRET
+  ].filter((s) => typeof s === "string" && s.trim().length > 0).map((s) => s.trim().replace(/^["']|["']$/g, ""));
+  if (candidates.length === 0) {
+    return false;
+  }
+  for (const secret2 of candidates) {
+    if (safeStringEqual(rawAuth, `Bearer ${secret2}`) || safeStringEqual(rawAuth, secret2)) return true;
+    if (safeStringEqual(xCronSecret, secret2)) return true;
+    if (safeStringEqual(querySecret, secret2)) return true;
+  }
+  return false;
 }
 var authAttempts, AUTH_WINDOW_MS, AUTH_MAX_REQUESTS, AI_MAX_REQUESTS, failedAttemptsMap, MAX_FAILED_BEFORE_LOCKOUT, LOCKOUT_DURATION_MS, MAX_FAILED_BEFORE_AUTO_RESET, ATTEMPT_WINDOW_MS;
 var init_security = __esm({
@@ -5973,11 +5992,6 @@ async function setupApp() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
-  const isCronAuthorized = (req) => {
-    const authorization = req.headers.authorization;
-    const cronSecret = process.env.CRON_SECRET;
-    return Boolean(cronSecret && authorization === `Bearer ${cronSecret}`);
-  };
   app.get("/api/cron/publish", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     if (!isCronAuthorized(req)) {

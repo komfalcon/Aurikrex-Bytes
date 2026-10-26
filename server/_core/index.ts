@@ -12,7 +12,7 @@ import { createContext } from "./context.js";
 import { sendDailyPushNotifications } from "../push.js";
 import { serveStatic, setupVite } from "./vite.js";
 import { registerSeoRoutes } from "./seoRoutes.js";
-import { authRateLimit, securityHeaders } from "./security.js";
+import { authRateLimit, isCronAuthorized, securityHeaders } from "./security.js";
 import { validateProductionEnvironment } from "./env.js";
 import { publishDuePosts } from "../db.js";
 
@@ -57,9 +57,7 @@ async function setupApp() {
   registerSeoRoutes(app);
   app.get("/api/cron/publish", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    const authorization = req.headers.authorization;
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+    if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -71,9 +69,7 @@ async function setupApp() {
   });
   app.get("/api/cron/notify", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    const authorization = req.headers.authorization;
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+    if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -86,9 +82,7 @@ async function setupApp() {
   });
   app.get("/api/cron/curate", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    const authorization = req.headers.authorization;
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+    if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
