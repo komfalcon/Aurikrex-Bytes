@@ -9,10 +9,10 @@ import { registerStorageProxy } from "./storageProxy.js";
 import { registerGoogleAuthRoutes } from "../google-auth.js";
 import { appRouter } from "../routers.js";
 import { createContext } from "./context.js";
-import { sendDailyPushNotifications } from "../push.js";
+import { processPushTrigger, sendDailyPushNotifications } from "../push.js";
 import { serveStatic, setupVite } from "./vite.js";
 import { registerSeoRoutes } from "./seoRoutes.js";
-import { authRateLimit, securityHeaders } from "./security.js";
+import { authRateLimit, safeCompareSecrets, securityHeaders } from "./security.js";
 import { validateProductionEnvironment } from "./env.js";
 import { publishDuePosts } from "../db.js";
 
@@ -55,11 +55,17 @@ async function setupApp() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
-  app.get("/api/cron/publish", async (req, res) => {
-    res.setHeader("Cache-Control", "no-store");
+  const isCronAuthorized = (req: express.Request) => {
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+    if (!cronSecret || !authorization) return false;
+    const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : null;
+    return Boolean(token && safeCompareSecrets(token, cronSecret));
+  };
+
+  app.get("/api/cron/publish", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -69,19 +75,35 @@ async function setupApp() {
       return res.status(500).json({ error: "Publish job failed" });
     }
   });
+
   app.get("/api/cron/notify", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    const authorization = req.headers.authorization;
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+    if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+    const requestedSlot =
+      typeof req.query.slot === "string" ? req.query.slot : undefined;
+    const dryRun = req.query.dryRun === "1";
+    const testOnly = req.query.testOnly === "1";
+    const triggerSource =
+      (req.headers["x-trigger-source"] as string) ||
+      (req.query.triggerSource as string) ||
+      "vercel";
+
     try {
-      const sent = await sendDailyPushNotifications();
-      return res.json({ sent });
-    } catch (error) {
+      const result = await processPushTrigger({
+        requestedSlot,
+        triggerSource,
+        dryRun,
+        testOnly,
+      });
+      return res.status(200).json(result);
+    } catch (error: any) {
       console.error("[Cron] notify failed", error);
-      return res.status(500).json({ error: "Notify job failed" });
+      return res.status(500).json({
+        error: "Notify job failed",
+        message: error?.message || String(error),
+      });
     }
   });
   app.get("/api/cron/curate", async (req, res) => {

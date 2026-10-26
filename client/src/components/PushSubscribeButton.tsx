@@ -55,7 +55,6 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
   const [loading, setLoading] = useState(false);
   const oneSignalAppIdQuery = trpc.reader.oneSignalAppId.useQuery();
   const registerSubscriptionMutation = trpc.reader.registerOneSignalSubscription.useMutation();
-  const sendTestMutation = trpc.reader.sendTestPush.useMutation();
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -103,15 +102,12 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         toast.error("Notification permission was denied.");
         return;
       }
-      setIsSubscribed(true);
-
       const subscriptionId = await waitForSubscriptionId(OneSignal);
       if (!subscriptionId) throw new Error("OneSignal did not return a subscription ID yet. Please try again.");
       await registerSubscriptionMutation.mutateAsync({ subscriptionId });
-      const testResult = await sendTestMutation.mutateAsync({ subscriptionId });
-      if (!testResult.success) throw new Error(testResult.error || "The test notification could not be sent.");
+      setIsSubscribed(true);
 
-      toast.success("OneSignal notifications enabled!");
+      toast.success("Daily briefing notifications enabled!");
     } catch (e) {
       console.error("[PushSubscribe] error:", e);
       toast.error(e instanceof Error ? e.message : "Failed to enable notifications.");

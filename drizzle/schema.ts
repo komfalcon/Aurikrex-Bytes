@@ -160,3 +160,31 @@ export const systemSettings = sqliteTable("system_settings", {
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
 
+export const pushSends = sqliteTable(
+  "push_sends",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    editionDate: text("edition_date").notNull(),
+    slot: text("slot").notNull(), // 'morning' | 'evening'
+    status: text("status").notNull(), // 'sending' | 'sent' | 'failed' | 'skipped'
+    triggerSource: text("trigger_source").notNull(),
+    scheduledFor: integer("scheduled_for", { mode: "timestamp_ms" }).notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+    leadPostId: integer("lead_post_id").references(() => posts.id, { onDelete: "set null" }),
+    postsCount: integer("posts_count"),
+    recipientsCount: integer("recipients_count"),
+    onesignalNotificationIds: text("onesignal_notification_ids"), // JSON string array
+    invalidRemovedCount: integer("invalid_removed_count"),
+    error: text("error"),
+    attempts: integer("attempts").notNull().default(1),
+  },
+  table => ({
+    editionSlotUnique: uniqueIndex("push_sends_edition_slot_unique").on(table.editionDate, table.slot),
+  })
+);
+
+export type PushSend = typeof pushSends.$inferSelect;
+export type InsertPushSend = typeof pushSends.$inferInsert;
+
+
