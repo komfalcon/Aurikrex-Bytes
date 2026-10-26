@@ -12,7 +12,7 @@ import { createContext } from "./context.js";
 import { processPushTrigger, sendDailyPushNotifications } from "../push.js";
 import { serveStatic, setupVite } from "./vite.js";
 import { registerSeoRoutes } from "./seoRoutes.js";
-import { authRateLimit, safeCompareSecrets, securityHeaders } from "./security.js";
+import { authRateLimit, isCronAuthorized, safeCompareSecrets, securityHeaders } from "./security.js";
 import { validateProductionEnvironment } from "./env.js";
 import { publishDuePosts } from "../db.js";
 
@@ -55,13 +55,6 @@ async function setupApp() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
-  const isCronAuthorized = (req: express.Request) => {
-    const authorization = req.headers.authorization;
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || !authorization) return false;
-    const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : null;
-    return Boolean(token && safeCompareSecrets(token, cronSecret));
-  };
 
   app.get("/api/cron/publish", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");

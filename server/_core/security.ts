@@ -231,3 +231,29 @@ export function clearAllAuthRateLimitStores() {
   authAttempts.clear();
   failedAttemptsMap.clear();
 }
+
+
+export function isCronAuthorized(req: Request): boolean {
+  const rawAuth = (req.headers.authorization || "").trim();
+  const bearerToken = rawAuth.startsWith("Bearer ") ? rawAuth.slice(7).trim() : null;
+  const xCronSecret = ((req.headers["x-cron-secret"] as string) || "").trim();
+  const querySecret = ((req.query?.secret as string) || (req.query?.key as string) || "").trim();
+
+  const candidates = [
+    process.env.CRON_SECRET,
+    process.env.AURIKREX_CENTRAL_S2S_SECRET,
+  ]
+    .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+    .map(s => s.trim().replace(/^["']|["']$/g, ""));
+
+  if (candidates.length === 0) return false;
+
+  for (const secret of candidates) {
+    if (bearerToken && safeStringEqual(bearerToken, secret)) return true;
+    if (safeStringEqual(rawAuth, secret)) return true;
+    if (xCronSecret && safeStringEqual(xCronSecret, secret)) return true;
+    if (querySecret && safeStringEqual(querySecret, secret)) return true;
+  }
+
+  return false;
+}

@@ -896,6 +896,7 @@ __export(security_exports, {
   authRateLimit: () => authRateLimit,
   checkPasswordAttemptLockout: () => checkPasswordAttemptLockout,
   clearAllAuthRateLimitStores: () => clearAllAuthRateLimitStores,
+  isCronAuthorized: () => isCronAuthorized,
   isSafeAvatarUrl: () => isSafeAvatarUrl,
   isSafePublicHttpsUrl: () => isSafePublicHttpsUrl,
   recordFailedPasswordAttempt: () => recordFailedPasswordAttempt,
@@ -1054,6 +1055,24 @@ function resetPasswordAttempts(email) {
 function clearAllAuthRateLimitStores() {
   authAttempts.clear();
   failedAttemptsMap.clear();
+}
+function isCronAuthorized(req) {
+  const rawAuth = (req.headers.authorization || "").trim();
+  const bearerToken = rawAuth.startsWith("Bearer ") ? rawAuth.slice(7).trim() : null;
+  const xCronSecret = (req.headers["x-cron-secret"] || "").trim();
+  const querySecret = (req.query?.secret || req.query?.key || "").trim();
+  const candidates = [
+    process.env.CRON_SECRET,
+    process.env.AURIKREX_CENTRAL_S2S_SECRET
+  ].filter((s) => typeof s === "string" && s.trim().length > 0).map((s) => s.trim().replace(/^["']|["']$/g, ""));
+  if (candidates.length === 0) return false;
+  for (const secret2 of candidates) {
+    if (bearerToken && safeStringEqual(bearerToken, secret2)) return true;
+    if (safeStringEqual(rawAuth, secret2)) return true;
+    if (xCronSecret && safeStringEqual(xCronSecret, secret2)) return true;
+    if (querySecret && safeStringEqual(querySecret, secret2)) return true;
+  }
+  return false;
 }
 var authAttempts, AUTH_WINDOW_MS, AUTH_MAX_REQUESTS, AI_MAX_REQUESTS, DEFAULT_ALLOWED_AVATAR_HOSTS, failedAttemptsMap, MAX_FAILED_BEFORE_LOCKOUT, LOCKOUT_DURATION_MS, MAX_FAILED_BEFORE_AUTO_RESET, ATTEMPT_WINDOW_MS;
 var init_security = __esm({
@@ -6467,13 +6486,6 @@ async function setupApp() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerSeoRoutes(app);
-  const isCronAuthorized = (req) => {
-    const authorization = req.headers.authorization;
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret || !authorization) return false;
-    const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : null;
-    return Boolean(token && safeCompareSecrets(token, cronSecret));
-  };
   app.get("/api/cron/publish", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     if (!isCronAuthorized(req)) {
