@@ -13,6 +13,7 @@ import {
   users,
   pushSubscriptions,
   systemSettings,
+  pushSends,
 } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
 import { updateDailyStreak } from "./streak.js";
@@ -22,6 +23,17 @@ let _db: ReturnType<typeof drizzle> | null = null;
 let _schemaRepair: Promise<void> | null = null;
 
 async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS readers (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    email text NOT NULL UNIQUE,
+    password_hash text,
+    google_id text UNIQUE,
+    email_verified integer DEFAULT 0 NOT NULL,
+    verification_token text,
+    reset_token text,
+    reset_token_expires integer,
+    created_at integer NOT NULL
+  )`));
   const columns = await db.all(sql.raw("PRAGMA table_info('readers')"));
   const names = new Set(
     columns.map(column => (column as { name?: string }).name).filter(Boolean)
@@ -76,7 +88,51 @@ async function repairEngagementSchema(db: ReturnType<typeof drizzle>) {
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_bookmarks_post_reader_unique ON post_bookmarks (post_id, reader_id)"));
 }
 
+async function repairPushSendsSchema(db: ReturnType<typeof drizzle>) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS push_sends (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    edition_date text NOT NULL,
+    slot text NOT NULL,
+    status text NOT NULL,
+    trigger_source text NOT NULL,
+    scheduled_for integer NOT NULL,
+    started_at integer NOT NULL,
+    finished_at integer,
+    lead_post_id integer,
+    posts_count integer,
+    recipients_count integer,
+    onesignal_notification_ids text,
+    invalid_removed_count integer,
+    error text,
+    attempts integer DEFAULT 1 NOT NULL,
+    FOREIGN KEY (lead_post_id) REFERENCES posts(id) ON DELETE SET NULL
+  )`));
+  await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS push_sends_edition_slot_unique ON push_sends (edition_date, slot)"));
+}
+
 async function repairVerifiedNewsSchema(db: ReturnType<typeof drizzle>) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS posts (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    image_url text,
+    headline text NOT NULL,
+    body text NOT NULL,
+    category text DEFAULT 'Tech' NOT NULL,
+    status text DEFAULT 'draft' NOT NULL,
+    scheduled_time integer,
+    published_time integer,
+    rejection_note text,
+    created_by integer NOT NULL,
+    updated_at integer NOT NULL
+  )`));
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS admin_users (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    email text NOT NULL UNIQUE,
+    password_hash text NOT NULL,
+    role text DEFAULT 'editor' NOT NULL,
+    is_active integer DEFAULT 1 NOT NULL,
+    remember_device_token text,
+    created_at integer NOT NULL
+  )`));
   const columns = await db.all(sql.raw("PRAGMA table_info('posts')"));
   const names = new Set(
     columns.map(column => (column as { name?: string }).name).filter(Boolean)
@@ -89,6 +145,7 @@ async function repairVerifiedNewsSchema(db: ReturnType<typeof drizzle>) {
     ["image_query", "text"],
     ["image_provenance", "text"],
     ["category", "text DEFAULT 'Tech' NOT NULL"],
+    ["rejection_note", "text"],
   ] as const;
   for (const [name, definition] of repairs) {
     if (names.has(name)) continue;
@@ -112,17 +169,22 @@ async function cleanupTemplatedPosts(db: ReturnType<typeof drizzle>) {
 }
 
 export async function getDb() {
-  if (!_db && process.env.TURSO_DATABASE_URL) {
+  const dbUrl =
+    process.env.TURSO_DATABASE_URL ||
+    process.env.DATABASE_URL ||
+    (process.env.NODE_ENV === "test" ? "file:test.db" : null);
+  if (!_db && dbUrl) {
     try {
       _db = drizzle(
         createClient({
-          url: process.env.TURSO_DATABASE_URL,
+          url: dbUrl,
           authToken: process.env.TURSO_AUTH_TOKEN,
         })
       );
       _schemaRepair = Promise.all([
         repairReaderSchema(_db),
         repairEngagementSchema(_db),
+        repairPushSendsSchema(_db),
         repairVerifiedNewsSchema(_db),
         repairSystemSettingsSchema(_db),
         cleanupTemplatedPosts(_db),

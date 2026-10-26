@@ -9,8 +9,19 @@ const AI_MAX_REQUESTS = 15;
 export function safeStringEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(String(a ?? ""), "utf8");
   const bufB = Buffer.from(String(b ?? ""), "utf8");
-  if (bufA.length !== bufB.length) return false;
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufB, bufB);
+    return false;
+  }
   return crypto.timingSafeEqual(bufA, bufB);
+}
+
+export function safeCompareSecrets(
+  provided: string | undefined | null,
+  expected: string | undefined | null
+): boolean {
+  if (!provided || !expected) return false;
+  return safeStringEqual(provided, expected);
 }
 
 export function isSafePublicHttpsUrl(value: string | null | undefined): boolean {

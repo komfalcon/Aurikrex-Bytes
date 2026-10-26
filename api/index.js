@@ -9,24 +9,8 @@ var __export = (target, all) => {
 };
 
 // drizzle/schema.ts
-var schema_exports = {};
-__export(schema_exports, {
-  ADMIN_ROLES: () => ADMIN_ROLES,
-  POST_STATUSES: () => POST_STATUSES,
-  adminUsers: () => adminUsers,
-  oneSignalSubscriptions: () => oneSignalSubscriptions,
-  postBookmarks: () => postBookmarks,
-  postReactions: () => postReactions,
-  postViews: () => postViews,
-  posts: () => posts,
-  pushSubscriptions: () => pushSubscriptions,
-  readers: () => readers,
-  searchQueries: () => searchQueries,
-  systemSettings: () => systemSettings,
-  users: () => users
-});
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postViews, postReactions, postBookmarks, searchQueries, pushSubscriptions, oneSignalSubscriptions, systemSettings;
+var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postViews, postReactions, postBookmarks, searchQueries, pushSubscriptions, oneSignalSubscriptions, systemSettings, pushSends;
 var init_schema = __esm({
   "drizzle/schema.ts"() {
     "use strict";
@@ -140,6 +124,32 @@ var init_schema = __esm({
       value: text("value").notNull(),
       updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
     });
+    pushSends = sqliteTable(
+      "push_sends",
+      {
+        id: integer("id").primaryKey({ autoIncrement: true }),
+        editionDate: text("edition_date").notNull(),
+        slot: text("slot").notNull(),
+        // 'morning' | 'evening'
+        status: text("status").notNull(),
+        // 'sending' | 'sent' | 'failed' | 'skipped'
+        triggerSource: text("trigger_source").notNull(),
+        scheduledFor: integer("scheduled_for", { mode: "timestamp_ms" }).notNull(),
+        startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
+        finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+        leadPostId: integer("lead_post_id").references(() => posts.id, { onDelete: "set null" }),
+        postsCount: integer("posts_count"),
+        recipientsCount: integer("recipients_count"),
+        onesignalNotificationIds: text("onesignal_notification_ids"),
+        // JSON string array
+        invalidRemovedCount: integer("invalid_removed_count"),
+        error: text("error"),
+        attempts: integer("attempts").notNull().default(1)
+      },
+      (table) => ({
+        editionSlotUnique: uniqueIndex("push_sends_edition_slot_unique").on(table.editionDate, table.slot)
+      })
+    );
   }
 });
 
@@ -289,6 +299,17 @@ import { createClient } from "@libsql/client";
 import { and, asc, desc, eq, gt, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 async function repairReaderSchema(db) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS readers (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    email text NOT NULL UNIQUE,
+    password_hash text,
+    google_id text UNIQUE,
+    email_verified integer DEFAULT 0 NOT NULL,
+    verification_token text,
+    reset_token text,
+    reset_token_expires integer,
+    created_at integer NOT NULL
+  )`));
   const columns = await db.all(sql.raw("PRAGMA table_info('readers')"));
   const names = new Set(
     columns.map((column) => column.name).filter(Boolean)
@@ -340,7 +361,50 @@ async function repairEngagementSchema(db) {
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_reactions_post_reader_unique ON post_reactions (post_id, reader_id)"));
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_bookmarks_post_reader_unique ON post_bookmarks (post_id, reader_id)"));
 }
+async function repairPushSendsSchema(db) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS push_sends (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    edition_date text NOT NULL,
+    slot text NOT NULL,
+    status text NOT NULL,
+    trigger_source text NOT NULL,
+    scheduled_for integer NOT NULL,
+    started_at integer NOT NULL,
+    finished_at integer,
+    lead_post_id integer,
+    posts_count integer,
+    recipients_count integer,
+    onesignal_notification_ids text,
+    invalid_removed_count integer,
+    error text,
+    attempts integer DEFAULT 1 NOT NULL,
+    FOREIGN KEY (lead_post_id) REFERENCES posts(id) ON DELETE SET NULL
+  )`));
+  await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS push_sends_edition_slot_unique ON push_sends (edition_date, slot)"));
+}
 async function repairVerifiedNewsSchema(db) {
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS posts (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    image_url text,
+    headline text NOT NULL,
+    body text NOT NULL,
+    category text DEFAULT 'Tech' NOT NULL,
+    status text DEFAULT 'draft' NOT NULL,
+    scheduled_time integer,
+    published_time integer,
+    rejection_note text,
+    created_by integer NOT NULL,
+    updated_at integer NOT NULL
+  )`));
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS admin_users (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    email text NOT NULL UNIQUE,
+    password_hash text NOT NULL,
+    role text DEFAULT 'editor' NOT NULL,
+    is_active integer DEFAULT 1 NOT NULL,
+    remember_device_token text,
+    created_at integer NOT NULL
+  )`));
   const columns = await db.all(sql.raw("PRAGMA table_info('posts')"));
   const names = new Set(
     columns.map((column) => column.name).filter(Boolean)
@@ -352,7 +416,8 @@ async function repairVerifiedNewsSchema(db) {
     ["duplicate_key", "text"],
     ["image_query", "text"],
     ["image_provenance", "text"],
-    ["category", "text DEFAULT 'Tech' NOT NULL"]
+    ["category", "text DEFAULT 'Tech' NOT NULL"],
+    ["rejection_note", "text"]
   ];
   for (const [name, definition] of repairs) {
     if (names.has(name)) continue;
@@ -372,17 +437,19 @@ async function cleanupTemplatedPosts(db) {
   return;
 }
 async function getDb() {
-  if (!_db && process.env.TURSO_DATABASE_URL) {
+  const dbUrl = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || (process.env.NODE_ENV === "test" ? "file:test.db" : null);
+  if (!_db && dbUrl) {
     try {
       _db = drizzle(
         createClient({
-          url: process.env.TURSO_DATABASE_URL,
+          url: dbUrl,
           authToken: process.env.TURSO_AUTH_TOKEN
         })
       );
       _schemaRepair = Promise.all([
         repairReaderSchema(_db),
         repairEngagementSchema(_db),
+        repairPushSendsSchema(_db),
         repairVerifiedNewsSchema(_db),
         repairSystemSettingsSchema(_db),
         cleanupTemplatedPosts(_db)
@@ -833,6 +900,7 @@ __export(security_exports, {
   isSafePublicHttpsUrl: () => isSafePublicHttpsUrl,
   recordFailedPasswordAttempt: () => recordFailedPasswordAttempt,
   resetPasswordAttempts: () => resetPasswordAttempts,
+  safeCompareSecrets: () => safeCompareSecrets,
   safeStringEqual: () => safeStringEqual,
   securityHeaders: () => securityHeaders
 });
@@ -840,8 +908,15 @@ import crypto3 from "node:crypto";
 function safeStringEqual(a, b) {
   const bufA = Buffer.from(String(a ?? ""), "utf8");
   const bufB = Buffer.from(String(b ?? ""), "utf8");
-  if (bufA.length !== bufB.length) return false;
+  if (bufA.length !== bufB.length) {
+    crypto3.timingSafeEqual(bufB, bufB);
+    return false;
+  }
   return crypto3.timingSafeEqual(bufA, bufB);
+}
+function safeCompareSecrets(provided, expected) {
+  if (!provided || !expected) return false;
+  return safeStringEqual(provided, expected);
 }
 function isSafePublicHttpsUrl(value) {
   if (!value || typeof value !== "string") return false;
@@ -1003,6 +1078,16 @@ var init_security = __esm({
 });
 
 // server/services.ts
+var services_exports = {};
+__export(services_exports, {
+  cloudinaryConfigured: () => cloudinaryConfigured,
+  getCloudinaryUploadSignature: () => getCloudinaryUploadSignature,
+  resetPasswordEmailHtml: () => resetPasswordEmailHtml,
+  sendAuthEmail: () => sendAuthEmail,
+  sendEmail: () => sendEmail,
+  sendSupportEmail: () => sendSupportEmail,
+  verificationEmailHtml: () => verificationEmailHtml
+});
 import { v2 as cloudinary } from "cloudinary";
 import nodemailer from "nodemailer";
 function mailTransport() {
@@ -1076,6 +1161,14 @@ function verificationEmailHtml(url) {
 }
 function resetPasswordEmailHtml(url) {
   return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">Account Security</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">Reset your password.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">We received a request to reset the password for your Aurikrex Bytes account. Click the button below to choose a new password.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Reset Password &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 30 minutes. If you didn't request a password reset, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.com" style="color:#2f67d8">support@aurikrex.com</a></div></div></div></body></html>`;
+}
+async function sendSupportEmail(to, subject, html) {
+  await sendEmail(
+    to,
+    subject,
+    html,
+    process.env.RESEND_FROM_SUPPORT || process.env.SMTP_FROM_SUPPORT || "Aurikrex Bytes Support <support@aurikrex.com>"
+  );
 }
 function cloudinaryConfigured() {
   return Boolean(
@@ -3012,39 +3105,272 @@ var init_pdfParser = __esm({
   }
 });
 
+// server/pushConfig.ts
+function getLagosParts(now2 = /* @__PURE__ */ new Date()) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: PUSH_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false
+  });
+  const parts = dtf.formatToParts(now2);
+  const partMap = {};
+  for (const p of parts) {
+    if (p.type !== "literal") partMap[p.type] = p.value;
+  }
+  const year = parseInt(partMap.year, 10);
+  const month = parseInt(partMap.month, 10);
+  const day = parseInt(partMap.day, 10);
+  const hour = parseInt(partMap.hour, 10);
+  const minute = parseInt(partMap.minute, 10);
+  const second = parseInt(partMap.second, 10);
+  const yyyy = String(year);
+  const mm = String(month).padStart(2, "0");
+  const dd = String(day).padStart(2, "0");
+  const dateStr = `${yyyy}-${mm}-${dd}`;
+  return { year, month, day, hour, minute, second, dateStr };
+}
+function resolvePushSlot(requestedSlot, now2 = /* @__PURE__ */ new Date(), ignoreWindow = false) {
+  const { year, month, day, hour, dateStr } = getLagosParts(now2);
+  const normSlot = requestedSlot?.trim().toLowerCase();
+  if (normSlot && normSlot !== "morning" && normSlot !== "evening") {
+    return { isValid: false, status: "invalid_slot" };
+  }
+  const inMorningWindow = hour >= 8 && hour < 11;
+  const inEveningWindow = hour >= 22 || hour === 0;
+  let targetSlot;
+  if (normSlot === "morning") {
+    if (!ignoreWindow && !inMorningWindow) {
+      return { isValid: false, status: "outside_window" };
+    }
+    targetSlot = "morning";
+  } else if (normSlot === "evening") {
+    if (!ignoreWindow && !inEveningWindow) {
+      return { isValid: false, status: "outside_window" };
+    }
+    targetSlot = "evening";
+  } else {
+    if (inMorningWindow) {
+      targetSlot = "morning";
+    } else if (inEveningWindow) {
+      targetSlot = "evening";
+    } else {
+      if (!ignoreWindow) {
+        return { isValid: false, status: "outside_window" };
+      }
+      targetSlot = hour >= 16 || hour < 4 ? "evening" : "morning";
+    }
+  }
+  if (targetSlot === "morning") {
+    const scheduledFor = new Date(Date.UTC(year, month - 1, day, 7, 0, 0));
+    return {
+      isValid: true,
+      slot: "morning",
+      editionDate: dateStr,
+      scheduledFor
+    };
+  } else {
+    if (hour === 0) {
+      const prevDate = new Date(now2.getTime() - 2 * 60 * 60 * 1e3);
+      const prevParts = getLagosParts(prevDate);
+      const scheduledFor = new Date(
+        Date.UTC(prevParts.year, prevParts.month - 1, prevParts.day, 21, 0, 0)
+      );
+      return {
+        isValid: true,
+        slot: "evening",
+        editionDate: prevParts.dateStr,
+        scheduledFor
+      };
+    } else {
+      const scheduledFor = new Date(Date.UTC(year, month - 1, day, 21, 0, 0));
+      return {
+        isValid: true,
+        slot: "evening",
+        editionDate: dateStr,
+        scheduledFor
+      };
+    }
+  }
+}
+var PUSH_TIMEZONE;
+var init_pushConfig = __esm({
+  "server/pushConfig.ts"() {
+    "use strict";
+    PUSH_TIMEZONE = "Africa/Lagos";
+  }
+});
+
+// server/pushLedger.ts
+import { and as and2, asc as asc2, eq as eq3, inArray as inArray2 } from "drizzle-orm";
+async function claimPushSlot(params) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const nowMs = params.now ? params.now.getTime() : Date.now();
+  const startedAt = new Date(nowMs);
+  try {
+    const inserted = await db.insert(pushSends).values({
+      editionDate: params.editionDate,
+      slot: params.slot,
+      status: "sending",
+      triggerSource: params.triggerSource,
+      scheduledFor: params.scheduledFor,
+      startedAt,
+      attempts: 1
+    }).returning({ id: pushSends.id });
+    if (inserted && inserted[0]?.id) {
+      return { claimed: true, sendId: inserted[0].id, attempts: 1 };
+    }
+  } catch {
+  }
+  const rows = await db.select().from(pushSends).where(
+    and2(
+      eq3(pushSends.editionDate, params.editionDate),
+      eq3(pushSends.slot, params.slot)
+    )
+  ).limit(1);
+  const existing = rows[0];
+  if (!existing) {
+    throw new Error("Unable to claim or read push_sends ledger row");
+  }
+  if (existing.status === "sent" || existing.status === "skipped") {
+    return { claimed: false, status: "already_done", existing };
+  }
+  if (existing.status === "failed") {
+    if (existing.attempts >= 3) {
+      return {
+        claimed: false,
+        status: "max_attempts_exceeded",
+        error: existing.error,
+        existing
+      };
+    }
+    const nextAttempts = existing.attempts + 1;
+    const reclaimed = await db.update(pushSends).set({
+      status: "sending",
+      triggerSource: params.triggerSource,
+      startedAt,
+      finishedAt: null,
+      error: null,
+      attempts: nextAttempts
+    }).where(
+      and2(
+        eq3(pushSends.id, existing.id),
+        eq3(pushSends.status, "failed"),
+        eq3(pushSends.attempts, existing.attempts)
+      )
+    ).returning({ id: pushSends.id });
+    if (reclaimed && reclaimed.length > 0) {
+      return { claimed: true, sendId: existing.id, attempts: nextAttempts };
+    }
+    return { claimed: false, status: "in_progress", existing };
+  }
+  const startedAtMs = existing.startedAt instanceof Date ? existing.startedAt.getTime() : Number(existing.startedAt);
+  const isStale = nowMs - startedAtMs > 5 * 60 * 1e3;
+  if (existing.status === "sending" && isStale) {
+    if (existing.attempts >= 3) {
+      return {
+        claimed: false,
+        status: "max_attempts_exceeded",
+        error: existing.error,
+        existing
+      };
+    }
+    const nextAttempts = existing.attempts + 1;
+    const reclaimed = await db.update(pushSends).set({
+      status: "sending",
+      triggerSource: params.triggerSource,
+      startedAt,
+      finishedAt: null,
+      error: "Reclaimed stale sending claim",
+      attempts: nextAttempts
+    }).where(
+      and2(
+        eq3(pushSends.id, existing.id),
+        eq3(pushSends.status, "sending"),
+        eq3(pushSends.startedAt, existing.startedAt)
+      )
+    ).returning({ id: pushSends.id });
+    if (reclaimed && reclaimed.length > 0) {
+      return { claimed: true, sendId: existing.id, attempts: nextAttempts };
+    }
+    return { claimed: false, status: "in_progress", existing };
+  }
+  return { claimed: false, status: "in_progress", existing };
+}
+async function updatePushSend(sendId, updates) {
+  const db = await getDb();
+  if (!db) return;
+  const setObj = {};
+  if (updates.status) setObj.status = updates.status;
+  if (updates.finishedAt) setObj.finishedAt = updates.finishedAt;
+  if (updates.leadPostId !== void 0) setObj.leadPostId = updates.leadPostId;
+  if (updates.postsCount !== void 0) setObj.postsCount = updates.postsCount;
+  if (updates.recipientsCount !== void 0)
+    setObj.recipientsCount = updates.recipientsCount;
+  if (updates.onesignalNotificationIds) {
+    setObj.onesignalNotificationIds = JSON.stringify(
+      updates.onesignalNotificationIds
+    );
+  }
+  if (updates.invalidRemovedCount !== void 0)
+    setObj.invalidRemovedCount = updates.invalidRemovedCount;
+  if (updates.error !== void 0) setObj.error = updates.error;
+  await db.update(pushSends).set(setObj).where(eq3(pushSends.id, sendId));
+}
+async function listEditionPublishedPosts(editionDate, timeZone = PUSH_TIMEZONE) {
+  const db = await getDb();
+  if (!db) return [];
+  const published = await db.select().from(posts).where(eq3(posts.status, "published")).orderBy(asc2(posts.publishedTime));
+  return published.filter(
+    (post) => post.publishedTime && localCalendarDay(post.publishedTime, timeZone) === editionDate
+  );
+}
+async function getAdminSubscriptionIds() {
+  const db = await getDb();
+  if (!db) return [];
+  const admins = await db.select({ email: adminUsers.email }).from(adminUsers).where(eq3(adminUsers.isActive, true));
+  const adminEmails = admins.map((a) => a.email.toLowerCase().trim()).filter(Boolean);
+  if (adminEmails.length === 0) return [];
+  const matchedReaders = await db.select({ id: readers.id }).from(readers).where(inArray2(readers.email, adminEmails));
+  const readerIds = matchedReaders.map((r) => r.id);
+  if (readerIds.length === 0) return [];
+  const subs = await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions).where(inArray2(oneSignalSubscriptions.readerId, readerIds));
+  return subs.map((s) => s.subscriptionId);
+}
+var init_pushLedger = __esm({
+  "server/pushLedger.ts"() {
+    "use strict";
+    init_schema();
+    init_db();
+    init_pushConfig();
+  }
+});
+
 // server/push.ts
 var push_exports = {};
 __export(push_exports, {
   formatPushNotificationContent: () => formatPushNotificationContent,
+  processPushTrigger: () => processPushTrigger,
   sendDailyPushNotifications: () => sendDailyPushNotifications,
   sendTestPushNotification: () => sendTestPushNotification
 });
-import { inArray as inArray2 } from "drizzle-orm";
+import { inArray as inArray3 } from "drizzle-orm";
 function getOneSignalConfig() {
   const appId = process.env.ONESIGNAL_APP_ID;
   const apiKey = process.env.ONESIGNAL_REST_API_KEY || process.env.ONESIGNAL_API_KEY;
   if (!appId || !apiKey) {
-    throw new Error("ONESIGNAL_APP_ID and ONESIGNAL_REST_API_KEY are required");
+    throw new Error(
+      "ONESIGNAL_APP_ID and ONESIGNAL_REST_API_KEY are required"
+    );
   }
   return { appId, apiKey };
 }
-async function sendOneSignalNotification(payload) {
-  const { appId, apiKey } = getOneSignalConfig();
-  const response = await fetch(ONESIGNAL_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Key ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ app_id: appId, target_channel: "push", ...payload })
-  });
-  const responseBody = await response.text();
-  if (!response.ok) {
-    throw new Error(`OneSignal request failed (${response.status}): ${responseBody}`);
-  }
-  return responseBody ? JSON.parse(responseBody) : {};
-}
-function formatPushNotificationContent(story, timeZone = process.env.APP_TIMEZONE || "Africa/Lagos", now2 = /* @__PURE__ */ new Date()) {
+function formatPushNotificationContent(story, timeZone = process.env.APP_TIMEZONE || PUSH_TIMEZONE, now2 = /* @__PURE__ */ new Date()) {
   const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const hour = Number(
     new Intl.DateTimeFormat("en-US", {
@@ -3077,107 +3403,427 @@ function formatPushNotificationContent(story, timeZone = process.env.APP_TIMEZON
     url: `${baseUrl}/dashboard`
   };
 }
-async function sendDailyPushNotifications() {
-  const { getDb: getDb2, listTodaysPublishedPosts: listTodaysPublishedPosts2, listPublishedPosts: listPublishedPosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-  const { oneSignalSubscriptions: oneSignalSubscriptions2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-  const db = await getDb2();
-  if (!db) throw new Error("Database unavailable");
-  const subscriptions = await db.select({ subscriptionId: oneSignalSubscriptions2.subscriptionId }).from(oneSignalSubscriptions2);
-  const result = { found: subscriptions.length, sent: 0, failed: 0, removed: 0 };
-  const timeZone = process.env.APP_TIMEZONE || "Africa/Lagos";
-  const now2 = /* @__PURE__ */ new Date();
-  let topStory;
-  try {
-    const todaysPosts = await listTodaysPublishedPosts2(timeZone);
-    if (todaysPosts && todaysPosts.length > 0) {
-      topStory = todaysPosts[0];
-    } else {
-      const allPosts = await listPublishedPosts2();
-      if (allPosts && allPosts.length > 0) {
-        topStory = allPosts[0];
-      }
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+async function sendOneSignalBatchWithRetry(payload, deadlineMs) {
+  const { appId, apiKey } = getOneSignalConfig();
+  const maxAttempts = 3;
+  let attempt = 0;
+  let lastError = null;
+  while (attempt < maxAttempts) {
+    attempt++;
+    const now2 = Date.now();
+    if (now2 >= deadlineMs) {
+      throw new Error(
+        `Timeout: OneSignal batch dispatch exceeded run deadline (attempt ${attempt})`
+      );
     }
-  } catch (err) {
-    console.warn("[Push] Unable to fetch latest story for notification, using fallback copy:", err);
-  }
-  const notification = formatPushNotificationContent(topStory, timeZone, now2);
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
-  const iconUrl = `${baseUrl}/logo-192.png`;
-  const payload = {
-    headings: { en: notification.heading },
-    contents: { en: notification.content },
-    url: notification.url,
-    priority: 10,
-    ttl: 14400,
-    chrome_web_icon: iconUrl,
-    chrome_web_badge: iconUrl,
-    firefox_icon: iconUrl
-  };
-  if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
-    payload.big_picture = notification.imageUrl;
-    payload.chrome_web_image = notification.imageUrl;
-  }
-  if (subscriptions.length > 0) {
-    payload.include_subscription_ids = subscriptions.map((s) => s.subscriptionId);
-  } else {
-    payload.included_segments = ["Subscribed Users"];
-  }
-  try {
-    const response = await sendOneSignalNotification(payload);
-    if (!response.id) throw new Error("OneSignal did not return a notification ID");
-    result.sent = Number(response.recipients ?? subscriptions.length ?? 1);
-    console.info("[Push] OneSignal daily delivery result:", result);
-    if (response.errors && typeof response.errors === "object") {
-      const errObj = response.errors;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1e4);
+      const response = await fetch(ONESIGNAL_API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Key ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          app_id: appId,
+          target_channel: "push",
+          ...payload
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      const responseBody = await response.text();
+      if (response.status === 429 || response.status >= 500 && response.status < 600) {
+        lastError = new Error(
+          `OneSignal error HTTP ${response.status}: ${responseBody}`
+        );
+        if (attempt < maxAttempts) {
+          const delay = attempt === 1 ? 500 : 1500;
+          if (Date.now() + delay < deadlineMs) {
+            await new Promise((r) => setTimeout(r, delay));
+            continue;
+          }
+        }
+        throw lastError;
+      }
+      if (!response.ok) {
+        throw new Error(
+          `OneSignal request failed (${response.status}): ${responseBody}`
+        );
+      }
+      const parsed = responseBody ? JSON.parse(responseBody) : {};
+      const notificationId = parsed.id;
+      const recipients = Number(parsed.recipients ?? 0);
       const invalidIds = [];
-      if (Array.isArray(errObj.invalid_subscription_ids)) {
-        invalidIds.push(...errObj.invalid_subscription_ids);
-      }
-      if (Array.isArray(errObj.invalid_player_ids)) {
-        invalidIds.push(...errObj.invalid_player_ids);
-      }
-      if (invalidIds.length > 0) {
-        try {
-          await db.delete(oneSignalSubscriptions2).where(inArray2(oneSignalSubscriptions2.subscriptionId, invalidIds));
-          result.removed = invalidIds.length;
-          console.info(`[Push] Pruned ${invalidIds.length} invalid subscriptions from database`);
-        } catch (pruneErr) {
-          console.warn("[Push] Error pruning invalid subscriptions:", pruneErr);
+      if (parsed.errors && typeof parsed.errors === "object") {
+        const errObj = parsed.errors;
+        if (Array.isArray(errObj.invalid_subscription_ids)) {
+          invalidIds.push(...errObj.invalid_subscription_ids);
+        }
+        if (Array.isArray(errObj.invalid_player_ids)) {
+          invalidIds.push(...errObj.invalid_player_ids);
         }
       }
+      return { notificationId, recipients, invalidIds };
+    } catch (err) {
+      lastError = err;
+      const isRetryable = err.name === "AbortError" || err.message?.includes("fetch");
+      if (isRetryable && attempt < maxAttempts) {
+        const delay = 500;
+        if (Date.now() + delay < deadlineMs) {
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+      }
+      throw err;
     }
+  }
+  throw lastError || new Error("OneSignal batch dispatch failed after retries");
+}
+async function sendAdminAlertEmail(subject, html) {
+  const alertEmail = process.env.ADMIN_ALERT_EMAIL?.trim();
+  if (!alertEmail) {
+    console.warn(
+      "[PushAlert] ADMIN_ALERT_EMAIL not configured, skipping alert email."
+    );
+    return;
+  }
+  try {
+    const { sendEmail: sendEmail2 } = await Promise.resolve().then(() => (init_services(), services_exports));
+    await sendEmail2(alertEmail, subject, html);
+    console.info(`[PushAlert] Sent alert email to ${alertEmail}: ${subject}`);
+  } catch (err) {
+    console.error("[PushAlert] Failed to send alert email:", err);
+  }
+}
+async function processPushTrigger(options = {}) {
+  const now2 = options.now || /* @__PURE__ */ new Date();
+  const dryRun = Boolean(options.dryRun);
+  const testOnly = Boolean(options.testOnly);
+  const triggerSource = options.triggerSource || "manual";
+  const resolution = resolvePushSlot(
+    options.requestedSlot,
+    now2,
+    dryRun || testOnly
+  );
+  if (!resolution.isValid) {
+    return { status: resolution.status || "outside_window" };
+  }
+  const slot = resolution.slot;
+  const editionDate = resolution.editionDate;
+  const scheduledFor = resolution.scheduledFor;
+  if (dryRun) {
+    const { publishDuePosts: publishDuePosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+    await publishDuePosts2(now2);
+    const editionPosts = await listEditionPublishedPosts(editionDate);
+    if (editionPosts.length === 0) {
+      return {
+        dryRun: true,
+        status: "skipped",
+        slot,
+        editionDate,
+        reason: "no_published_posts"
+      };
+    }
+    const leadStory = editionPosts[0];
+    const notification = formatPushNotificationContent(
+      leadStory,
+      PUSH_TIMEZONE,
+      now2
+    );
+    const db = await getDb();
+    const subs = db ? await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions) : [];
+    const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+    const iconUrl = `${baseUrl}/logo-192.png`;
+    const payload = {
+      headings: { en: notification.heading },
+      contents: { en: notification.content },
+      url: notification.url,
+      priority: 10,
+      ttl: 14400,
+      chrome_web_icon: iconUrl,
+      chrome_web_badge: iconUrl,
+      firefox_icon: iconUrl,
+      collapse_id: `aurikrex-briefing-${editionDate}-${slot}`
+    };
+    if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
+      payload.big_picture = notification.imageUrl;
+      payload.chrome_web_image = notification.imageUrl;
+    }
+    return {
+      dryRun: true,
+      status: "ready",
+      slot,
+      editionDate,
+      postsCount: editionPosts.length,
+      leadStory: { id: leadStory.id, headline: leadStory.headline },
+      recipientsCount: subs.length,
+      payload
+    };
+  }
+  if (testOnly) {
+    const { publishDuePosts: publishDuePosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+    await publishDuePosts2(now2);
+    const editionPosts = await listEditionPublishedPosts(editionDate);
+    if (editionPosts.length === 0) {
+      return {
+        testOnly: true,
+        status: "skipped",
+        slot,
+        editionDate,
+        reason: "no_published_posts"
+      };
+    }
+    const leadStory = editionPosts[0];
+    const adminSubs = await getAdminSubscriptionIds();
+    if (adminSubs.length === 0) {
+      return {
+        testOnly: true,
+        status: "no_admin_subscribers",
+        slot,
+        editionDate,
+        recipientsCount: 0
+      };
+    }
+    const notification = formatPushNotificationContent(
+      leadStory,
+      PUSH_TIMEZONE,
+      now2
+    );
+    const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+    const iconUrl = `${baseUrl}/logo-192.png`;
+    const payload = {
+      include_subscription_ids: adminSubs,
+      headings: { en: `[TEST] ${notification.heading}` },
+      contents: { en: notification.content },
+      url: notification.url,
+      priority: 10,
+      ttl: 14400,
+      chrome_web_icon: iconUrl,
+      chrome_web_badge: iconUrl,
+      firefox_icon: iconUrl,
+      collapse_id: `aurikrex-test-${editionDate}-${slot}`
+    };
+    if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
+      payload.big_picture = notification.imageUrl;
+      payload.chrome_web_image = notification.imageUrl;
+    }
+    const deadlineMs = Date.now() + 24e3;
+    const result = await sendOneSignalBatchWithRetry(payload, deadlineMs);
+    return {
+      testOnly: true,
+      status: "sent",
+      slot,
+      editionDate,
+      leadPostId: leadStory.id,
+      recipientsCount: adminSubs.length,
+      notificationId: result.notificationId
+    };
+  }
+  const claim = await claimPushSlot({
+    editionDate,
+    slot,
+    triggerSource,
+    scheduledFor,
+    now: now2
+  });
+  if (!claim.claimed) {
+    return { status: claim.status };
+  }
+  try {
+    const { publishDuePosts: publishDuePosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+    await publishDuePosts2(now2);
+    const editionPosts = await listEditionPublishedPosts(editionDate);
+    if (editionPosts.length === 0) {
+      await updatePushSend(claim.sendId, {
+        status: "skipped",
+        finishedAt: /* @__PURE__ */ new Date(),
+        error: `No published posts for edition date ${editionDate} (${slot})`
+      });
+      await sendAdminAlertEmail(
+        `[Aurikrex Bytes] Push Skipped: No published posts for ${editionDate} (${slot})`,
+        `<p>The scheduled daily push for <strong>${editionDate} (${slot})</strong> was skipped because no published posts were found for this edition.</p>
+         <p>Trigger source: <code>${triggerSource}</code></p>
+         <p>Time: ${now2.toISOString()}</p>`
+      );
+      return {
+        status: "skipped",
+        slot,
+        editionDate,
+        reason: "no_published_posts"
+      };
+    }
+    const leadStory = editionPosts[0];
+    const notification = formatPushNotificationContent(
+      leadStory,
+      PUSH_TIMEZONE,
+      now2
+    );
+    const db = await getDb();
+    if (!db) throw new Error("Database unavailable");
+    const subs = await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions);
+    const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+    const iconUrl = `${baseUrl}/logo-192.png`;
+    const basePayload = {
+      headings: { en: notification.heading },
+      contents: { en: notification.content },
+      url: notification.url,
+      priority: 10,
+      ttl: 14400,
+      chrome_web_icon: iconUrl,
+      chrome_web_badge: iconUrl,
+      firefox_icon: iconUrl,
+      collapse_id: `aurikrex-briefing-${editionDate}-${slot}`
+    };
+    if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
+      basePayload.big_picture = notification.imageUrl;
+      basePayload.chrome_web_image = notification.imageUrl;
+    }
+    const runDeadlineMs = Date.now() + 24e3;
+    const notificationIds = [];
+    const allInvalidIds = [];
+    let totalSent = 0;
+    if (subs.length > 0) {
+      const allIds = subs.map((s) => s.subscriptionId);
+      const batches = chunkArray(allIds, BATCH_SIZE);
+      for (const batch of batches) {
+        const batchPayload = {
+          ...basePayload,
+          include_subscription_ids: batch
+        };
+        const batchRes = await sendOneSignalBatchWithRetry(
+          batchPayload,
+          runDeadlineMs
+        );
+        if (batchRes.notificationId) {
+          notificationIds.push(batchRes.notificationId);
+        }
+        totalSent += batchRes.recipients || batch.length;
+        if (batchRes.invalidIds.length > 0) {
+          allInvalidIds.push(...batchRes.invalidIds);
+        }
+      }
+    } else {
+      const segmentPayload = {
+        ...basePayload,
+        included_segments: ["Subscribed Users"]
+      };
+      const res = await sendOneSignalBatchWithRetry(
+        segmentPayload,
+        runDeadlineMs
+      );
+      if (res.notificationId) notificationIds.push(res.notificationId);
+      totalSent += res.recipients || 1;
+      if (res.invalidIds.length > 0) allInvalidIds.push(...res.invalidIds);
+    }
+    let invalidRemovedCount = 0;
+    if (allInvalidIds.length > 0) {
+      try {
+        await db.delete(oneSignalSubscriptions).where(
+          inArray3(oneSignalSubscriptions.subscriptionId, allInvalidIds)
+        );
+        invalidRemovedCount = allInvalidIds.length;
+        console.info(
+          `[Push] Pruned ${invalidRemovedCount} invalid subscriptions from database`
+        );
+      } catch (pruneErr) {
+        console.warn("[Push] Error pruning invalid subscriptions:", pruneErr);
+      }
+    }
+    await updatePushSend(claim.sendId, {
+      status: "sent",
+      finishedAt: /* @__PURE__ */ new Date(),
+      leadPostId: leadStory.id,
+      postsCount: editionPosts.length,
+      recipientsCount: totalSent,
+      onesignalNotificationIds: notificationIds,
+      invalidRemovedCount
+    });
+    return {
+      status: "sent",
+      slot,
+      editionDate,
+      leadPostId: leadStory.id,
+      postsCount: editionPosts.length,
+      recipientsCount: totalSent,
+      notificationIds
+    };
   } catch (error) {
-    result.failed = 1;
-    console.error("[Push] OneSignal daily delivery failed:", error);
+    await updatePushSend(claim.sendId, {
+      status: "failed",
+      finishedAt: /* @__PURE__ */ new Date(),
+      error: error?.message || String(error)
+    });
+    await sendAdminAlertEmail(
+      `[Aurikrex Bytes Alert] Daily Push Failed: ${editionDate} (${slot})`,
+      `<p>The scheduled push notification for <strong>${editionDate} (${slot})</strong> failed.</p>
+       <p><strong>Trigger source:</strong> <code>${triggerSource}</code></p>
+       <p><strong>Attempts:</strong> ${claim.attempts}</p>
+       <p><strong>Error:</strong></p>
+       <pre>${error?.stack || error?.message || String(error)}</pre>`
+    );
     throw error;
   }
-  return result;
+}
+async function sendDailyPushNotifications(options = {}) {
+  return processPushTrigger(options);
 }
 async function sendTestPushNotification(subscriptionId) {
   const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
   const iconUrl = `${baseUrl}/logo-192.png`;
   try {
-    await sendOneSignalNotification({
-      include_subscription_ids: [subscriptionId],
-      headings: { en: "Aurikrex Bytes Push Active!" },
-      contents: { en: "You're all set! Daily tech updates will arrive at 8:00 AM and 10:00 PM." },
-      url: `${baseUrl}/dashboard`,
-      chrome_web_icon: iconUrl,
-      chrome_web_badge: iconUrl,
-      firefox_icon: iconUrl
+    const { appId, apiKey } = getOneSignalConfig();
+    const response = await fetch(ONESIGNAL_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Key ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        app_id: appId,
+        target_channel: "push",
+        include_subscription_ids: [subscriptionId],
+        headings: { en: "Aurikrex Bytes Push Active!" },
+        contents: {
+          en: "You're all set! Daily tech updates will arrive at 8:00 AM and 10:00 PM."
+        },
+        url: `${baseUrl}/dashboard`,
+        chrome_web_icon: iconUrl,
+        chrome_web_badge: iconUrl,
+        firefox_icon: iconUrl
+      })
     });
+    const responseBody = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        `OneSignal request failed (${response.status}): ${responseBody}`
+      );
+    }
     return { success: true };
   } catch (err) {
     console.error("[Push] Failed to send OneSignal test notification:", err);
     return { success: false, error: String(err) };
   }
 }
-var ONESIGNAL_API_URL;
+var ONESIGNAL_API_URL, BATCH_SIZE;
 var init_push = __esm({
   "server/push.ts"() {
     "use strict";
+    init_schema();
     init_env();
+    init_db();
+    init_pushConfig();
+    init_pushLedger();
     ONESIGNAL_API_URL = "https://api.onesignal.com/notifications";
+    BATCH_SIZE = 2e3;
   }
 });
 
@@ -3198,14 +3844,14 @@ __export(aiCache_exports, {
   validateFollowUpOutput: () => validateFollowUpOutput
 });
 import { createHash as createHash2 } from "crypto";
-import { sql as sql2 } from "drizzle-orm";
+import { sql as sql3 } from "drizzle-orm";
 async function ensureCacheTable() {
   const db = await getDb();
   if (!db) return null;
   if (!_cacheTableReady) {
     _cacheTableReady = (async () => {
       await db.run(
-        sql2.raw(`CREATE TABLE IF NOT EXISTS ai_explanation_cache (
+        sql3.raw(`CREATE TABLE IF NOT EXISTS ai_explanation_cache (
           content_hash text NOT NULL,
           prompt_version text NOT NULL,
           post_id integer NOT NULL,
@@ -3223,7 +3869,7 @@ async function ensureCacheTable() {
         )`)
       );
       await db.run(
-        sql2.raw(
+        sql3.raw(
           "CREATE INDEX IF NOT EXISTS ai_explanation_cache_post_idx ON ai_explanation_cache (post_id, status)"
         )
       );
@@ -3308,7 +3954,7 @@ async function getCachedFollowUp(contentHash, promptVersion = FOLLOW_UP_PROMPT_V
     const db = await ensureCacheTable();
     if (!db) return null;
     const rows = await db.all(
-      sql2`SELECT content_hash, prompt_version, post_id, question_text, answer_text, search_queries_json, model_used, status, hit_count, report_count, created_at, last_served_at
+      sql3`SELECT content_hash, prompt_version, post_id, question_text, answer_text, search_queries_json, model_used, status, hit_count, report_count, created_at, last_served_at
           FROM ai_explanation_cache
           WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion} AND status = 'active'
           LIMIT 1`
@@ -3354,7 +4000,7 @@ async function incrementDbHitCount(contentHash, promptVersion, now2) {
     const db = await ensureCacheTable();
     if (!db) return;
     await db.run(
-      sql2`UPDATE ai_explanation_cache
+      sql3`UPDATE ai_explanation_cache
           SET hit_count = hit_count + 1, last_served_at = ${now2}
           WHERE content_hash = ${contentHash} AND prompt_version = ${promptVersion}`
     );
@@ -3389,7 +4035,7 @@ async function setCachedFollowUp(params) {
     const db = await ensureCacheTable();
     if (!db) return true;
     await db.run(
-      sql2`INSERT INTO ai_explanation_cache (
+      sql3`INSERT INTO ai_explanation_cache (
             content_hash, prompt_version, post_id, question_text, answer_text,
             search_queries_json, model_used, status, hit_count, report_count, created_at, last_served_at
           ) VALUES (
@@ -3427,7 +4073,7 @@ async function invalidateCachedFollowUp(contentHash, reason = "reported", option
     if (!db) return Boolean(memRecord && memRecord.status === "invalidated");
     if (force) {
       await db.run(
-        sql2`UPDATE ai_explanation_cache
+        sql3`UPDATE ai_explanation_cache
             SET status = 'invalidated',
                 report_count = report_count + 1,
                 invalidated_reason = ${reason.slice(0, 200)}
@@ -3436,7 +4082,7 @@ async function invalidateCachedFollowUp(contentHash, reason = "reported", option
       return true;
     } else {
       await db.run(
-        sql2`UPDATE ai_explanation_cache
+        sql3`UPDATE ai_explanation_cache
             SET report_count = report_count + 1,
                 status = CASE WHEN report_count + 1 >= ${FOLLOW_UP_REPORT_THRESHOLD} THEN 'invalidated' ELSE status END,
                 invalidated_reason = ${reason.slice(0, 200)}
@@ -3984,7 +4630,7 @@ init_db();
 init_services();
 import { TRPCError as TRPCError4 } from "@trpc/server";
 import axios2 from "axios";
-import { and as and2, eq as eq3, inArray as inArray3 } from "drizzle-orm";
+import { and as and3, eq as eq4, inArray as inArray4 } from "drizzle-orm";
 import { z as z2 } from "zod";
 
 // server/_core/systemRouter.ts
@@ -4322,7 +4968,7 @@ var appRouter = router({
       const { aurikrex_id, user: ssoUser } = tokenData;
       const db = await getDb();
       if (!db) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR", message: "Database error" });
-      let [reader] = await db.select().from(readers).where(eq3(readers.email, ssoUser.email.toLowerCase())).limit(1);
+      let [reader] = await db.select().from(readers).where(eq4(readers.email, ssoUser.email.toLowerCase())).limit(1);
       if (!reader) {
         const [newReader] = await db.insert(readers).values({
           email: ssoUser.email.toLowerCase(),
@@ -4368,7 +5014,7 @@ var appRouter = router({
       const deviceToken = input.remember ? randomToken() : null;
       const db = await getDb();
       if (db && deviceToken)
-        await db.update(adminUsers).set({ rememberDeviceToken: hashToken(deviceToken) }).where(eq3(adminUsers.id, admin.id));
+        await db.update(adminUsers).set({ rememberDeviceToken: hashToken(deviceToken) }).where(eq4(adminUsers.id, admin.id));
       setSession(ctx, ADMIN_COOKIE, token, input.remember);
       if (deviceToken)
         setSession(ctx, ADMIN_DEVICE_COOKIE, deviceToken, true);
@@ -4457,7 +5103,7 @@ var appRouter = router({
       const post = await getPostById(input.id);
       if (!db || !post) throw genericNotFound();
       const { id, ...changes } = input;
-      await db.update(posts).set({ ...changes, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, id));
+      await db.update(posts).set({ ...changes, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(posts.id, id));
       return { success: true };
     }),
     deletePost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -4465,7 +5111,7 @@ var appRouter = router({
       assertPermission(admin.role, "post:delete");
       const db = await getDb();
       if (!db || !await getPostById(input.id)) throw genericNotFound();
-      await db.delete(posts).where(eq3(posts.id, input.id));
+      await db.delete(posts).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     batchDeletePosts: publicProcedure.input(z2.object({ ids: z2.array(z2.number().int().positive()).min(1) })).mutation(async ({ input, ctx }) => {
@@ -4473,7 +5119,7 @@ var appRouter = router({
       assertPermission(admin.role, "post:delete");
       const db = await getDb();
       if (!db) throw genericNotFound();
-      await db.delete(posts).where(inArray3(posts.id, input.ids));
+      await db.delete(posts).where(inArray4(posts.id, input.ids));
       return { success: true, count: input.ids.length };
     }),
     batchPublishPosts: publicProcedure.input(z2.object({ ids: z2.array(z2.number().int().positive()).min(1) })).mutation(async ({ input, ctx }) => {
@@ -4482,7 +5128,7 @@ var appRouter = router({
       const db = await getDb();
       if (!db) throw genericNotFound();
       const now2 = /* @__PURE__ */ new Date();
-      await db.update(posts).set({ status: "published", publishedTime: now2, updatedAt: now2 }).where(inArray3(posts.id, input.ids));
+      await db.update(posts).set({ status: "published", publishedTime: now2, updatedAt: now2 }).where(inArray4(posts.id, input.ids));
       return { success: true, count: input.ids.length };
     }),
     batchSchedulePosts: publicProcedure.input(
@@ -4500,7 +5146,7 @@ var appRouter = router({
         status: "scheduled",
         scheduledTime: input.scheduledTime,
         updatedAt: now2
-      }).where(inArray3(posts.id, input.ids));
+      }).where(inArray4(posts.id, input.ids));
       return { success: true, count: input.ids.length };
     }),
     submitPost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -4514,7 +5160,7 @@ var appRouter = router({
         status: "pending_review",
         rejectionNote: null,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     publishPost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -4529,7 +5175,7 @@ var appRouter = router({
         publishedTime: /* @__PURE__ */ new Date(),
         scheduledTime: null,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     schedulePost: publicProcedure.input(
@@ -4553,7 +5199,7 @@ var appRouter = router({
         status: "scheduled",
         scheduledTime: input.scheduledTime,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     unschedulePost: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -4568,7 +5214,7 @@ var appRouter = router({
           code: "BAD_REQUEST",
           message: "Only future scheduled posts can be cancelled"
         });
-      await db.update(posts).set({ status: "draft", scheduledTime: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(posts.id, input.id));
+      await db.update(posts).set({ status: "draft", scheduledTime: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     approvePost: publicProcedure.input(
@@ -4595,7 +5241,7 @@ var appRouter = router({
         publishedTime: input.scheduledTime ? null : /* @__PURE__ */ new Date(),
         rejectionNote: null,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true, status: next };
     }),
     rejectPost: publicProcedure.input(
@@ -4615,7 +5261,7 @@ var appRouter = router({
         rejectionNote: input.rejectionNote ?? null,
         scheduledTime: null,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq3(posts.id, input.id));
+      }).where(eq4(posts.id, input.id));
       return { success: true };
     }),
     users: router({
@@ -4663,7 +5309,7 @@ var appRouter = router({
         assertPermission(admin.role, "users:manage");
         const db = await getDb();
         if (!db || !await getAdminById(input.id)) throw genericNotFound();
-        await db.update(adminUsers).set({ role: input.role }).where(eq3(adminUsers.id, input.id));
+        await db.update(adminUsers).set({ role: input.role }).where(eq4(adminUsers.id, input.id));
         return { success: true };
       }),
       revoke: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ input, ctx }) => {
@@ -4676,7 +5322,7 @@ var appRouter = router({
           });
         const db = await getDb();
         if (!db || !await getAdminById(input.id)) throw genericNotFound();
-        await db.update(adminUsers).set({ isActive: false, rememberDeviceToken: null }).where(eq3(adminUsers.id, input.id));
+        await db.update(adminUsers).set({ isActive: false, rememberDeviceToken: null }).where(eq4(adminUsers.id, input.id));
         return { success: true };
       })
     }),
@@ -4729,7 +5375,7 @@ var appRouter = router({
       const session = await requireReader(ctx);
       const db = await getDb();
       if (!db) throw new TRPCError4({ code: "INTERNAL_SERVER_ERROR" });
-      await db.delete(oneSignalSubscriptions).where(and2(eq3(oneSignalSubscriptions.subscriptionId, input.subscriptionId), eq3(oneSignalSubscriptions.readerId, session.id)));
+      await db.delete(oneSignalSubscriptions).where(and3(eq4(oneSignalSubscriptions.subscriptionId, input.subscriptionId), eq4(oneSignalSubscriptions.readerId, session.id)));
       await db.insert(oneSignalSubscriptions).values({ readerId: session.id, subscriptionId: input.subscriptionId });
       return { success: true };
     }),
@@ -4829,7 +5475,7 @@ var appRouter = router({
               await db.update(readers).set({
                 resetToken: token2,
                 resetTokenExpires: new Date(Date.now() + 1e3 * 60 * 30)
-              }).where(eq3(readers.id, reader.id));
+              }).where(eq4(readers.id, reader.id));
               const url = `${appBaseUrl()}/reset-password?token=${token2}`;
               await sendAuthEmail(
                 reader.email,
@@ -4927,7 +5573,7 @@ var appRouter = router({
         emailVerified: true,
         verificationToken: null,
         verificationTokenUsed: input.token
-      }).where(eq3(readers.id, reader.id));
+      }).where(eq4(readers.id, reader.id));
       return { status: "verified" };
     }),
     resendVerificationEmail: publicProcedure.input(z2.object({ email: z2.string().email() })).mutation(async ({ input }) => {
@@ -4936,7 +5582,7 @@ var appRouter = router({
       const verificationToken = randomToken();
       const db = await getDb();
       if (db) {
-        await db.update(readers).set({ verificationToken, verificationTokenUsed: null }).where(eq3(readers.id, reader.id));
+        await db.update(readers).set({ verificationToken, verificationTokenUsed: null }).where(eq4(readers.id, reader.id));
         const url = `${appBaseUrl()}/verify-email?token=${verificationToken}`;
         await sendAuthEmail(
           reader.email,
@@ -4955,7 +5601,7 @@ var appRouter = router({
         await db.update(readers).set({
           resetToken: token,
           resetTokenExpires: new Date(Date.now() + 1e3 * 60 * 30)
-        }).where(eq3(readers.id, reader.id));
+        }).where(eq4(readers.id, reader.id));
         const url = `${appBaseUrl()}/reset-password?token=${token}`;
         await sendAuthEmail(
           reader.email,
@@ -4989,7 +5635,7 @@ var appRouter = router({
         passwordHash: await hashPassword(input.password),
         resetToken: null,
         resetTokenExpires: null
-      }).where(eq3(readers.id, reader.id));
+      }).where(eq4(readers.id, reader.id));
       resetPasswordAttempts(reader.email);
       return { success: true };
     }),
@@ -5824,7 +6470,9 @@ async function setupApp() {
   const isCronAuthorized = (req) => {
     const authorization = req.headers.authorization;
     const cronSecret = process.env.CRON_SECRET;
-    return Boolean(cronSecret && authorization === `Bearer ${cronSecret}`);
+    if (!cronSecret || !authorization) return false;
+    const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : null;
+    return Boolean(token && safeCompareSecrets(token, cronSecret));
   };
   app.get("/api/cron/publish", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -5843,13 +6491,25 @@ async function setupApp() {
     if (!isCronAuthorized(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+    const requestedSlot = typeof req.query.slot === "string" ? req.query.slot : void 0;
+    const dryRun = req.query.dryRun === "1";
+    const testOnly = req.query.testOnly === "1";
+    const triggerSource = req.headers["x-trigger-source"] || req.query.triggerSource || "vercel";
     try {
-      const { sendDailyPushNotifications: sendDailyPushNotifications2 } = await Promise.resolve().then(() => (init_push(), push_exports));
-      const sent = await sendDailyPushNotifications2();
-      return res.json({ sent });
+      const { processPushTrigger: processPushTrigger2 } = await Promise.resolve().then(() => (init_push(), push_exports));
+      const result = await processPushTrigger2({
+        requestedSlot,
+        triggerSource,
+        dryRun,
+        testOnly
+      });
+      return res.status(200).json(result);
     } catch (error) {
       console.error("[Cron] notify failed", error);
-      return res.status(500).json({ error: "Notify job failed" });
+      return res.status(500).json({
+        error: "Notify job failed",
+        message: error?.message || String(error)
+      });
     }
   });
   app.get("/api/cron/curate", async (req, res) => {
