@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   adminUsers,
   oneSignalSubscriptions,
@@ -21,6 +21,9 @@ export type ClaimResult =
 /**
  * Atomically claims a push send slot in the ledger.
  * Guarantee: Two concurrent triggers within the same millisecond cannot both claim.
+ *
+ * Supports ?force=1 to reclaim 'skipped' or 'failed' slots (even if max attempts hit).
+ * Reclaims 'sent' slot only if BOTH ?force=1 and ?resend=1 are passed; otherwise refuses.
  */
 export async function claimPushSlot(params: {
   editionDate: string;
@@ -28,12 +31,15 @@ export async function claimPushSlot(params: {
   triggerSource: string;
   scheduledFor: Date;
   now?: Date;
+  force?: boolean;
+  resend?: boolean;
 }): Promise<ClaimResult> {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
 
   const nowMs = params.now ? params.now.getTime() : Date.now();
   const startedAt = new Date(nowMs);
+  const effectiveTriggerSource = params.force ? "manual" : params.triggerSource;
 
   // 1. Try atomic INSERT
   try {
@@ -43,7 +49,7 @@ export async function claimPushSlot(params: {
         editionDate: params.editionDate,
         slot: params.slot,
         status: "sending",
-        triggerSource: params.triggerSource,
+        triggerSource: effectiveTriggerSource,
         scheduledFor: params.scheduledFor,
         startedAt,
         attempts: 1,
@@ -54,7 +60,7 @@ export async function claimPushSlot(params: {
       return { claimed: true, sendId: inserted[0].id, attempts: 1 };
     }
   } catch {
-    // Unique constraint violation or race collision: inspect existing row
+    // Unique constraint violation or collision: inspect existing row
   }
 
   // 2. Fetch existing row
@@ -74,14 +80,61 @@ export async function claimPushSlot(params: {
     throw new Error("Unable to claim or read push_sends ledger row");
   }
 
-  // Sent or skipped -> Already done
-  if (existing.status === "sent" || existing.status === "skipped") {
+  // Handle existing 'sent' status
+  if (existing.status === "sent") {
+    if (params.force && params.resend) {
+      // Reclaim for resend and log
+      const reclaimed = await db
+        .update(pushSends)
+        .set({
+          status: "sending",
+          triggerSource: "manual",
+          startedAt,
+          finishedAt: null,
+          error: `Manual resend initiated at ${new Date().toISOString()}`,
+          attempts: 1,
+        })
+        .where(eq(pushSends.id, existing.id))
+        .returning({ id: pushSends.id });
+
+      if (reclaimed && reclaimed.length > 0) {
+        return { claimed: true, sendId: existing.id, attempts: 1 };
+      }
+    }
+    return {
+      claimed: false,
+      status: "already_done",
+      error: "Slot already sent. Pass force=1&resend=1 to resend.",
+      existing,
+    };
+  }
+
+  // Handle existing 'skipped' status
+  if (existing.status === "skipped") {
+    if (params.force) {
+      const reclaimed = await db
+        .update(pushSends)
+        .set({
+          status: "sending",
+          triggerSource: "manual",
+          startedAt,
+          finishedAt: null,
+          error: null,
+          attempts: 1,
+        })
+        .where(eq(pushSends.id, existing.id))
+        .returning({ id: pushSends.id });
+
+      if (reclaimed && reclaimed.length > 0) {
+        return { claimed: true, sendId: existing.id, attempts: 1 };
+      }
+    }
     return { claimed: false, status: "already_done", existing };
   }
 
-  // Failed and attempts < 3 -> Reclaim
+  // Handle existing 'failed' status
   if (existing.status === "failed") {
-    if (existing.attempts >= 3) {
+    if (existing.attempts >= 3 && !params.force) {
       return {
         claimed: false,
         status: "max_attempts_exceeded",
@@ -90,22 +143,21 @@ export async function claimPushSlot(params: {
       };
     }
 
-    const nextAttempts = existing.attempts + 1;
+    const nextAttempts = params.force ? 1 : existing.attempts + 1;
     const reclaimed = await db
       .update(pushSends)
       .set({
         status: "sending",
-        triggerSource: params.triggerSource,
+        triggerSource: params.force ? "manual" : params.triggerSource,
         startedAt,
         finishedAt: null,
-        error: null,
+        error: params.force ? null : existing.error,
         attempts: nextAttempts,
       })
       .where(
         and(
           eq(pushSends.id, existing.id),
-          eq(pushSends.status, "failed"),
-          eq(pushSends.attempts, existing.attempts)
+          eq(pushSends.status, "failed")
         )
       )
       .returning({ id: pushSends.id });
@@ -124,8 +176,8 @@ export async function claimPushSlot(params: {
       : Number(existing.startedAt);
   const isStale = nowMs - startedAtMs > 5 * 60 * 1000;
 
-  if (existing.status === "sending" && isStale) {
-    if (existing.attempts >= 3) {
+  if (existing.status === "sending" && (isStale || params.force)) {
+    if (existing.attempts >= 3 && !params.force) {
       return {
         claimed: false,
         status: "max_attempts_exceeded",
@@ -134,22 +186,21 @@ export async function claimPushSlot(params: {
       };
     }
 
-    const nextAttempts = existing.attempts + 1;
+    const nextAttempts = params.force ? 1 : existing.attempts + 1;
     const reclaimed = await db
       .update(pushSends)
       .set({
         status: "sending",
-        triggerSource: params.triggerSource,
+        triggerSource: params.force ? "manual" : params.triggerSource,
         startedAt,
         finishedAt: null,
-        error: "Reclaimed stale sending claim",
+        error: params.force ? "Forced reclaim" : "Reclaimed stale sending claim",
         attempts: nextAttempts,
       })
       .where(
         and(
           eq(pushSends.id, existing.id),
-          eq(pushSends.status, "sending"),
-          eq(pushSends.startedAt, existing.startedAt)
+          eq(pushSends.status, "sending")
         )
       )
       .returning({ id: pushSends.id });
@@ -201,6 +252,20 @@ export async function updatePushSend(
   if (updates.error !== undefined) setObj.error = updates.error;
 
   await db.update(pushSends).set(setObj).where(eq(pushSends.id, sendId));
+}
+
+/**
+ * Lists the most recent push send records for the Admin Dashboard.
+ */
+export async function listRecentPushSends(limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db
+    .select()
+    .from(pushSends)
+    .orderBy(desc(pushSends.id))
+    .limit(limit);
 }
 
 /**

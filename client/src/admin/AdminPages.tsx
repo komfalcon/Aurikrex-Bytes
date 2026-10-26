@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowRight, ArrowUpRight, CalendarClock, Check, FilePlus2, LayoutDashboard, LogOut, Moon, Search, Shield, Sun, Trash2, Send, CheckSquare, Square, AlertTriangle, KeyRound, Power, X } from "lucide-react";
+import { ArrowRight, ArrowUpRight, CalendarClock, Check, FilePlus2, LayoutDashboard, LogOut, Moon, Search, Shield, Sun, Trash2, Send, CheckSquare, Square, AlertTriangle, KeyRound, Power, X, Bell } from "lucide-react";
 import { trpc } from "../lib/trpc";
 import { Logo } from "../public/ReaderPages";
 import { useTheme } from "../contexts/ThemeContext";
@@ -214,7 +214,7 @@ function MaintenanceModal({
   );
 }
 
-export function AdminFrame({ children, title, role, active }: { children: React.ReactNode; title?: string; role: string; active?: "inbox" | "new" | "team" | "analytics" }) {
+export function AdminFrame({ children, title, role, active }: { children: React.ReactNode; title?: string; role: string; active?: "inbox" | "new" | "team" | "analytics" | "notifications" }) {
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
   const maintenanceQuery = trpc.admin.maintenanceStatus.useQuery(undefined, {
     refetchInterval: 15000,
@@ -225,7 +225,8 @@ export function AdminFrame({ children, title, role, active }: { children: React.
     { href: "/admin", label: "Inbox", icon: LayoutDashboard, key: "inbox" },
     { href: "/admin/new", label: "New post", icon: FilePlus2, key: "new" },
     { href: "/admin/team", label: "Team", icon: Shield, key: "team" },
-    { href: "/admin/analytics", label: "Analytics", icon: CalendarClock, key: "analytics" }
+    { href: "/admin/analytics", label: "Analytics", icon: CalendarClock, key: "analytics" },
+    { href: "/admin/notifications", label: "Push notifications", icon: Bell, key: "notifications" }
   ] as const;
 
   return (
@@ -236,7 +237,7 @@ export function AdminFrame({ children, title, role, active }: { children: React.
           <div className="admin-rail-title">Newsroom<span>Editorial workspace</span></div>
         </div>
         <nav aria-label="Admin navigation">
-          {items.filter(item => role === "admin" || !(["team", "analytics"] as string[]).includes(item.key)).map(item => {
+          {items.filter(item => role === "admin" || !(["team", "analytics", "notifications"] as string[]).includes(item.key)).map(item => {
             const Icon = item.icon;
             return (
               <Link key={item.href} className={active === item.key ? "active" : ""} href={item.href}>

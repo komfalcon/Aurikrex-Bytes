@@ -19,6 +19,7 @@ const NewPostPage = React.lazy(() => import("./admin/NewPostPage").then(m => ({ 
 const PreviewPage = React.lazy(() => import("./admin/NewPostPage").then(m => ({ default: m.PreviewPage })));
 const TeamManagement = React.lazy(() => import("./admin/AdminManagement").then(m => ({ default: m.TeamManagement })));
 const AnalyticsDashboard = React.lazy(() => import("./admin/AdminManagement").then(m => ({ default: m.AnalyticsDashboard })));
+const NotificationsDashboard = React.lazy(() => import("./admin/AdminManagement").then(m => ({ default: m.NotificationsDashboard })));
 
 function ScrollToTop() {
   const [location] = useLocation();
@@ -67,6 +68,7 @@ function Router() {
     <Route path="/admin/preview/:draftId">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><PreviewPage /></Suspense>}</Route>
     <Route path="/admin/team">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><TeamManagement /></Suspense>}</Route>
     <Route path="/admin/analytics">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><AnalyticsDashboard /></Suspense>}</Route>
+    <Route path="/admin/notifications">{() => <Suspense fallback={<div className="route-loading">Loading...</div>}><NotificationsDashboard /></Suspense>}</Route>
     <Route path="/404" component={NotFound} />
     <Route component={NotFound} />
   </Switch>;
