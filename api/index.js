@@ -4227,7 +4227,24 @@ init_const();
 import { initTRPC, TRPCError as TRPCError2 } from "@trpc/server";
 import superjson from "superjson";
 var t = initTRPC.context().create({
-  transformer: superjson
+  transformer: superjson,
+  errorFormatter({ shape, error }) {
+    const isProduction = process.env.NODE_ENV === "production";
+    const isInternal = shape.data.httpStatus >= 500;
+    if (isInternal) {
+      console.error("[tRPC Internal Error 500]", error);
+    } else {
+      console.warn(`[tRPC Client Error ${shape.data.httpStatus}]`, error.message);
+    }
+    return {
+      ...shape,
+      message: isInternal && isProduction ? "Something went wrong" : shape.message,
+      data: {
+        ...shape.data,
+        stack: isProduction ? void 0 : shape.data.stack
+      }
+    };
+  }
 });
 var router = t.router;
 var publicProcedure = t.procedure;
