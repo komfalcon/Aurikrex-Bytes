@@ -229,7 +229,7 @@ export function NewPostPage() {
         <section className="table-card image-upload-card" style={{ padding: "2rem" }}>
           <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><FileText size={20} /> Upload Multi-Story PDF or Image Document</h3>
           <p className="muted" style={{ marginBottom: "1.25rem" }}>
-            Falke AI will scan your PDF document or image card screenshot, extract up to 20+ distinct news stories, attach high-resolution cover imagery, and bulk-save them as drafts in your newsroom inbox.
+            Falke AI will scan your PDF document or image card screenshot, extract up to 50 distinct news stories, attach high-resolution cover imagery, and bulk-save them as drafts in your newsroom inbox.
           </p>
 
           <div style={{ marginBottom: "1.25rem" }}>
