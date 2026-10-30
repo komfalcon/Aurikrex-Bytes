@@ -754,13 +754,13 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
       if (oddDims && oddDims.aspectRatio < 0.75) tallOddCount++;
       if (evenDims && evenDims.aspectRatio >= 0.75) wideEvenCount++;
     }
-    if (tallOddCount >= 1 || wideEvenCount >= 1 || embeddedImages.length === 24) {
+    if (tallOddCount >= 1 || wideEvenCount >= 1 || embeddedImages.length % 2 === 0) {
       isAlternatingDoc = true;
     }
   }
 
   if (isAlternatingDoc && (mistralKey || nvidiaKey || cfConfigs.length > 0)) {
-    const totalPairs = Math.floor(embeddedImages.length / 2);
+    const totalPairs = Math.min(50, Math.floor(embeddedImages.length / 2));
     console.info(`[PDFParser] Detected alternating document structure: ${embeddedImages.length} pages -> ${totalPairs} distinct Bytes. Processing...`);
 
     const pairs = Array.from({ length: totalPairs }, (_, k) => ({
@@ -773,7 +773,7 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
 
     const pairResults = await runConcurrent(
       pairs,
-      2, // Concurrency of 2 to guarantee no rate limits
+      4, // Concurrency of 4 for fast batch processing up to 50 bytes
       async (pair) => {
         // 1. Extract story brief from the story text page
         const extracted = await extractStoryFromPageImage(
@@ -820,14 +820,14 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
           sourcePublishedAt: new Date(),
         };
       },
-      250 // 250ms pacing between requests
+      80 // 80ms pacing between requests
     );
 
     const validBytes = pairResults.filter(Boolean) as CuratedByte[];
 
     if (validBytes.length > 0) {
       console.info(`[PDFParser] Successfully extracted and created ${validBytes.length} high-resolution Bytes with cropped original images!`);
-      return validBytes;
+      return validBytes.slice(0, 50);
     }
   }
 
@@ -838,23 +838,23 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
     console.info(`[PDFParser] Processing ${embeddedImages.length} images via Vision AI pipeline...`);
 
     const pageResults = await runConcurrent(
-      embeddedImages,
-      2, // Concurrency of 2 to avoid rate limits
+      embeddedImages.slice(0, 100),
+      4, // Concurrency of 4
       async (pageImg, pageIdx) => {
         const pageNum = pageIdx + 1;
         return extractStoryFromPageImage(pageImg, pageNum, embeddedImages.length, mistralKey, nvidiaKey, cfConfigs);
       },
-      250 // 250ms pacing between requests
+      80 // 80ms pacing
     );
 
-    const allExtractedStories = pageResults.flat();
+    const allExtractedStories = pageResults.flat().slice(0, 50);
 
     if (allExtractedStories.length > 0) {
       console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} pages. Resolving cover images...`);
 
       const resolvedBytes = await runConcurrent(
         allExtractedStories,
-        3, // Concurrency of 3 for image processing
+        4, // Concurrency of 4 for image processing
         async (draft, idx) => {
           let imageUrl: string | null = null;
 
@@ -886,7 +886,7 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
         150
       );
 
-      return resolvedBytes;
+      return resolvedBytes.slice(0, 50);
     }
   }
 
@@ -895,9 +895,9 @@ export async function parsePdfToBytes(pdfBase64OrText: string): Promise<CuratedB
   // ---------------------------------------------------------------------------
   const promptText = `You are the executive technology editor for Aurikrex Bytes (https://bytes.aurikrex.com).
 Analyze the entire uploaded document.
-CRITICAL INSTRUCTION: The document contains multiple news stories across all pages (approximately 12 stories).
+CRITICAL INSTRUCTION: The document contains multiple news stories across all pages (up to 50 distinct stories).
 Extract EVERY distinct technology, science, AI, crypto, or innovation news story found anywhere in the document into the JSON array.
-Do not stop after 2 or 3 stories. Extract all distinct stories found.
+Do not stop after a few stories. Extract ALL distinct news stories found across the entire document (up to 50 stories).
 
 For each story, provide:
 - "headline": Crisp, active headline (maximum 119 characters).
@@ -935,7 +935,7 @@ Return ONLY a valid JSON array of story objects:
                 { type: "text", text: promptText },
                 { type: "image_url", image_url: { url: `data:${mimeType};base64,${rawBase64}` } },
               ]
-            : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
+            : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 150000)}`;
 
           const response = await fetch(endpoint, {
             method: "POST",
@@ -951,7 +951,7 @@ Return ONLY a valid JSON array of story objects:
                 { role: "user", content: userContent },
               ],
               temperature: 0.2,
-              max_tokens: 8192,
+              max_tokens: 16384,
             }),
           });
 
@@ -980,7 +980,7 @@ Return ONLY a valid JSON array of story objects:
       try {
         const userContent = isImage
           ? [{ type: "text", text: promptText }, { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }]
-          : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}`;
+          : `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 150000)}`;
 
         const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
@@ -996,7 +996,7 @@ Return ONLY a valid JSON array of story objects:
               { role: "user", content: userContent },
             ],
             temperature: 0.2,
-            max_tokens: 8192,
+            max_tokens: 16384,
           }),
         });
 
@@ -1030,7 +1030,7 @@ Return ONLY a valid JSON array of story objects:
             body: JSON.stringify({
               messages: [
                 { role: "system", content: "You are the executive technology editor for Aurikrex Bytes. Extract all news stories as a valid JSON array." },
-                { role: "user", content: `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 50000)}` },
+                { role: "user", content: `${promptText}\n\nDOCUMENT TEXT:\n${documentText.slice(0, 150000)}` },
               ],
               max_tokens: 4096,
             }),

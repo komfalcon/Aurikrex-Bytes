@@ -60,6 +60,7 @@ var init_schema = __esm({
       role: text("role", { enum: ADMIN_ROLES }).notNull().default("editor"),
       isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
       rememberDeviceToken: text("remember_device_token"),
+      tokenVersion: integer("token_version").notNull().default(1),
       createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
     });
     readers = sqliteTable("readers", {
@@ -80,6 +81,7 @@ var init_schema = __esm({
       feedViewMode: text("feed_view_mode", { enum: ["editorial", "compact"] }).notNull().default("editorial"),
       feedViewOnboardingCompleted: integer("feed_view_onboarding_completed", { mode: "boolean" }).notNull().default(false),
       avatarUrl: text("avatar_url"),
+      tokenVersion: integer("token_version").notNull().default(1),
       createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
     });
     postViews = sqliteTable("post_views", {
@@ -323,12 +325,24 @@ async function repairReaderSchema(db) {
     ["last_active_date", "text"],
     ["feed_view_mode", "text DEFAULT 'editorial' NOT NULL"],
     ["feed_view_onboarding_completed", "integer DEFAULT 0 NOT NULL"],
-    ["avatar_url", "text"]
+    ["avatar_url", "text"],
+    ["token_version", "integer DEFAULT 1 NOT NULL"]
   ];
   for (const [name, definition] of repairs) {
     if (names.has(name)) continue;
     await db.run(sql.raw(`ALTER TABLE readers ADD COLUMN ${name} ${definition}`));
     console.info(`[Database] Applied missing readers.${name} column`);
+  }
+  try {
+    const adminColumns = await db.all(sql.raw("PRAGMA table_info('admin_users')"));
+    const adminNames = new Set(
+      adminColumns.map((column) => column.name).filter(Boolean)
+    );
+    if (!adminNames.has("token_version")) {
+      await db.run(sql.raw("ALTER TABLE admin_users ADD COLUMN token_version integer DEFAULT 1 NOT NULL"));
+      console.info("[Database] Applied missing admin_users.token_version column");
+    }
+  } catch {
   }
 }
 async function repairEngagementSchema(db) {
@@ -2806,12 +2820,12 @@ async function parsePdfToBytes(pdfBase64OrText) {
       if (oddDims && oddDims.aspectRatio < 0.75) tallOddCount++;
       if (evenDims && evenDims.aspectRatio >= 0.75) wideEvenCount++;
     }
-    if (tallOddCount >= 1 || wideEvenCount >= 1 || embeddedImages.length === 24) {
+    if (tallOddCount >= 1 || wideEvenCount >= 1 || embeddedImages.length % 2 === 0) {
       isAlternatingDoc = true;
     }
   }
   if (isAlternatingDoc && (mistralKey || nvidiaKey || cfConfigs.length > 0)) {
-    const totalPairs = Math.floor(embeddedImages.length / 2);
+    const totalPairs = Math.min(50, Math.floor(embeddedImages.length / 2));
     console.info(`[PDFParser] Detected alternating document structure: ${embeddedImages.length} pages -> ${totalPairs} distinct Bytes. Processing...`);
     const pairs = Array.from({ length: totalPairs }, (_, k) => ({
       byteIndex: k + 1,
@@ -2822,8 +2836,8 @@ async function parsePdfToBytes(pdfBase64OrText) {
     }));
     const pairResults = await runConcurrent(
       pairs,
-      2,
-      // Concurrency of 2 to guarantee no rate limits
+      4,
+      // Concurrency of 4 for fast batch processing up to 50 bytes
       async (pair) => {
         const extracted = await extractStoryFromPageImage(
           pair.storyImg,
@@ -2863,35 +2877,35 @@ async function parsePdfToBytes(pdfBase64OrText) {
           sourcePublishedAt: /* @__PURE__ */ new Date()
         };
       },
-      250
-      // 250ms pacing between requests
+      80
+      // 80ms pacing between requests
     );
     const validBytes = pairResults.filter(Boolean);
     if (validBytes.length > 0) {
       console.info(`[PDFParser] Successfully extracted and created ${validBytes.length} high-resolution Bytes with cropped original images!`);
-      return validBytes;
+      return validBytes.slice(0, 50);
     }
   }
   if (isImageBasedPdf && embeddedImages.length > 0 && (mistralKey || nvidiaKey || cfConfigs.length > 0)) {
     console.info(`[PDFParser] Processing ${embeddedImages.length} images via Vision AI pipeline...`);
     const pageResults = await runConcurrent(
-      embeddedImages,
-      2,
-      // Concurrency of 2 to avoid rate limits
+      embeddedImages.slice(0, 100),
+      4,
+      // Concurrency of 4
       async (pageImg, pageIdx) => {
         const pageNum = pageIdx + 1;
         return extractStoryFromPageImage(pageImg, pageNum, embeddedImages.length, mistralKey, nvidiaKey, cfConfigs);
       },
-      250
-      // 250ms pacing between requests
+      80
+      // 80ms pacing
     );
-    const allExtractedStories = pageResults.flat();
+    const allExtractedStories = pageResults.flat().slice(0, 50);
     if (allExtractedStories.length > 0) {
       console.info(`[PDFParser] Successfully extracted ${allExtractedStories.length} total stories across ${embeddedImages.length} pages. Resolving cover images...`);
       const resolvedBytes = await runConcurrent(
         allExtractedStories,
-        3,
-        // Concurrency of 3 for image processing
+        4,
+        // Concurrency of 4 for image processing
         async (draft, idx) => {
           let imageUrl = null;
           const imageIdx = Math.max(0, draft.pageNumber - 1);
@@ -2917,14 +2931,14 @@ async function parsePdfToBytes(pdfBase64OrText) {
         },
         150
       );
-      return resolvedBytes;
+      return resolvedBytes.slice(0, 50);
     }
   }
   const promptText = `You are the executive technology editor for Aurikrex Bytes (https://bytes.aurikrex.com).
 Analyze the entire uploaded document.
-CRITICAL INSTRUCTION: The document contains multiple news stories across all pages (approximately 12 stories).
+CRITICAL INSTRUCTION: The document contains multiple news stories across all pages (up to 50 distinct stories).
 Extract EVERY distinct technology, science, AI, crypto, or innovation news story found anywhere in the document into the JSON array.
-Do not stop after 2 or 3 stories. Extract all distinct stories found.
+Do not stop after a few stories. Extract ALL distinct news stories found across the entire document (up to 50 stories).
 
 For each story, provide:
 - "headline": Crisp, active headline (maximum 119 characters).
@@ -2956,7 +2970,7 @@ Return ONLY a valid JSON array of story objects:
           ] : `${promptText}
 
 DOCUMENT TEXT:
-${documentText.slice(0, 5e4)}`;
+${documentText.slice(0, 15e4)}`;
           const response = await fetch(endpoint, {
             method: "POST",
             headers: {
@@ -2971,7 +2985,7 @@ ${documentText.slice(0, 5e4)}`;
                 { role: "user", content: userContent }
               ],
               temperature: 0.2,
-              max_tokens: 8192
+              max_tokens: 16384
             })
           });
           if (response.ok) {
@@ -2998,7 +3012,7 @@ ${documentText.slice(0, 5e4)}`;
         const userContent = isImage ? [{ type: "text", text: promptText }, { type: "image_url", image_url: `data:${mimeType};base64,${rawBase64}` }] : `${promptText}
 
 DOCUMENT TEXT:
-${documentText.slice(0, 5e4)}`;
+${documentText.slice(0, 15e4)}`;
         const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -3013,7 +3027,7 @@ ${documentText.slice(0, 5e4)}`;
               { role: "user", content: userContent }
             ],
             temperature: 0.2,
-            max_tokens: 8192
+            max_tokens: 16384
           })
         });
         if (response.ok) {
@@ -3047,7 +3061,7 @@ ${documentText.slice(0, 5e4)}`;
                 { role: "user", content: `${promptText}
 
 DOCUMENT TEXT:
-${documentText.slice(0, 5e4)}` }
+${documentText.slice(0, 15e4)}` }
               ],
               max_tokens: 4096
             })
@@ -4818,7 +4832,7 @@ function registerGoogleAuthRoutes(app) {
         }).where(eq2(readers.id, reader.id));
       }
       if (!reader) return res.redirect("/login?error=oauth");
-      const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true }, true);
+      const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true, tokenVersion: reader.tokenVersion ?? 1 }, true);
       res.cookie("aurikrex_reader_session", session, { ...getFirstPartyCookieOptions(req), maxAge: 1e3 * 60 * 60 * 24 * 30 });
       return res.redirect("/dashboard");
     } catch (error) {
@@ -5061,7 +5075,15 @@ async function requireAdmin(ctx) {
   const payload = token ? readToken(token) : null;
   if (payload && payload.kind === "admin") {
     const admin = await getAdminById(payload.id);
-    if (admin) return assertActiveAdmin(admin);
+    if (admin) {
+      const currentVersion = admin.tokenVersion ?? 1;
+      if (payload.tokenVersion !== void 0 && payload.tokenVersion !== currentVersion) {
+        throw genericNotFound();
+      } else if (payload.tokenVersion === void 0 && currentVersion > 1) {
+        throw genericNotFound();
+      }
+      return assertActiveAdmin(admin);
+    }
   }
   const remembered = parsed[ADMIN_DEVICE_COOKIE] ? await getAdminByRememberToken(parsed[ADMIN_DEVICE_COOKIE]) : void 0;
   if (remembered) return assertActiveAdmin(remembered);
@@ -5072,6 +5094,15 @@ async function requireReader(ctx) {
   const payload = token ? readToken(token) : null;
   if (!payload || payload.kind !== "reader")
     throw new TRPCError4({ code: "UNAUTHORIZED", message: "Sign in required" });
+  const reader = await getReaderById(payload.id);
+  if (!reader)
+    throw new TRPCError4({ code: "UNAUTHORIZED", message: "Sign in required" });
+  const currentVersion = reader.tokenVersion ?? 1;
+  if (payload.tokenVersion !== void 0 && payload.tokenVersion !== currentVersion) {
+    throw new TRPCError4({ code: "UNAUTHORIZED", message: "Session expired or revoked. Please sign in again." });
+  } else if (payload.tokenVersion === void 0 && currentVersion > 1) {
+    throw new TRPCError4({ code: "UNAUTHORIZED", message: "Session expired or revoked. Please sign in again." });
+  }
   return payload;
 }
 var appRouter = router({
@@ -5183,7 +5214,7 @@ var appRouter = router({
         }).returning();
         reader = newReader;
       }
-      const token = createToken({ id: reader.id, kind: "reader", email: reader.email });
+      const token = createToken({ id: reader.id, kind: "reader", email: reader.email, tokenVersion: reader.tokenVersion ?? 1 });
       const cookieOpts = getFirstPartyCookieOptions(ctx.req);
       ctx.res.cookie(READER_COOKIE, token, cookieOpts);
       return {
@@ -5215,7 +5246,7 @@ var appRouter = router({
       }
       resetPasswordAttempts(email);
       const token = createToken(
-        { kind: "admin", id: admin.id, email: admin.email, role: admin.role },
+        { kind: "admin", id: admin.id, email: admin.email, role: admin.role, tokenVersion: admin.tokenVersion ?? 1 },
         input.remember
       );
       const deviceToken = input.remember ? randomToken() : null;
@@ -5766,7 +5797,8 @@ var appRouter = router({
           kind: "reader",
           id: reader.id,
           email: reader.email,
-          verified: Boolean(reader.emailVerified)
+          verified: Boolean(reader.emailVerified),
+          tokenVersion: reader.tokenVersion ?? 1
         },
         input.remember
       );
@@ -5897,7 +5929,8 @@ var appRouter = router({
       await db.update(readers).set({
         passwordHash: await hashPassword(input.password),
         resetToken: null,
-        resetTokenExpires: null
+        resetTokenExpires: null,
+        tokenVersion: (reader.tokenVersion ?? 1) + 1
       }).where(eq4(readers.id, reader.id));
       resetPasswordAttempts(reader.email);
       return { success: true };
