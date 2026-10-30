@@ -1509,13 +1509,16 @@ var init_imageGeneration = __esm({
 // server/_core/aiCurator.ts
 var aiCurator_exports = {};
 __export(aiCurator_exports, {
+  areDuplicateHeadlines: () => areDuplicateHeadlines,
   buildDuplicateKey: () => buildDuplicateKey,
   canonicalizeUrl: () => canonicalizeUrl,
   clampEditorialBrief: () => clampEditorialBrief,
   cleanHeadline: () => cleanHeadline,
+  curateBytes: () => curateBytes,
   curateTenBytes: () => curateTenBytes,
   decodeHtmlEntities: () => decodeHtmlEntities,
   extractAiBody: () => extractAiBody,
+  extractSignificantTokens: () => extractSignificantTokens,
   extractSourceArticleImage: () => extractSourceArticleImage,
   fetchTodayCandidates: () => fetchTodayCandidates,
   generateEditorialSvgCard: () => generateEditorialSvgCard,
@@ -1573,6 +1576,27 @@ function publisherFromUrl(url) {
 function getHdUnsplashCoverUrl(headline, category = "Tech", seedOffset = 0) {
   return generateEditorialSvgCard(headline, category);
 }
+function extractSignificantTokens(title) {
+  const normalized = title.toLowerCase().replace(/\$(\d+(?:\.\d+)?)\s*b(?:n|illion)?\b/gi, " $1 billion ").replace(/\$(\d+(?:\.\d+)?)\s*m(?:n|illion)?\b/gi, " $1 million ").replace(/\$(\d+(?:\.\d+)?)\s*t(?:rillion)?\b/gi, " $1 trillion ").replace(/[^a-z0-9]+/g, " ");
+  const words = normalized.split(/\s+/).filter((w) => w.length >= 2 && !STOP_WORDS.has(w));
+  return new Set(words);
+}
+function areDuplicateHeadlines(titleA, titleB) {
+  if (!titleA || !titleB) return false;
+  if (normalizeHeadline(titleA) === normalizeHeadline(titleB)) return true;
+  const tokensA = extractSignificantTokens(titleA);
+  const tokensB = extractSignificantTokens(titleB);
+  if (tokensA.size === 0 || tokensB.size === 0) return false;
+  let sharedCount = 0;
+  for (const t2 of tokensA) {
+    if (tokensB.has(t2)) sharedCount++;
+  }
+  const unionSize = (/* @__PURE__ */ new Set([...tokensA, ...tokensB])).size;
+  const jaccard = unionSize > 0 ? sharedCount / unionSize : 0;
+  if (sharedCount >= 3) return true;
+  if (sharedCount >= 2 && (jaccard >= 0.35 || tokensA.size <= 4 || tokensB.size <= 4)) return true;
+  return false;
+}
 function isNonNewsHeadline(title) {
   const lower = title.toLowerCase().trim();
   if (/^(ask|tell)\s+hn\b/i.test(lower)) return true;
@@ -1604,7 +1628,7 @@ function cleanHeadline(title) {
   cleaned = cleaned.replace(/\s*\[(video|pdf|audio|\d{4})\]\s*/gi, " ");
   cleaned = cleaned.replace(/\s*\((video|pdf|audio|\d{4})\)\s*/gi, " ");
   cleaned = cleaned.replace(
-    /\s*[-–—|]\s*(the\s+verge|ars\s+technica|techcrunch|reuters|bloomberg|wired|wsj|nyt|bbc|cnbc|the\s+information|engadget)\s*$/i,
+    /\s*[-–—|]\s*(the\s+verge|ars\s+technica|techcrunch|reuters|bloomberg|wired|wsj|nyt|bbc|cnbc|the\s+information|engadget|9to5google|venturebeat|siliconangle|coindesk|mit\s+tech\s+review|tom['’]s\s+hardware|electrek|the\s+guardian|forbes|fortune|axios|gizmodo)\s*$/i,
     ""
   );
   cleaned = cleaned.replace(/\s+/g, " ").trim();
@@ -1702,12 +1726,17 @@ async function extractSourceArticleImage(url) {
 }
 async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new Set()) {
   const feeds = [
-    { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
+    { name: "Google News Tech", url: "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en" },
+    { name: "Google News AI", url: "https://news.google.com/rss/search?q=when:24h+(AI+OR+Gemini+OR+Anthropic+OR+OpenAI+OR+Nvidia+OR+DeepMind)&hl=en-US&gl=US&ceid=US:en" },
+    { name: "9to5Google", url: "https://9to5google.com/feed/" },
+    { name: "SiliconANGLE", url: "https://siliconangle.com/feed/" },
+    { name: "VentureBeat AI", url: "https://venturebeat.com/category/ai/feed/" },
     { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" },
+    { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
     { name: "TechCrunch", url: "https://techcrunch.com/feed/" },
     { name: "Wired", url: "https://www.wired.com/feed/rss" },
     { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
-    { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
+    { name: "CoinDesk", url: "https://www.coindesk.com/arc/outboundfeeds/rss/" },
     { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" }
   ];
   const results = [];
@@ -1723,26 +1752,35 @@ async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new 
       if (!res.ok) continue;
       const xml = await res.text();
       const items = xml.match(/<(?:item|entry)[\s\S]*?<\/(?:item|entry)>/gi) || [];
-      for (const itemXml of items.slice(0, 20)) {
+      for (const itemXml of items.slice(0, 25)) {
         const titleMatch = itemXml.match(/<title(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
         const linkMatch = itemXml.match(/<link[^>]+href=["']([^"']+)["']/i) || itemXml.match(/<link(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/i);
         const dateMatch = itemXml.match(/<pubDate(?:\s+[^>]*)?>([\s\S]*?)<\/pubDate>/i) || itemXml.match(/<published(?:\s+[^>]*)?>([\s\S]*?)<\/published>/i) || itemXml.match(/<updated(?:\s+[^>]*)?>([\s\S]*?)<\/updated>/i);
         const mediaMatch = itemXml.match(/<media:content[^>]+url=["']([^"']+)["']/i) || itemXml.match(/<enclosure[^>]+url=["']([^"']+)["'][^>]*type=["']image/i);
         if (!titleMatch || !linkMatch) continue;
-        const rawTitle = titleMatch[1].trim();
+        let rawTitle = titleMatch[1].trim();
+        if (feed.name.startsWith("Google News")) {
+          const lastDash = rawTitle.lastIndexOf(" - ");
+          if (lastDash > 15) {
+            rawTitle = rawTitle.slice(0, lastDash).trim();
+          }
+        }
         const url = linkMatch[1].trim();
         const publishedAt = dateMatch ? new Date(dateMatch[1].trim()) : /* @__PURE__ */ new Date();
         if (!rawTitle || rawTitle.length < 15 || isNonNewsHeadline(rawTitle) || !Number.isFinite(publishedAt.getTime()) || publishedAt < start || publishedAt >= end) {
           continue;
         }
+        const sourceMatch = itemXml.match(/<source(?:\s+[^>]*)?>([\s\S]*?)<\/source>/i);
+        const publisherName = sourceMatch && sourceMatch[1]?.trim() ? decodeHtmlEntities(sourceMatch[1].trim()) : feed.name;
         const cleanedTitle = cleanHeadline(rawTitle);
         const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
         if (excludeKeys.has(duplicateKey)) continue;
+        if (results.some((existing) => areDuplicateHeadlines(existing.title, cleanedTitle))) continue;
         const mediaUrl = mediaMatch ? mediaMatch[1].trim() : null;
         results.push({
           title: cleanedTitle,
           url,
-          publisher: feed.name,
+          publisher: publisherName,
           publishedAt,
           duplicateKey,
           imageUrl: mediaUrl
@@ -1804,15 +1842,23 @@ async function fetchCandidatesForTimeframe(start, end, excludeKeys = /* @__PURE_
       }
     }
   }
-  return Array.from(candidates.values()).sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime()).slice(0, 30);
+  const candidateList = Array.from(candidates.values()).sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+  const deduped = [];
+  for (const item of candidateList) {
+    if (!deduped.some((existing) => areDuplicateHeadlines(existing.title, item.title))) {
+      deduped.push(item);
+    }
+  }
+  return deduped.slice(0, 120);
 }
 async function fetchTodayCandidates(excludeKeys = /* @__PURE__ */ new Set()) {
   const now2 = /* @__PURE__ */ new Date();
-  const { start, end } = getTodayWindow(now2);
-  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys);
-  if (candidates.length < 15) {
+  const rollingStart = new Date(now2.getTime() - 32 * 3600 * 1e3);
+  const rollingEnd = new Date(now2.getTime() + 2 * 3600 * 1e3);
+  let candidates = await fetchCandidatesForTimeframe(rollingStart, rollingEnd, excludeKeys);
+  if (candidates.length < 25) {
     const past72h = new Date(now2.getTime() - 72 * 3600 * 1e3);
-    console.info(`[AICurator] Found ${candidates.length} uncurated candidates today. Expanding search window to 72 hours...`);
+    console.info(`[AICurator] Found ${candidates.length} uncurated candidates in rolling 32h window. Expanding search window to 72 hours...`);
     candidates = await fetchCandidatesForTimeframe(past72h, now2, excludeKeys);
   }
   return candidates;
@@ -2091,7 +2137,8 @@ EDITORIAL RULES:
   }
   return null;
 }
-async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdentifier) {
+async function curateBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdentifier, targetCount = 25) {
+  const desiredCount = Math.min(Math.max(targetCount, 5), 30);
   let candidates;
   try {
     candidates = await fetchTodayCandidates(excludeKeys);
@@ -2100,6 +2147,15 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdent
     return [];
   }
   if (!candidates.length) return [];
+  let recentHeadlines = [];
+  try {
+    const db = await getDb();
+    if (db) {
+      const recentPosts = await db.select({ headline: posts.headline }).from(posts).orderBy(posts.id).limit(120);
+      recentHeadlines = recentPosts.map((p) => p.headline).filter(Boolean);
+    }
+  } catch {
+  }
   const targetUser = userIdentifier || process.env.CENTRAL_SYSTEM_USER;
   if (targetUser && targetUser !== "system_curator") {
     try {
@@ -2126,12 +2182,16 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdent
   }
   const seen = /* @__PURE__ */ new Set();
   const draftItems = [];
-  const chunkSize = 3;
-  for (let i = 0; i < candidates.length && draftItems.length < 10; i += chunkSize) {
+  const chunkSize = 4;
+  for (let i = 0; i < candidates.length && draftItems.length < desiredCount; i += chunkSize) {
     const chunk = candidates.slice(i, i + chunkSize);
     const chunkResults = await Promise.all(
       chunk.map(async (candidate) => {
         if (seen.has(candidate.duplicateKey)) return null;
+        if (recentHeadlines.some((h) => areDuplicateHeadlines(h, candidate.title))) {
+          console.info(`[AICurator] Skipping candidate matching prior database headline: "${candidate.title}"`);
+          return null;
+        }
         seen.add(candidate.duplicateKey);
         const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey);
         if (!brief) return null;
@@ -2144,8 +2204,15 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdent
       })
     );
     for (const res of chunkResults) {
-      if (res && draftItems.length < 10) {
-        draftItems.push(res);
+      if (res && draftItems.length < desiredCount) {
+        const isBatchDuplicate = draftItems.some(
+          (d) => areDuplicateHeadlines(d.headline, res.headline) || areDuplicateHeadlines(d.candidate.title, res.candidate.title)
+        );
+        if (!isBatchDuplicate) {
+          draftItems.push(res);
+        } else {
+          console.info(`[AICurator] Dropping cross-outlet duplicate in batch: "${res.headline}"`);
+        }
       }
     }
   }
@@ -2185,12 +2252,15 @@ async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdent
   console.info(`[AICurator] Successfully curated ${curatedBytes.length} authentic Bytes.`);
   return curatedBytes;
 }
-async function runNightlyCuration(status = "draft", userIdentifier) {
+async function curateTenBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdentifier) {
+  return curateBytes(excludeKeys, userIdentifier, 25);
+}
+async function runNightlyCuration(status = "draft", userIdentifier, targetCount = 25) {
   const db = await getDb();
   if (!db) return 0;
-  const existingPosts = await db.select({ duplicateKey: posts.duplicateKey }).from(posts);
+  const existingPosts = await db.select({ duplicateKey: posts.duplicateKey, headline: posts.headline }).from(posts);
   const excludeKeys = new Set(existingPosts.map((p) => p.duplicateKey).filter((k) => Boolean(k)));
-  const bytes = await curateTenBytes(excludeKeys, userIdentifier);
+  const bytes = await curateBytes(excludeKeys, userIdentifier, targetCount);
   if (!bytes.length) return 0;
   let count = 0;
   for (const byte of bytes) {
@@ -2220,6 +2290,7 @@ async function runNightlyCuration(status = "draft", userIdentifier) {
   console.info(`[AICurator] Added ${count} validated ${status} Bytes`);
   return count;
 }
+var STOP_WORDS;
 var init_aiCurator = __esm({
   "server/_core/aiCurator.ts"() {
     "use strict";
@@ -2227,6 +2298,156 @@ var init_aiCurator = __esm({
     init_schema();
     init_aiKeys();
     init_imageGeneration();
+    STOP_WORDS = /* @__PURE__ */ new Set([
+      "a",
+      "about",
+      "above",
+      "after",
+      "again",
+      "against",
+      "all",
+      "am",
+      "an",
+      "and",
+      "any",
+      "are",
+      "aren",
+      "as",
+      "at",
+      "be",
+      "because",
+      "been",
+      "before",
+      "being",
+      "below",
+      "between",
+      "both",
+      "but",
+      "by",
+      "can",
+      "cannot",
+      "could",
+      "did",
+      "do",
+      "does",
+      "doing",
+      "down",
+      "during",
+      "each",
+      "few",
+      "for",
+      "from",
+      "further",
+      "had",
+      "has",
+      "have",
+      "having",
+      "he",
+      "her",
+      "here",
+      "hers",
+      "herself",
+      "him",
+      "himself",
+      "his",
+      "how",
+      "i",
+      "if",
+      "in",
+      "into",
+      "is",
+      "it",
+      "its",
+      "itself",
+      "just",
+      "me",
+      "more",
+      "most",
+      "my",
+      "myself",
+      "no",
+      "nor",
+      "not",
+      "now",
+      "of",
+      "off",
+      "on",
+      "once",
+      "only",
+      "or",
+      "other",
+      "our",
+      "ours",
+      "ourselves",
+      "out",
+      "over",
+      "own",
+      "same",
+      "she",
+      "should",
+      "so",
+      "some",
+      "such",
+      "than",
+      "that",
+      "the",
+      "their",
+      "theirs",
+      "them",
+      "themselves",
+      "then",
+      "there",
+      "these",
+      "they",
+      "this",
+      "those",
+      "through",
+      "to",
+      "too",
+      "under",
+      "until",
+      "up",
+      "very",
+      "was",
+      "we",
+      "were",
+      "what",
+      "when",
+      "where",
+      "which",
+      "while",
+      "who",
+      "whom",
+      "why",
+      "with",
+      "would",
+      "you",
+      "your",
+      "yours",
+      "yourself",
+      "yourselves",
+      "says",
+      "said",
+      "new",
+      "report",
+      "reports",
+      "first",
+      "unveils",
+      "launches",
+      "introduces",
+      "announces",
+      "releases",
+      "reveals",
+      "debuts",
+      "rolls",
+      "see",
+      "sees",
+      "seen",
+      "records",
+      "hits",
+      "shows",
+      "plans"
+    ]);
   }
 });
 
@@ -5296,11 +5517,16 @@ var appRouter = router({
       });
       return { success: true, id: Number(result.lastInsertRowid) };
     }),
-    curateNow: publicProcedure.mutation(async ({ ctx }) => {
+    curateNow: publicProcedure.input(
+      z2.object({
+        count: z2.number().int().min(5).max(30).default(25).optional()
+      }).optional()
+    ).mutation(async ({ input, ctx }) => {
       const admin = await requireAdmin(ctx);
       assertPermission(admin.role, "post:create");
       const { runNightlyCuration: runNightlyCuration2 } = await Promise.resolve().then(() => (init_aiCurator(), aiCurator_exports));
-      const count = await runNightlyCuration2("draft", admin.email);
+      const targetCount = input?.count || 25;
+      const count = await runNightlyCuration2("draft", admin.email, targetCount);
       return { success: true, count };
     }),
     ingestPdf: publicProcedure.input(z2.object({ pdfContent: z2.string().min(1) })).mutation(async ({ input, ctx }) => {

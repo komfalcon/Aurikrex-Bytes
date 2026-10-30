@@ -84,6 +84,59 @@ export function getHdUnsplashCoverUrl(headline: string, category = "Tech", seedO
   return generateEditorialSvgCard(headline, category);
 }
 
+const STOP_WORDS = new Set([
+  "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are", "aren", "as", "at",
+  "be", "because", "been", "before", "being", "below", "between", "both", "but", "by", "can", "cannot", "could",
+  "did", "do", "does", "doing", "down", "during", "each", "few", "for", "from", "further", "had", "has", "have",
+  "having", "he", "her", "here", "hers", "herself", "him", "himself", "his", "how", "i", "if", "in", "into", "is",
+  "it", "its", "itself", "just", "me", "more", "most", "my", "myself", "no", "nor", "not", "now", "of", "off",
+  "on", "once", "only", "or", "other", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should",
+  "so", "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves", "then", "there", "these",
+  "they", "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "we", "were", "what",
+  "when", "where", "which", "while", "who", "whom", "why", "with", "would", "you", "your", "yours", "yourself",
+  "yourselves", "says", "said", "new", "report", "reports", "first", "unveils", "launches", "introduces", "announces",
+  "releases", "reveals", "debuts", "rolls", "see", "sees", "seen", "records", "hits", "shows", "plans"
+]);
+
+export function extractSignificantTokens(title: string): Set<string> {
+  // Normalize financial and metric shorthand e.g. $20B -> 20 billion, $500M -> 500 million
+  const normalized = title
+    .toLowerCase()
+    .replace(/\$(\d+(?:\.\d+)?)\s*b(?:n|illion)?\b/gi, " $1 billion ")
+    .replace(/\$(\d+(?:\.\d+)?)\s*m(?:n|illion)?\b/gi, " $1 million ")
+    .replace(/\$(\d+(?:\.\d+)?)\s*t(?:rillion)?\b/gi, " $1 trillion ")
+    .replace(/[^a-z0-9]+/g, " ");
+
+  const words = normalized.split(/\s+/).filter(w => w.length >= 2 && !STOP_WORDS.has(w));
+  return new Set(words);
+}
+
+export function areDuplicateHeadlines(titleA: string, titleB: string): boolean {
+  if (!titleA || !titleB) return false;
+  if (normalizeHeadline(titleA) === normalizeHeadline(titleB)) return true;
+
+  const tokensA = extractSignificantTokens(titleA);
+  const tokensB = extractSignificantTokens(titleB);
+  if (tokensA.size === 0 || tokensB.size === 0) return false;
+
+  let sharedCount = 0;
+  for (const t of tokensA) {
+    if (tokensB.has(t)) sharedCount++;
+  }
+
+  const unionSize = new Set([...tokensA, ...tokensB]).size;
+  const jaccard = unionSize > 0 ? sharedCount / unionSize : 0;
+
+  // 1. If 3 or more substantial content words match (e.g. ["binance", "20", "billion"]), they cover the exact same event
+  if (sharedCount >= 3) return true;
+
+  // 2. If 2 significant words match and Jaccard similarity is high (>= 0.35) or either title is short (<= 4 tokens)
+  if (sharedCount >= 2 && (jaccard >= 0.35 || tokensA.size <= 4 || tokensB.size <= 4)) return true;
+
+  return false;
+}
+
+
 export function isNonNewsHeadline(title: string): boolean {
   const lower = title.toLowerCase().trim();
   if (/^(ask|tell)\s+hn\b/i.test(lower)) return true;
@@ -134,9 +187,9 @@ export function cleanHeadline(title: string): string {
   // Strip tags like [video], [pdf], [audio], [YYYY], (YYYY), etc.
   cleaned = cleaned.replace(/\s*\[(video|pdf|audio|\d{4})\]\s*/gi, " ");
   cleaned = cleaned.replace(/\s*\((video|pdf|audio|\d{4})\)\s*/gi, " ");
-  // Strip trailing publisher tags e.g. " - The Verge", " | Ars Technica", " — TechCrunch"
+  // Strip trailing publisher tags e.g. " - The Verge", " | Ars Technica", " — TechCrunch", " - 9to5Google", etc.
   cleaned = cleaned.replace(
-    /\s*[-–—|]\s*(the\s+verge|ars\s+technica|techcrunch|reuters|bloomberg|wired|wsj|nyt|bbc|cnbc|the\s+information|engadget)\s*$/i,
+    /\s*[-–—|]\s*(the\s+verge|ars\s+technica|techcrunch|reuters|bloomberg|wired|wsj|nyt|bbc|cnbc|the\s+information|engadget|9to5google|venturebeat|siliconangle|coindesk|mit\s+tech\s+review|tom['’]s\s+hardware|electrek|the\s+guardian|forbes|fortune|axios|gizmodo)\s*$/i,
     ""
   );
   // Normalize whitespace
@@ -270,12 +323,17 @@ export async function extractSourceArticleImage(url: string): Promise<string | n
 
 async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
   const feeds = [
-    { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
+    { name: "Google News Tech", url: "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en" },
+    { name: "Google News AI", url: "https://news.google.com/rss/search?q=when:24h+(AI+OR+Gemini+OR+Anthropic+OR+OpenAI+OR+Nvidia+OR+DeepMind)&hl=en-US&gl=US&ceid=US:en" },
+    { name: "9to5Google", url: "https://9to5google.com/feed/" },
+    { name: "SiliconANGLE", url: "https://siliconangle.com/feed/" },
+    { name: "VentureBeat AI", url: "https://venturebeat.com/category/ai/feed/" },
     { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" },
+    { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/technologylab" },
     { name: "TechCrunch", url: "https://techcrunch.com/feed/" },
     { name: "Wired", url: "https://www.wired.com/feed/rss" },
     { name: "Engadget", url: "https://www.engadget.com/rss.xml" },
-    { name: "VentureBeat", url: "https://venturebeat.com/feed/" },
+    { name: "CoinDesk", url: "https://www.coindesk.com/arc/outboundfeeds/rss/" },
     { name: "MIT Tech Review", url: "https://www.technologyreview.com/topstories.rss" },
   ];
 
@@ -295,7 +353,7 @@ async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<
       const xml = await res.text();
       const items = xml.match(/<(?:item|entry)[\s\S]*?<\/(?:item|entry)>/gi) || [];
 
-      for (const itemXml of items.slice(0, 20)) {
+      for (const itemXml of items.slice(0, 25)) {
         const titleMatch = itemXml.match(/<title(?:\s+[^>]*)?>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
         const linkMatch =
           itemXml.match(/<link[^>]+href=["']([^"']+)["']/i) ||
@@ -310,7 +368,13 @@ async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<
 
         if (!titleMatch || !linkMatch) continue;
 
-        const rawTitle = titleMatch[1].trim();
+        let rawTitle = titleMatch[1].trim();
+        if (feed.name.startsWith("Google News")) {
+          const lastDash = rawTitle.lastIndexOf(" - ");
+          if (lastDash > 15) {
+            rawTitle = rawTitle.slice(0, lastDash).trim();
+          }
+        }
         const url = linkMatch[1].trim();
         const publishedAt = dateMatch ? new Date(dateMatch[1].trim()) : new Date();
 
@@ -325,16 +389,24 @@ async function fetchRssCandidates(start: Date, end: Date, excludeKeys = new Set<
           continue;
         }
 
+        const sourceMatch = itemXml.match(/<source(?:\s+[^>]*)?>([\s\S]*?)<\/source>/i);
+        const publisherName = sourceMatch && sourceMatch[1]?.trim()
+          ? decodeHtmlEntities(sourceMatch[1].trim())
+          : feed.name;
+
         const cleanedTitle = cleanHeadline(rawTitle);
         const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
         if (excludeKeys.has(duplicateKey)) continue;
+
+        // Skip candidate if it is semantically duplicate with an already added RSS item
+        if (results.some(existing => areDuplicateHeadlines(existing.title, cleanedTitle))) continue;
 
         const mediaUrl = mediaMatch ? mediaMatch[1].trim() : null;
 
         results.push({
           title: cleanedTitle,
           url,
-          publisher: feed.name,
+          publisher: publisherName,
           publishedAt,
           duplicateKey,
           imageUrl: mediaUrl,
@@ -414,22 +486,32 @@ async function fetchCandidatesForTimeframe(start: Date, end: Date, excludeKeys =
     }
   }
 
-  return Array.from(candidates.values())
-    .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
-    .slice(0, 30);
+  const candidateList = Array.from(candidates.values())
+    .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+
+  const deduped: NewsCandidate[] = [];
+  for (const item of candidateList) {
+    if (!deduped.some(existing => areDuplicateHeadlines(existing.title, item.title))) {
+      deduped.push(item);
+    }
+  }
+
+  return deduped.slice(0, 120);
 }
 
 export async function fetchTodayCandidates(excludeKeys = new Set<string>()): Promise<NewsCandidate[]> {
   const now = new Date();
-  const { start, end } = getTodayWindow(now);
+  // Rolling 32-hour window captures breaking stories from yesterday evening & today without dropping afternoon scoops
+  const rollingStart = new Date(now.getTime() - 32 * 3600 * 1000);
+  const rollingEnd = new Date(now.getTime() + 2 * 3600 * 1000);
 
-  // 1. Fetch uncurated candidates for today's window
-  let candidates = await fetchCandidatesForTimeframe(start, end, excludeKeys);
+  // 1. Fetch uncurated candidates for the rolling window
+  let candidates = await fetchCandidatesForTimeframe(rollingStart, rollingEnd, excludeKeys);
 
-  // 2. If fewer than 15 uncurated candidates in today's window, expand search window to 72 hours
-  if (candidates.length < 15) {
+  // 2. If fewer than 25 uncurated candidates in rolling window, expand search window to 72 hours
+  if (candidates.length < 25) {
     const past72h = new Date(now.getTime() - 72 * 3600 * 1000);
-    console.info(`[AICurator] Found ${candidates.length} uncurated candidates today. Expanding search window to 72 hours...`);
+    console.info(`[AICurator] Found ${candidates.length} uncurated candidates in rolling 32h window. Expanding search window to 72 hours...`);
     candidates = await fetchCandidatesForTimeframe(past72h, now, excludeKeys);
   }
 
@@ -787,10 +869,12 @@ EDITORIAL RULES:
   return null;
 }
 
-export async function curateTenBytes(
+export async function curateBytes(
   excludeKeys = new Set<string>(),
-  userIdentifier?: string
+  userIdentifier?: string,
+  targetCount = 25
 ): Promise<CuratedByte[]> {
+  const desiredCount = Math.min(Math.max(targetCount, 5), 30);
   let candidates: NewsCandidate[];
   try {
     candidates = await fetchTodayCandidates(excludeKeys);
@@ -799,6 +883,22 @@ export async function curateTenBytes(
     return [];
   }
   if (!candidates.length) return [];
+
+  // Cross-check against recent headlines in DB (last 120 posts) to prevent duplicate stories
+  let recentHeadlines: string[] = [];
+  try {
+    const db = await getDb();
+    if (db) {
+      const recentPosts = await db
+        .select({ headline: posts.headline })
+        .from(posts)
+        .orderBy(posts.id)
+        .limit(120);
+      recentHeadlines = recentPosts.map((p) => p.headline).filter(Boolean);
+    }
+  } catch {
+    // Non-fatal if DB not yet reachable
+  }
 
   // Optional Central Coin Deduction for registered users
   const targetUser = userIdentifier || process.env.CENTRAL_SYSTEM_USER;
@@ -839,13 +939,17 @@ export async function curateTenBytes(
 
   const draftItems: DraftStoryItem[] = [];
 
-  // Generate AI briefs for candidates ONE BY ONE in small parallel chunks of 3 for max performance & zero rate limits
-  const chunkSize = 3;
-  for (let i = 0; i < candidates.length && draftItems.length < 10; i += chunkSize) {
+  // Generate AI briefs for candidates in parallel chunks of 4 for maximum throughput and zero rate limits
+  const chunkSize = 4;
+  for (let i = 0; i < candidates.length && draftItems.length < desiredCount; i += chunkSize) {
     const chunk = candidates.slice(i, i + chunkSize);
     const chunkResults = await Promise.all(
       chunk.map(async (candidate) => {
         if (seen.has(candidate.duplicateKey)) return null;
+        if (recentHeadlines.some((h) => areDuplicateHeadlines(h, candidate.title))) {
+          console.info(`[AICurator] Skipping candidate matching prior database headline: "${candidate.title}"`);
+          return null;
+        }
         seen.add(candidate.duplicateKey);
         const brief = await generateSingleCandidateBrief(candidate, mistralKey, nvidiaKey);
         if (!brief) return null;
@@ -859,15 +963,25 @@ export async function curateTenBytes(
     );
 
     for (const res of chunkResults) {
-      if (res && draftItems.length < 10) {
-        draftItems.push(res);
+      if (res && draftItems.length < desiredCount) {
+        // Guard against cross-outlet duplicates in the current curation batch
+        const isBatchDuplicate = draftItems.some(
+          (d) =>
+            areDuplicateHeadlines(d.headline, res.headline) ||
+            areDuplicateHeadlines(d.candidate.title, res.candidate.title)
+        );
+        if (!isBatchDuplicate) {
+          draftItems.push(res);
+        } else {
+          console.info(`[AICurator] Dropping cross-outlet duplicate in batch: "${res.headline}"`);
+        }
       }
     }
   }
 
   console.info(`[AICurator] Successfully generated ${draftItems.length} authentic AI candidate briefs. Resolving cover images in parallel...`);
 
-  // Resolve cover images for all 10 stories in parallel
+  // Resolve cover images for all stories in parallel
   const curatedBytes: CuratedByte[] = await Promise.all(
     draftItems.map(async (draft) => {
       let imageUrl = draft.candidate.imageUrl;
@@ -909,19 +1023,28 @@ export async function curateTenBytes(
   return curatedBytes;
 }
 
+// Kept for backward compatibility with existing cron and tests
+export async function curateTenBytes(
+  excludeKeys = new Set<string>(),
+  userIdentifier?: string
+): Promise<CuratedByte[]> {
+  return curateBytes(excludeKeys, userIdentifier, 25);
+}
+
 export async function runNightlyCuration(
   status: "draft" | "published" = "draft",
-  userIdentifier?: string
+  userIdentifier?: string,
+  targetCount = 25
 ): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
 
-  // 1. Fetch all existing duplicate keys from database to exclude prior curated stories
-  const existingPosts = await db.select({ duplicateKey: posts.duplicateKey }).from(posts);
+  // 1. Fetch all existing duplicate keys and recent headlines from database
+  const existingPosts = await db.select({ duplicateKey: posts.duplicateKey, headline: posts.headline }).from(posts);
   const excludeKeys = new Set(existingPosts.map(p => p.duplicateKey).filter((k): k is string => Boolean(k)));
 
-  // 2. Curate 10 uncurated Bytes
-  const bytes = await curateTenBytes(excludeKeys, userIdentifier);
+  // 2. Curate 20-30 uncurated Bytes (default 25)
+  const bytes = await curateBytes(excludeKeys, userIdentifier, targetCount);
   if (!bytes.length) return 0;
 
   let count = 0;

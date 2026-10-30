@@ -369,13 +369,22 @@ export const appRouter = router({
         });
         return { success: true, id: Number(result.lastInsertRowid) };
       }),
-    curateNow: publicProcedure.mutation(async ({ ctx }) => {
-      const admin = await requireAdmin(ctx);
-      assertPermission(admin.role, "post:create");
-      const { runNightlyCuration } = await import("./_core/aiCurator.js");
-      const count = await runNightlyCuration("draft", admin.email);
-      return { success: true, count };
-    }),
+    curateNow: publicProcedure
+      .input(
+        z
+          .object({
+            count: z.number().int().min(5).max(30).default(25).optional(),
+          })
+          .optional()
+      )
+      .mutation(async ({ input, ctx }) => {
+        const admin = await requireAdmin(ctx);
+        assertPermission(admin.role, "post:create");
+        const { runNightlyCuration } = await import("./_core/aiCurator.js");
+        const targetCount = input?.count || 25;
+        const count = await runNightlyCuration("draft", admin.email, targetCount);
+        return { success: true, count };
+      }),
     ingestPdf: publicProcedure
       .input(z.object({ pdfContent: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {

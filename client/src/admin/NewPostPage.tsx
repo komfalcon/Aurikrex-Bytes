@@ -41,6 +41,7 @@ export function NewPostPage() {
   // AI Curation states
   const [aiRunning, setAiRunning] = useState(false);
   const [aiSuccessCount, setAiSuccessCount] = useState<number | null>(null);
+  const [curateBatchSize, setCurateBatchSize] = useState<number>(25);
   const [aiError, setAiError] = useState("");
 
   useEffect(() => {
@@ -162,7 +163,7 @@ export function NewPostPage() {
     setAiSuccessCount(null);
 
     try {
-      const res = await curateNow.mutateAsync();
+      const res = await curateNow.mutateAsync({ count: curateBatchSize });
       setAiSuccessCount(res.count);
       void utils.admin.posts.invalidate();
       setTimeout(() => navigate("/admin"), 1500);
@@ -207,7 +208,7 @@ export function NewPostPage() {
               className={`button ${mode === "ai" ? "" : "button-outline"}`}
               onClick={() => setMode("ai")}
             >
-              <Sparkles size={16} /> Curate 10 Bytes Now (Falke AI)
+              <Sparkles size={16} /> Curate 20–30 Bytes (Falke AI)
             </button>
           </div>
         </section>
@@ -245,10 +246,33 @@ export function NewPostPage() {
 
       {mode === "ai" && !editId && (
         <section className="table-card" style={{ padding: "2rem" }}>
-          <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><Sparkles size={20} /> Falke AI 10-Byte Daily Curation Drop</h3>
+          <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><Sparkles size={20} /> Falke AI Multi-Byte Curation Drop</h3>
           <p className="muted" style={{ marginBottom: "1.5rem" }}>
-            Click below to immediately trigger Falke AI. It will analyze current technology, AI, science, and world developments to generate 10 fresh Bytes with high-resolution photos.
+            Click below to immediately trigger Falke AI. It will analyze current technology, frontier AI (Gemini, Claude, OpenAI), science, and breaking developments to generate 20–30 unique, non-duplicate draft Bytes with high-resolution photos so you can filter and publish the top 10 stories.
           </p>
+
+          <div style={{ marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+            <label htmlFor="batch-size" style={{ fontWeight: 600, fontSize: "0.95rem" }}>Batch size:</label>
+            <select
+              id="batch-size"
+              value={curateBatchSize}
+              onChange={(e) => setCurateBatchSize(Number(e.target.value))}
+              disabled={aiRunning}
+              style={{
+                padding: "0.4rem 0.75rem",
+                borderRadius: "6px",
+                border: "1px solid var(--color-border, #334155)",
+                background: "var(--color-bg-secondary, #1e293b)",
+                color: "inherit",
+                fontSize: "0.95rem",
+              }}
+            >
+              <option value={20}>20 Bytes</option>
+              <option value={25}>25 Bytes (Recommended)</option>
+              <option value={30}>30 Bytes</option>
+            </select>
+            <span className="muted" style={{ fontSize: "0.85rem" }}>Generates fresh draft news cards in your publishing inbox for review</span>
+          </div>
 
           {aiSuccessCount !== null ? (
             <div style={{ background: "rgba(16, 185, 129, 0.1)", border: "1px solid #10b981", padding: "1.5rem", borderRadius: "8px", color: "#10b981", display: "flex", alignItems: "center", gap: "1rem" }}>
@@ -266,7 +290,7 @@ export function NewPostPage() {
               disabled={aiRunning}
               style={{ padding: "1rem", fontSize: "1.05rem" }}
             >
-              <Sparkles size={18} /> {aiRunning ? "Falke AI is curating 10 Bytes..." : "Run 10-Byte Falke AI Curation Drop Now"}
+              <Sparkles size={18} /> {aiRunning ? `Falke AI is curating ${curateBatchSize} Bytes...` : `Run ${curateBatchSize}-Byte Falke AI Curation Drop Now`}
             </button>
           )}
 

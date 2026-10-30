@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  areDuplicateHeadlines,
   buildDuplicateKey,
   canonicalizeUrl,
   clampEditorialBrief,
   cleanHeadline,
+  extractSignificantTokens,
   generateEditorialSvgCard,
   getTodayWindow,
   isNonNewsHeadline,
@@ -140,5 +142,28 @@ Paragraph 2 line two.",
     expect(decoded).toContain("<svg");
     expect(decoded).toContain("SCIENCE");
     expect(decoded).toContain("AURIKREX BYTES");
+  });
+  it("detects cross-outlet duplicate headlines for the same breaking story (e.g. Binance $20B)", () => {
+    const headlineA = "Binance records $20 billion in institutional inflows";
+    const headlineB = "Binance sees $20B surge in institutional assets";
+    expect(areDuplicateHeadlines(headlineA, headlineB)).toBe(true);
+
+    const geminiA = "Google unveils Gemini Argon with reasoning benchmarks";
+    const geminiB = "Google announces Gemini Argon for enterprise reasoning";
+    expect(areDuplicateHeadlines(geminiA, geminiB)).toBe(true);
+
+    const carbonA = "OpenAI launches Carbon preview for developers";
+    const carbonB = "OpenAI introduces Carbon model preview";
+    expect(areDuplicateHeadlines(carbonA, carbonB)).toBe(true);
+  });
+
+  it("does not falsely deduplicate distinct stories from the same or different companies", () => {
+    const storyA = "Apple releases iOS 19 developer beta";
+    const storyB = "Google releases Android 17 developer preview";
+    expect(areDuplicateHeadlines(storyA, storyB)).toBe(false);
+
+    const nvidiaA = "Nvidia announces Blackwell Ultra chips for datacenters";
+    const nvidiaB = "Nvidia reports record earnings driven by AI";
+    expect(areDuplicateHeadlines(nvidiaA, nvidiaB)).toBe(false);
   });
 });
