@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { ENV, validateProductionEnvironment } from "./_core/env.js";
 
-export type SessionPayload = { kind: "admin" | "reader"; id: number; email: string; role?: "admin" | "editor"; verified?: boolean };
+export type SessionPayload = { kind: "admin" | "reader"; id: number; email: string; role?: "admin" | "editor"; verified?: boolean; tokenVersion?: number };
 
 const secret = () => {
   validateProductionEnvironment();

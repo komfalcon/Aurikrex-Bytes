@@ -59,6 +59,7 @@ export const adminUsers = sqliteTable("admin_users", {
   role: text("role", { enum: ADMIN_ROLES }).notNull().default("editor"),
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   rememberDeviceToken: text("remember_device_token"),
+  tokenVersion: integer("token_version").notNull().default(1),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(now),
@@ -84,6 +85,7 @@ export const readers = sqliteTable("readers", {
   feedViewMode: text("feed_view_mode", { enum: ["editorial", "compact"] }).notNull().default("editorial"),
   feedViewOnboardingCompleted: integer("feed_view_onboarding_completed", { mode: "boolean" }).notNull().default(false),
   avatarUrl: text("avatar_url"),
+  tokenVersion: integer("token_version").notNull().default(1),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(now),

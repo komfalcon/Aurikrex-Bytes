@@ -112,7 +112,15 @@ async function requireAdmin(ctx: { req: any }) {
   const payload = token ? readToken(token) : null;
   if (payload && payload.kind === "admin") {
     const admin = await getAdminById(payload.id);
-    if (admin) return assertActiveAdmin(admin);
+    if (admin) {
+      const currentVersion = admin.tokenVersion ?? 1;
+      if (payload.tokenVersion !== undefined && payload.tokenVersion !== currentVersion) {
+        throw genericNotFound();
+      } else if (payload.tokenVersion === undefined && currentVersion > 1) {
+        throw genericNotFound();
+      }
+      return assertActiveAdmin(admin);
+    }
   }
   const remembered = parsed[ADMIN_DEVICE_COOKIE]
     ? await getAdminByRememberToken(parsed[ADMIN_DEVICE_COOKIE])
@@ -125,6 +133,15 @@ async function requireReader(ctx: { req: any }) {
   const payload = token ? readToken(token) : null;
   if (!payload || payload.kind !== "reader")
     throw new TRPCError({ code: "UNAUTHORIZED", message: "Sign in required" });
+  const reader = await getReaderById(payload.id);
+  if (!reader)
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "Sign in required" });
+  const currentVersion = reader.tokenVersion ?? 1;
+  if (payload.tokenVersion !== undefined && payload.tokenVersion !== currentVersion) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "Session expired or revoked. Please sign in again." });
+  } else if (payload.tokenVersion === undefined && currentVersion > 1) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "Session expired or revoked. Please sign in again." });
+  }
   return payload;
 }
 
@@ -254,7 +271,7 @@ export const appRouter = router({
           reader = newReader;
         }
 
-        const token = createToken({ id: reader.id, kind: 'reader', email: reader.email });
+        const token = createToken({ id: reader.id, kind: 'reader', email: reader.email, tokenVersion: reader.tokenVersion ?? 1 });
         const cookieOpts = getFirstPartyCookieOptions(ctx.req);
         ctx.res.cookie(READER_COOKIE, token, cookieOpts);
 
@@ -295,7 +312,7 @@ export const appRouter = router({
 
         resetPasswordAttempts(email);
         const token = createToken(
-          { kind: "admin", id: admin.id, email: admin.email, role: admin.role },
+          { kind: "admin", id: admin.id, email: admin.email, role: admin.role, tokenVersion: admin.tokenVersion ?? 1 },
           input.remember
         );
         const deviceToken = input.remember ? randomToken() : null;
@@ -960,6 +977,7 @@ export const appRouter = router({
             id: reader.id,
             email: reader.email,
             verified: Boolean(reader.emailVerified),
+            tokenVersion: reader.tokenVersion ?? 1,
           },
           input.remember
         );
@@ -1118,6 +1136,7 @@ export const appRouter = router({
             passwordHash: await hashPassword(input.password),
             resetToken: null,
             resetTokenExpires: null,
+            tokenVersion: (reader.tokenVersion ?? 1) + 1,
           })
           .where(eq(readers.id, reader.id));
         resetPasswordAttempts(reader.email);

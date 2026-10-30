@@ -48,11 +48,24 @@ async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
     ["feed_view_mode", "text DEFAULT 'editorial' NOT NULL"],
     ["feed_view_onboarding_completed", "integer DEFAULT 0 NOT NULL"],
     ["avatar_url", "text"],
+    ["token_version", "integer DEFAULT 1 NOT NULL"],
   ] as const;
   for (const [name, definition] of repairs) {
     if (names.has(name)) continue;
     await db.run(sql.raw(`ALTER TABLE readers ADD COLUMN ${name} ${definition}`));
     console.info(`[Database] Applied missing readers.${name} column`);
+  }
+  try {
+    const adminColumns = await db.all(sql.raw("PRAGMA table_info('admin_users')"));
+    const adminNames = new Set(
+      adminColumns.map(column => (column as { name?: string }).name).filter(Boolean)
+    );
+    if (!adminNames.has("token_version")) {
+      await db.run(sql.raw("ALTER TABLE admin_users ADD COLUMN token_version integer DEFAULT 1 NOT NULL"));
+      console.info("[Database] Applied missing admin_users.token_version column");
+    }
+  } catch {
+    // If admin_users does not exist yet
   }
 }
 

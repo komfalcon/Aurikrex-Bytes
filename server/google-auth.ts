@@ -52,7 +52,7 @@ export function registerGoogleAuthRoutes(app: Express) {
         }).where(eq(readers.id, reader.id));
       }
       if (!reader) return res.redirect("/login?error=oauth");
-      const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true }, true);
+      const session = createToken({ kind: "reader", id: reader.id, email: reader.email, verified: true, tokenVersion: reader.tokenVersion ?? 1 }, true);
       res.cookie("aurikrex_reader_session", session, { ...getFirstPartyCookieOptions(req), maxAge: 1000 * 60 * 60 * 24 * 30 });
       return res.redirect("/dashboard");
     } catch (error) { console.error("[Google OAuth] callback failed", error instanceof Error ? error.message : "Unknown error"); return res.redirect("/login?error=oauth"); }
