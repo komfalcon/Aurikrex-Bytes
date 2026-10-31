@@ -1,8 +1,4197 @@
-import { useState } from "react";
-import { Link, useLocation } from "wouter";
-import { trpc } from "../lib/trpc";
-import { authRoutes, authTitles, type ReaderAuthMode } from "../shared/authUi";
+import { FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState, type ComponentProps } from "react";
+import { createPortal } from "react-dom";
+import { Link, useLocation, useRoute } from "wouter";
+import {
+  ArrowRight,
+  ArrowUp,
+  Bell,
+  Bookmark,
+  BookOpen,
+  Bot,
+  Camera,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  CircleHelp,
+  Clock3,
+  Facebook,
+  FileText,
+  Flame,
+  Home as HomeIcon,
+  Instagram,
+  Info,
+  Layers,
+  Linkedin,
+  Loader2,
+  LogOut,
+  Mail,
+  MailOpen,
+  Menu,
+  Moon,
+  Search,
+  Share2,
+  ShieldCheck,
+  Sparkles,
+  Square,
+  SquarePen,
+  Sun,
+  TrendingUp,
+  Upload,
+  User,
+  Workflow,
+  X,
+  XCircle,
+  Zap,
+} from "lucide-react";
+import { toast } from "sonner";
+import { trpc } from "@/lib/trpc";
+import { PushSubscribeButton } from "@/components/PushSubscribeButton";
+import { PushPromptSheet, IosInstallHelpModal } from "@/components/PushPromptSheet";
+import { shouldShowPushPrompt, getOneSignal, waitForSubscriptionId, isIosSafari } from "@/lib/pushClient";
+import { AurikrexAppsSwitcher } from "@/components/AurikrexAppsSwitcher";
+import { AuriCoinBadge } from "@/components/AuriCoinBadge";
+import { EndOfFeedIllustration } from "@/components/EndOfFeedIllustration";
+import { useTheme } from "@/contexts/ThemeContext";
+import { authRoutes, authTitles, type ReaderAuthMode } from "@/shared/authUi";
+import Seo from "@/components/Seo";
+import { FormattedBody, FormattedInlineText } from "@/components/FormattedBody";
 
-export function Home() { const posts = trpc.publicPosts.list.useQuery(); return <main><header className="site-header"><div><p className="eyebrow">Aurikrex Bytes</p><h1>The daily brief, beautifully edited.</h1></div><Link className="outline-button" href={authRoutes.login}>Reader access</Link></header><section className="hero"><div><span className="kicker">Independent editorial briefing</span><h2>Make room for better stories.</h2><p>Short, thoughtful news cards for a more informed day.</p></div><div className="hero-mark">AB<span>01</span></div></section><section className="card-grid">{posts.data?.filter(post => post.status === "published").map(post => <article className="story-card" key={post.id}><div className="story-meta">Published brief</div><h3>{post.headline}</h3><p>{post.body}</p></article>)}{!posts.data?.length && <article className="story-card empty"><div className="story-meta">Your newsroom awaits</div><h3>Stories will appear here.</h3><p>Once the editorial team publishes a card, the public briefing will begin to take shape.</p></article>}</section></main>; }
+const getInitial = (nameOrEmail?: string | null) => {
+  if (!nameOrEmail) return "U";
+  const clean = nameOrEmail.trim().replace(/^@/, "");
+  return clean ? clean[0].toUpperCase() : "U";
+};
 
-export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) { const [, navigate] = useLocation(); const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [token] = useState(() => new URLSearchParams(location.search).get("token") || ""); const [message, setMessage] = useState(""); const login = trpc.reader.login.useMutation({ onSuccess: result => setMessage(result.emailVerified ? "Welcome back." : "Please verify your email before accessing all stories."), onError: e => setMessage(e.message) }); const signup = trpc.reader.signup.useMutation({ onSuccess: () => setMessage("Check your inbox for a verification link."), onError: e => setMessage(e.message) }); const forgot = trpc.reader.requestPasswordReset.useMutation({ onSuccess: () => setMessage("If that address exists, a reset link is on its way.") }); const reset = trpc.reader.resetPassword.useMutation({ onSuccess: () => { setMessage("Password updated. You can sign in now."); navigate("/login"); }, onError: e => setMessage(e.message) }); const verify = trpc.reader.verifyEmail.useMutation({ onSuccess: () => setMessage("Email verified. You can sign in now."), onError: e => setMessage(e.message) }); const google = trpc.reader.googleStart.useQuery(undefined, { enabled: mode === "login" }); const submit = (e: React.FormEvent) => { e.preventDefault(); if (mode === "login") login.mutate({ email, password, remember: true }); if (mode === "signup") signup.mutate({ email, password }); if (mode === "forgot") forgot.mutate({ email }); if (mode === "reset") reset.mutate({ token, password }); if (mode === "verify") verify.mutate({ token }); };  return <main className="auth-wrap"><section className="auth-panel"><p className="eyebrow">Aurikrex Bytes</p><h1>{authTitles[mode]}</h1><p className="muted">A considered daily read for people who want signal without the noise.</p>{mode === "verify" ? <button className="button" onClick={() => verify.mutate({ token })}>Verify email</button> : <form onSubmit={submit}>{mode !== "reset" && <label>Email<input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label>}{mode !== "forgot" && <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} /></label>}<button className="button" type="submit">{mode === "signup" ? "Create account" : mode === "forgot" ? "Send reset link" : mode === "reset" ? "Update password" : "Sign in"}</button></form>}{mode === "login" && <><a className="outline-button" href={google.data?.url || "/login"}>Continue with Google</a><div className="auth-links"><Link href={authRoutes.signup}>Create an account</Link><Link href={authRoutes.forgotPassword}>Forgot password?</Link></div></>}{mode === "signup" && <div className="auth-links"><Link href={authRoutes.login}>Already a reader? Sign in</Link></div>}<p className="form-message">{message}</p></section></main>; }
+const formatDate = (value?: string | Date | number | null) =>
+  value
+    ? new Intl.DateTimeFormat("en", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }).format(new Date(value))
+    : "Today";
+const excerpt = (text: string, length = 150) =>
+  text.length > length ? `${text.slice(0, length).trim()}…` : text;
+const optimizedImage = (url: string, width: number) =>
+  url.includes("res.cloudinary.com") &&
+  url.includes("/upload/") &&
+  !url.includes("f_auto")
+    ? url.replace("/upload/", `/upload/f_auto,q_auto,ar_16:9,c_fill,g_auto,w_${width}/`)
+    : url;
+
+type FeedViewMode = "editorial" | "compact";
+const FEED_VIEW_MODE_KEY = "aurikrex-feed-view-mode";
+const getInitialFeedViewMode = (): FeedViewMode => {
+  if (typeof window === "undefined") return "editorial";
+  return window.localStorage.getItem(FEED_VIEW_MODE_KEY) === "compact"
+    ? "compact"
+    : "editorial";
+};
+function useIsMobileViewport(maxWidth = 850) {
+  const query = `(max-width: ${maxWidth}px)`;
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(query).matches
+  );
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setIsMobile(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+  return isMobile;
+}
+const AUTH_RETURN_KEY = "aurikrex-auth-return-to";
+const safeReturnTo = (value: string | null | undefined) =>
+  value && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
+const authPathWithReturnTo = (returnTo: string) =>
+  `${authRoutes.login}?returnTo=${encodeURIComponent(returnTo)}`;
+const authSignupWithReturnTo = (returnTo: string) =>
+  `${authRoutes.signup}?returnTo=${encodeURIComponent(returnTo)}`;
+const rememberAuthReturnTo = (returnTo: string) => {
+  if (typeof window !== "undefined") window.sessionStorage.setItem(AUTH_RETURN_KEY, returnTo);
+};
+function ProtectedLink({
+  href,
+  children,
+  className,
+  onClick,
+}: {
+  href: string;
+  children: ReactNode;
+  className?: string;
+  onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  return (
+    <Link
+      href={href}
+      className={className}
+      onClick={event => {
+        onClick?.(event);
+        if (!session.isLoading && !session.data) {
+          event.preventDefault();
+          rememberAuthReturnTo(href);
+          navigate(authSignupWithReturnTo(href));
+        }
+      }}
+    >
+      {children}
+    </Link>
+  );
+}
+export function Logo({ compact = false, href = "/", showMark = true }: { compact?: boolean; href?: string; showMark?: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={`brand ${compact ? "brand-compact" : ""}`}
+      aria-label="Aurikrex Bytes home"
+    >
+      {showMark && <img src="/logo-512.png" alt="Aurikrex Bytes logo" />}
+      <span>
+        Aurikrex <b>Bytes</b>
+      </span>
+    </Link>
+  );
+}
+function GoogleIcon() {
+  return (
+    <svg className="google-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="#4285F4" d="M21.35 12.27c0-.79-.07-1.55-.2-2.27H12v4.3h5.24a4.48 4.48 0 0 1-1.94 2.94v2.45h3.15c1.85-1.7 2.9-4.2 2.9-7.42Z" />
+      <path fill="#34A853" d="M12 21.75c2.65 0 4.88-.88 6.5-2.38l-3.15-2.45c-.88.59-2 .94-3.35.94-2.57 0-4.75-1.74-5.53-4.08H3.22v2.53A9.82 9.82 0 0 0 12 21.75Z" />
+      <path fill="#FBBC05" d="M6.47 13.78a5.9 5.9 0 0 1 0-3.56V7.69H3.22a9.75 9.75 0 0 0 0 8.62l3.25-2.53Z" />
+      <path fill="#EA4335" d="M12 6.14c1.45 0 2.75.5 3.77 1.48l2.83-2.83C16.88 3.2 14.65 2.25 12 2.25a9.82 9.82 0 0 0-8.78 5.44l3.25 2.53C7.25 7.88 9.43 6.14 12 6.14Z" />
+    </svg>
+  );
+}
+function XBrandIcon() {
+  return (
+    <svg className="footer-social-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z" />
+    </svg>
+  );
+}
+function TikTokBrandIcon() {
+  return (
+    <svg className="footer-social-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" />
+    </svg>
+  );
+}
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button
+      type="button"
+      className="icon-button"
+      onClick={toggleTheme}
+      aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+      aria-pressed={theme === "dark"}
+      title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+    >
+      {theme === "light" ? <Moon size={17} strokeWidth={1.8} /> : <Sun size={17} strokeWidth={1.8} />}
+    </button>
+  );
+}
+function ProfileLightboxModal({
+  isOpen,
+  onClose,
+  sessionData,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  sessionData: any;
+}) {
+  const utils = trpc.useUtils();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const avatarSignature = trpc.reader.avatarUploadSignature.useQuery(undefined, {
+    enabled: isOpen,
+    staleTime: 60_000,
+  });
+  const updateAvatarMutation = trpc.reader.updateAvatar.useMutation({
+    onSuccess: async () => {
+      await utils.reader.session.invalidate();
+      toast.success("Profile photo updated!");
+      setUploading(false);
+    },
+    onError: (err) => {
+      const rawMsg = err?.message || "";
+      const userMessage =
+        rawMsg &&
+        !rawMsg.includes("[{") &&
+        !rawMsg.includes("Invalid avatar URL") &&
+        !rawMsg.includes("TRPCClientError")
+          ? rawMsg
+          : "Couldn't upload photo, try again";
+      toast.error(userMessage);
+      setUploading(false);
+    },
+  });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+  if (typeof document === "undefined") return null;
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (e.target) e.target.value = "";
+    if (!file) return;
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Please select a JPG, PNG, or WebP image.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size should be under 5MB.");
+      return;
+    }
+
+    try {
+      setUploading(true);
+      const sig = avatarSignature.data || await utils.reader.avatarUploadSignature.fetch();
+      if (!sig?.configured || !sig.signature || !sig.cloudName) {
+        throw new Error("Photo storage is temporarily unavailable. Please try again.");
+      }
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("api_key", sig.apiKey);
+      form.append("timestamp", String(sig.timestamp));
+      form.append("folder", sig.folder || "aurikrex/avatars");
+      form.append("signature", sig.signature);
+
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${sig.cloudName}/image/upload`,
+        { method: "POST", body: form }
+      );
+      const result = await response.json();
+      if (!response.ok || !result.secure_url) {
+        throw new Error(result.error?.message || "Couldn't upload photo, try again");
+      }
+
+      await updateAvatarMutation.mutateAsync({ avatarUrl: result.secure_url });
+    } catch (err: any) {
+      console.error("[ProfilePhoto] Upload error:", err);
+      const rawMsg = err?.message || "";
+      const userMessage =
+        rawMsg &&
+        !rawMsg.includes("[{") &&
+        !rawMsg.includes("Invalid avatar URL") &&
+        !rawMsg.includes("TRPCClientError")
+          ? rawMsg
+          : "Couldn't upload photo, try again";
+      toast.error(userMessage);
+      setUploading(false);
+    }
+  };
+
+  const name = sessionData?.name || sessionData?.email?.split("@")[0] || "Reader";
+  const initial = getInitial(name);
+
+  return createPortal(
+    <div className="whatsapp-profile-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Profile picture modal">
+      <div className="whatsapp-profile-card" onClick={(e) => e.stopPropagation()}>
+        <button className="whatsapp-profile-close" onClick={onClose} aria-label="Close profile modal">
+          <X size={20} />
+        </button>
+
+        <div className="whatsapp-profile-avatar-wrapper">
+          {sessionData?.avatarUrl ? (
+            <img src={sessionData.avatarUrl} alt={name} className="whatsapp-profile-img" />
+          ) : (
+            <div className="whatsapp-profile-fallback">
+              <span>{initial}</span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="whatsapp-profile-edit-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            title="Change Profile Picture"
+          >
+            <Camera size={18} />
+          </button>
+        </div>
+
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept="image/jpeg,image/png,image/webp"
+          style={{ display: "none" }}
+          onChange={handleFileChange}
+          disabled={uploading}
+        />
+
+        <div className="whatsapp-profile-info">
+          <h3>{name}</h3>
+          <p>{sessionData?.email}</p>
+          
+          <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
+            <span 
+              onClick={() => {
+                const akxId = (sessionData as any)?.aurikrexId || `AKX-${String(sessionData?.id || '0').padStart(6, '0')}`;
+                navigator.clipboard.writeText(akxId);
+                toast.success("Aurikrex ID copied to clipboard!");
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '4px 12px',
+                backgroundColor: 'rgba(50, 122, 253, 0.1)',
+                color: '#327afd',
+                borderRadius: '9999px',
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s'
+              }}
+              title="Click to copy Aurikrex ID"
+            >
+              Aurikrex ID: <strong style={{ fontFamily: 'monospace' }}>{(sessionData as any)?.aurikrexId || `AKX-${String(sessionData?.id || '0').padStart(6, '0')}`}</strong>
+            </span>
+          </div>
+        </div>
+
+        <div className="whatsapp-profile-actions">
+          <button
+            type="button"
+            className="button button-small button-outline"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+          >
+            {uploading ? (
+              <>
+                <Loader2 size={14} className="animate-spin" /> Uploading...
+              </>
+            ) : (
+              <>
+                <Upload size={14} /> Change photo
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+export function SiteHeader() {
+  const [location] = useLocation();
+  const [menu, setMenu] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const utils = trpc.useUtils();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const appIdQuery = trpc.reader.oneSignalAppId.useQuery();
+  const unregisterSubMutation = trpc.reader.unregisterOneSignalSubscription.useMutation();
+  const logout = trpc.auth.logout.useMutation({
+    onSuccess: () => {
+      // Clear the shared auth snapshot before leaving the dashboard. A normal
+      // reset can briefly refetch stale data and the home route would redirect
+      // back to /dashboard during that window.
+      utils.reader.session.setData(undefined, undefined);
+      setMenu(false);
+      window.location.replace("/");
+    },
+  });
+
+  const handleHeaderLogout = async () => {
+    if (typeof window !== "undefined" && appIdQuery.data) {
+      try {
+        const OneSignal = await getOneSignal(appIdQuery.data);
+        const subId = OneSignal.User?.PushSubscription?.id;
+        if (subId) {
+          await unregisterSubMutation.mutateAsync({ subscriptionId: subId }).catch(() => undefined);
+        }
+        await OneSignal.User?.PushSubscription?.optOut?.().catch(() => undefined);
+        await OneSignal.logout?.().catch(() => undefined);
+      } catch (err) {
+        console.warn("[PushLogout] Header signout cleanup error:", err);
+      }
+    }
+    logout.mutate();
+  };
+  const signedIn = Boolean(session.data);
+  const homePath = signedIn ? "/dashboard" : "/";
+  const isDiscoverActive = location === "/" || location === "/dashboard";
+  const isSavedActive = location === "/saved";
+  const isArchiveActive = location.startsWith("/archive");
+  const isAboutActive = location === "/how-it-works";
+  const isHelpActive = location === "/help";
+  const isContactActive = location === "/contact";
+  const isProfileActive = location === "/profile";
+
+  useEffect(() => {
+    setMenu(false);
+  }, [location]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (!menu) {
+      document.body.style.overflow = "";
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menu]);
+
+  return (
+    <header className="site-header">
+      <div className="site-header-left">
+        <Logo href={homePath} />
+        <Link href="/archive" className="px-header-search-pill" aria-label="Search Bytes and topics">
+          <Search size={14} />
+          <span>Search Bytes &amp; topics…</span>
+          <kbd>/</kbd>
+        </Link>
+        <nav className="main-nav" aria-label="Primary">
+          <span className="px-sidebar-group-label">Briefing</span>
+          {signedIn ? (
+            <Link href={homePath} className={isDiscoverActive ? "active" : ""}>
+              <Sparkles size={16} className="px-nav-icon" />
+              <span>Discover</span>
+            </Link>
+          ) : (
+            <Link href="/" className={location === "/" ? "active" : ""}>
+              <HomeIcon size={16} className="px-nav-icon" />
+              <span>Home</span>
+            </Link>
+          )}
+          <Link href="/archive" className={isArchiveActive ? "active" : ""}>
+            <BookOpen size={16} className="px-nav-icon" />
+            <span>All Bytes</span>
+          </Link>
+          {signedIn && (
+            <Link href="/saved" className={isSavedActive ? "active" : ""}>
+              <Bookmark size={16} className="px-nav-icon" />
+              <span>Saved</span>
+            </Link>
+          )}
+          {signedIn && (
+            <Link href="/profile" className={isProfileActive ? "active" : ""}>
+              <User size={16} className="px-nav-icon" />
+              <span>Profile</span>
+            </Link>
+          )}
+          <span className="px-sidebar-group-label px-sidebar-only">Resources</span>
+          <Link href="/how-it-works" className={isAboutActive ? "active" : ""}>
+            <Layers size={16} className="px-nav-icon" />
+            <span>About</span>
+          </Link>
+          <Link href="/help" className={"px-sidebar-only " + (isHelpActive ? "active" : "")}>
+            <CircleHelp size={16} className="px-nav-icon" />
+            <span>Help Center</span>
+          </Link>
+          <Link href="/contact" className={"px-sidebar-only " + (isContactActive ? "active" : "")}>
+            <Mail size={16} className="px-nav-icon" />
+            <span>Contact</span>
+          </Link>
+        </nav>
+      </div>
+      <div className="header-actions">
+        <div className="px-header-utility-row">
+          {signedIn && <AuriCoinBadge className="header-coin-badge" />}
+          {signedIn && <PushSubscribeButton variant="header" />}
+          <AurikrexAppsSwitcher currentAppId="bytes" />
+          <ThemeToggle />
+        </div>
+        <div className="px-header-account-row">
+          {signedIn && (
+            <Link
+              href="/profile"
+              className={`header-avatar-btn ${isProfileActive ? "active" : ""}`}
+              title="View profile & settings"
+              aria-label="View profile & settings"
+            >
+              {session.data?.avatarUrl ? (
+                <img src={session.data.avatarUrl} alt={session.data?.name || "Profile"} className="header-avatar-img" />
+              ) : (
+                <span className="header-avatar-initial">
+                  {getInitial(session.data?.name || session.data?.email || "U")}
+                </span>
+              )}
+              <span className="px-sidebar-user-name">
+                {(session.data as any)?.nickname || session.data?.name?.trim().split(/\s+/)[0] || session.data?.email?.split("@")[0] || "Reader"}
+              </span>
+            </Link>
+          )}
+          {signedIn ? (
+            <button className="header-login text-button" onClick={handleHeaderLogout} disabled={logout.isPending}>
+              <LogOut size={14} /> <span>Sign out</span>
+            </button>
+          ) : (
+            <div className="px-guest-auth-btns">
+              <Link className="header-login" href={authRoutes.login}>Sign in</Link>
+              <Link className="button button-small" href={authRoutes.signup}>Join free <ArrowRight size={14} /></Link>
+            </div>
+          )}
+        </div>
+        <button
+          className="mobile-menu"
+          onClick={() => setMenu(value => !value)}
+          aria-label={menu ? "Close navigation menu" : "Open navigation menu"}
+          aria-expanded={menu}
+          aria-controls="mobile-navigation-drawer"
+        >
+          {menu ? <X size={20} strokeWidth={1.8} /> : <Menu size={20} strokeWidth={1.8} />}
+        </button>
+      </div>
+      {menu && (
+        <>
+          <button className="mobile-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMenu(false)} />
+          <nav id="mobile-navigation-drawer" className="mobile-nav" aria-label="Mobile navigation">
+            <div className="mobile-nav-section">
+              <span className="mobile-nav-label">Read</span>
+              {signedIn ? (
+                <>
+                  <Link href="/saved" onClick={() => setMenu(false)}><Bookmark size={16} /> Saved posts</Link>
+                  <Link href="/profile" onClick={() => setMenu(false)}><User size={16} /> Profile &amp; account</Link>
+                </>
+              ) : (
+                <>
+                  <Link href="/" onClick={() => setMenu(false)}><HomeIcon size={16} /> Home</Link>
+                  <Link href="/archive" onClick={() => setMenu(false)}><BookOpen size={16} /> All Bytes</Link>
+                </>
+              )}
+            </div>
+            <div className="mobile-nav-section">
+              <span className="mobile-nav-label">Explore</span>
+              <Link href="/how-it-works" onClick={() => setMenu(false)}><Info size={16} /> About</Link>
+              <Link href="/help" onClick={() => setMenu(false)}><CircleHelp size={16} /> Help center</Link>
+              <Link href="/contact" onClick={() => setMenu(false)}><Mail size={16} /> Contact</Link>
+            </div>
+            <div className="mobile-nav-section mobile-nav-preferences">
+              <span className="mobile-nav-label">Ecosystem &amp; Preferences</span>
+              <div className="mobile-nav-preference-row">
+                <span>Aurikrex Apps</span>
+                <AurikrexAppsSwitcher currentAppId="bytes" />
+              </div>
+              <div className="mobile-nav-preference-row">
+                <span>Appearance</span>
+                <ThemeToggle />
+              </div>
+            </div>
+            <div className="mobile-nav-section mobile-nav-legal">
+              <span className="mobile-nav-label">Legal</span>
+              <Link href="/privacy" onClick={() => setMenu(false)}><ShieldCheck size={16} /> Privacy policy</Link>
+              <Link href="/terms" onClick={() => setMenu(false)}><FileText size={16} /> Terms of service</Link>
+            </div>
+            <div className="mobile-nav-account">
+              {signedIn ? (
+                <>
+                  <Link
+                    href="/profile"
+                    className="mobile-nav-btn mobile-nav-btn-secondary"
+                    onClick={() => setMenu(false)}
+                  >
+                    <User size={16} />
+                    <span>View Profile</span>
+                  </Link>
+                  <button
+                    type="button"
+                    className="mobile-nav-btn mobile-nav-btn-signout"
+                    onClick={handleHeaderLogout}
+                    disabled={logout.isPending}
+                  >
+                    <LogOut size={16} />
+                    <span>Sign out</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    className="mobile-nav-btn mobile-nav-btn-secondary"
+                    href={authRoutes.login}
+                    onClick={() => setMenu(false)}
+                  >
+                    <span>Sign in</span>
+                  </Link>
+                  <Link
+                    className="mobile-nav-btn mobile-nav-btn-primary"
+                    href={authRoutes.signup}
+                    onClick={() => setMenu(false)}
+                  >
+                    <span>Join free</span>
+                    <ArrowRight size={14} />
+                  </Link>
+                </>
+              )}
+            </div>
+          </nav>
+        </>
+      )}
+      <ProfileLightboxModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        sessionData={session.data}
+      />
+    </header>
+  );
+}
+export function SiteFooter() {
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const readerHome = session.data ? "/dashboard" : "/";
+  return (
+    <footer className="site-footer">
+      <div className="footer-inner">
+        <div className="footer-brand-block">
+          <Logo compact href={readerHome} />
+          <p className="footer-note">
+            A calmer way to keep up.
+            <br />
+            Aurikrex Bytes — what matters.
+          </p>
+          <p className="footer-founder">
+            A product of Aurikrex, founded by Korede Omotosho
+          </p>
+          <div className="footer-socials-wrap">
+            <span className="footer-socials-label">Follow Aurikrex Bytes</span>
+            <div className="footer-socials" aria-label="Aurikrex Bytes social links">
+              <a
+              href="https://instagram.com/falcon.omotosho"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Instagram"
+            >
+              <Instagram size={16} />
+            </a>
+            <a
+              href="https://www.tiktok.com/@falcon.omotosho"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="TikTok"
+            >
+              <TikTokBrandIcon />
+            </a>
+            <a
+              href="https://x.com/aurikrex"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Twitter X"
+            >
+              <XBrandIcon />
+            </a>
+            <a
+              href="https://www.linkedin.com/in/falcon-omotosho"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="LinkedIn"
+            >
+              <Linkedin size={16} />
+            </a>
+            <a
+              href="https://www.facebook.com/share/1SsFXC4mZP/"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Facebook"
+            >
+              <Facebook size={16} />
+              </a>
+            </div>
+          </div>
+        </div>
+        <div className="footer-columns-pair">
+          <div className="footer-links">
+            <span>Explore</span>
+            <Link href={readerHome}>Today's Bytes</Link>
+            <Link href="/archive">All Bytes</Link>
+            <Link href="/how-it-works">How it works</Link>
+          </div>
+          <div className="footer-links">
+            <span>Support</span>
+            <Link href="/help">Help center</Link>
+            <Link href="/contact">Contact</Link>
+            <Link href="/privacy">Privacy</Link>
+            <Link href="/terms">Terms</Link>
+          </div>
+        </div>
+      </div>
+      <div className="footer-bottom">
+        <span>&copy; {new Date().getFullYear()} Aurikrex Bytes.</span>{" "}
+        <span className="footer-tagline">Made for the signal-seekers.</span>
+      </div>
+    </footer>
+  );
+}
+function MobileBottomNav() {
+  const [location] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const signedIn = Boolean(session.data);
+  const isDiscover = location === "/dashboard" || location.startsWith("/post/");
+  const isArchive = location.startsWith("/archive");
+  const isProfile = location === "/profile";
+
+  // Guests never see the bottom bar; all of their navigation lives in the menu.
+  if (!signedIn) return null;
+
+  return (
+    <nav
+      className="px-mobile-bottom-nav"
+      aria-label="Mobile quick navigation"
+      style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
+    >
+      <Link href="/dashboard" className={"px-bottom-tab " + (isDiscover ? "active" : "")}>
+        <Sparkles size={18} strokeWidth={1.9} />
+        <span>Discover</span>
+      </Link>
+      <Link href="/archive" className={"px-bottom-tab " + (isArchive ? "active" : "")}>
+        <Search size={18} strokeWidth={1.9} />
+        <span>All Bytes</span>
+      </Link>
+      <Link href="/profile" className={"px-bottom-tab " + (isProfile ? "active" : "")}>
+        <User size={18} strokeWidth={1.9} />
+        <span>Profile</span>
+      </Link>
+    </nav>
+  );
+}
+
+function PushPromptListener() {
+  const [showPrompt, setShowPrompt] = useState(false);
+  useEffect(() => {
+    const onTrigger = () => {
+      if (shouldShowPushPrompt()) {
+        setShowPrompt(true);
+      }
+    };
+    window.addEventListener("aurikrex:trigger-push-prompt", onTrigger);
+    return () => window.removeEventListener("aurikrex:trigger-push-prompt", onTrigger);
+  }, []);
+
+  return <PushPromptSheet isOpen={showPrompt} onClose={() => setShowPrompt(false)} />;
+}
+
+export function PublicLayout({
+  children,
+  seo,
+}: {
+  children: ReactNode;
+  seo?: ComponentProps<typeof Seo>;
+}) {
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const pending = session.isLoading;
+  const guest = !pending && !session.data;
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.body.classList.toggle("px-no-bottom-nav", guest);
+    return () => document.body.classList.remove("px-no-bottom-nav");
+  }, [guest]);
+  return (
+    <>
+      <Seo
+        {...(seo || {
+          title: "Aurikrex Bytes — What matters in tech",
+          description:
+            "A daily curated technology briefing with the context behind what matters.",
+          path: "/",
+        })}
+      />
+      <div className={`px-app-shell${guest ? " px-app-shell-topnav" : ""}${pending ? " px-app-shell-pending" : ""}`}>
+        <SiteHeader />
+        <div className="px-app-main">
+          {children}
+          <SiteFooter />
+        </div>
+      </div>
+      <MobileBottomNav />
+      <PushPromptListener />
+    </>
+  );
+}
+function ShareButton({ post }: { post: any }) {
+  const [open, setOpen] = useState(false);
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const requireSignup = () => {
+    if (session.isLoading) return false;
+    if (!session.data) {
+      const returnTo = `/post/${post.id}`;
+      rememberAuthReturnTo(returnTo);
+      navigate(authSignupWithReturnTo(returnTo));
+      return false;
+    }
+    return true;
+  };
+  const shareUrl = `https://www.bytes.aurikrex.com/post/${post.id}`;
+  const share = async () => {
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      const payload: ShareData = { title: post.headline, text: post.headline, url: shareUrl };
+      
+      try {
+        if (post.imageUrl && navigator.canShare) {
+          // Resize to a reasonable social card size
+          const imageUrl = post.imageUrl.includes("res.cloudinary.com")
+            ? post.imageUrl.replace("/upload/", "/upload/w_1200,h_630,c_fill,q_auto,f_auto/")
+            : post.imageUrl;
+            
+          const response = await fetch(imageUrl);
+          const blob = await response.blob();
+          const file = new File([blob], `post-${post.id}.jpg`, { type: blob.type || "image/jpeg" });
+          
+          if (navigator.canShare({ files: [file] })) {
+            payload.files = [file];
+          }
+        }
+      } catch (e) {
+        console.warn("Could not attach share image:", e);
+      }
+
+      try {
+        await navigator.share(payload);
+      } catch (error) {
+        if ((error as DOMException).name !== "AbortError") setOpen(true);
+      }
+      return;
+    }
+    setOpen(value => !value);
+  };
+  const copy = async () => {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(shareUrl);
+      else {
+        const input = document.createElement("textarea");
+        input.value = shareUrl;
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        input.remove();
+      }
+      toast.success("Link copied");
+      setOpen(false);
+    } catch {
+      toast.error("Copy failed — use the share link directly");
+    }
+  };
+  return <div className="share-control" onClick={e => { e.preventDefault(); e.stopPropagation(); }}>
+    <button type="button" className="engagement-button" onClick={e => { e.preventDefault(); e.stopPropagation(); if (requireSignup()) void share(); }} aria-label="Share post" title="Share post"><Share2 size={15} /></button>
+    {open && <div className="share-menu" onClick={e => e.stopPropagation()}><button type="button" onClick={e => { e.preventDefault(); void copy(); }}><Check size={14} /> Copy link</button><a href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(post.headline)}&url=${encodeURIComponent(shareUrl)}`} target="_blank" rel="noreferrer">Share to X</a><a href={shareUrl} target="_blank" rel="noreferrer">Open post</a></div>}
+  </div>;
+}
+
+function FireReactionIcon({ active }: { active: boolean }) {
+  const gradientId = `fire-reaction-${useId().replace(/:/g, "")}`;
+  return (
+    <svg className="fire-reaction-mark" viewBox="0 0 24 24" aria-hidden="true">
+      {active && (
+        <defs>
+          <linearGradient id={gradientId} x1="12" y1="22" x2="12" y2="2" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#1d4ed8" />
+            <stop offset="0.5" stopColor="#7c3aed" />
+            <stop offset="1" stopColor="#f6c85f" />
+          </linearGradient>
+        </defs>
+      )}
+      <path
+        d="M12 2.25c.32 2.14-.2 3.65-1.64 5.08-1.15 1.14-2.61 2.24-2.61 4.48 0 1.24.54 2.37 1.4 3.16-.06-1.78.73-3.17 2.17-4.38.93-.79 1.54-1.71 1.55-3.02 2.25 1.62 4.6 4.37 4.6 7.35 0 1.03-.24 1.99-.68 2.85.57-.29 1.11-.71 1.57-1.22-.16 3.89-2.86 6.53-6.36 6.53-4.1 0-6.9-2.73-6.9-6.58 0-3.3 1.9-5.72 4.01-7.81C10.68 6.98 11.51 5.13 12 2.25Z"
+        fill={active ? `url(#${gradientId})` : "none"}
+        stroke={active ? "none" : "currentColor"}
+        strokeWidth={active ? 0 : 1.5}
+        strokeLinejoin="round"
+      />
+      {active && (
+        <path
+          d="M12.2 11.35c.86 1.03 1.45 2.12 1.45 3.48 0 1.26-.63 2.27-1.66 2.93-.9-.64-1.4-1.57-1.4-2.58 0-1.45.86-2.56 1.61-3.83Z"
+          fill="#fff2be"
+        />
+      )}
+    </svg>
+  );
+}
+
+function EngagementActions({ post, onBookmark }: { post: any; onBookmark?: (saved: boolean) => void }) {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const engagement = trpc.reader.engagement.useQuery({ postId: post.id }, { enabled: Boolean(session.data), retry: false });
+  const utils = trpc.useUtils();
+  const reaction = trpc.reader.toggleReaction.useMutation({
+    onMutate: async () => {
+      await utils.reader.engagement.cancel({ postId: post.id });
+      const previous = utils.reader.engagement.getData({ postId: post.id });
+      utils.reader.engagement.setData({ postId: post.id }, current => {
+        const next = current || { reactionCount: 0, hasReacted: false, isBookmarked: false };
+        return { ...next, hasReacted: !next.hasReacted, reactionCount: Math.max(0, next.reactionCount + (next.hasReacted ? -1 : 1)) };
+      });
+      return { previous };
+    },
+    onError: (_error, _input, context) => {
+      if (context?.previous) utils.reader.engagement.setData({ postId: post.id }, context.previous);
+    },
+    onSettled: () => void utils.reader.engagement.invalidate({ postId: post.id }),
+  });
+  const bookmark = trpc.reader.toggleBookmark.useMutation({
+    onSuccess: data => {
+      onBookmark?.(data.isBookmarked);
+      void utils.reader.engagement.invalidate({ postId: post.id });
+      void utils.reader.dashboard.invalidate();
+      void utils.reader.saved.invalidate();
+      if (data.isBookmarked && shouldShowPushPrompt()) {
+        window.dispatchEvent(new CustomEvent("aurikrex:trigger-push-prompt"));
+      }
+    },
+  });
+  const requireLogin = () => {
+    if (session.isLoading) return false;
+    if (!session.data) {
+      const returnTo = `/post/${post.id}`;
+      rememberAuthReturnTo(returnTo);
+      navigate(authSignupWithReturnTo(returnTo));
+      return false;
+    }
+    return true;
+  };
+  const state = { ...post, ...(engagement.data || {}) };
+  return <div className="engagement-actions" onClick={e => e.preventDefault()}>
+    <button className={`engagement-button fire-button ${state.hasReacted ? "active" : ""}`} disabled={reaction.isPending} onClick={() => requireLogin() && reaction.mutate({ postId: post.id })} aria-label={state.hasReacted ? "Remove Aurikrex fire reaction" : "Send Aurikrex fire reaction"} title="Aurikrex fire reaction"><FireReactionIcon active={Boolean(state.hasReacted)} /><span>{state.reactionCount || 0}</span></button>
+    <button className={`engagement-button ${state.isBookmarked ? "active" : ""}`} onClick={() => requireLogin() && bookmark.mutate({ postId: post.id })} aria-label={state.isBookmarked ? "Remove bookmark" : "Save post"} title={state.isBookmarked ? "Remove bookmark" : "Save post"}><Bookmark size={15} fill={state.isBookmarked ? "currentColor" : "none"} /></button>
+    <ShareButton post={state} />
+  </div>;
+}
+
+function FeedViewModeControl({
+  value,
+  onChange,
+}: {
+  value: FeedViewMode;
+  onChange: (value: FeedViewMode) => void;
+}) {
+  return (
+    <div className="feed-view-control" role="group" aria-label="Mobile feed view">
+      <span className="feed-view-label">Mobile view</span>
+      <div className="feed-view-options">
+        <button
+          type="button"
+          className={value === "editorial" ? "active" : ""}
+          aria-pressed={value === "editorial"}
+          title="Editorial view"
+          onClick={() => onChange("editorial")}
+        >
+          <svg viewBox="0 0 18 18" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="13" height="4" rx="1" />
+            <rect x="2.5" y="11.5" width="13" height="4" rx="1" />
+          </svg>
+          Editorial
+        </button>
+        <button
+          type="button"
+          className={value === "compact" ? "active" : ""}
+          aria-pressed={value === "compact"}
+          title="Compact view"
+          onClick={() => onChange("compact")}
+        >
+          <svg viewBox="0 0 18 18" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="5" height="5" rx="1" />
+            <rect x="10.5" y="2.5" width="5" height="5" rx="1" />
+            <rect x="2.5" y="10.5" width="5" height="5" rx="1" />
+            <rect x="10.5" y="10.5" width="5" height="5" rx="1" />
+          </svg>
+          Compact
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReadingViewPreviewCard({ post, compact = false, index = 0 }: { post: any; compact?: boolean; index?: number }) {
+  const previewPost = index === 0
+    ? post
+    : { ...post, headline: "The context behind the next important shift", body: "A second Byte preview keeps the useful detail visible without taking over the page." };
+  return (
+    <article className={`reading-preview-card ${compact ? "reading-preview-card-compact" : ""}`}>
+      <div className="reading-preview-image">
+        <img src={previewPost.imageUrl ? optimizedImage(previewPost.imageUrl, compact ? 240 : 480) : "/logo-512.png"} alt={previewPost.headline || "Aurikrex Bytes"} />
+      </div>
+      <div className="reading-preview-copy">
+        <span className="reading-preview-meta">Today · 4 min read</span>
+        <strong>{previewPost.headline}</strong>
+        <span>{excerpt(previewPost.body, compact ? 68 : 108)}</span>
+        <span className="reading-preview-action">Read story <ArrowRight size={11} /></span>
+      </div>
+      <div className="reading-preview-engagement" aria-hidden="true"><FireReactionIcon active={index === 0} /><span>{index === 0 ? "12" : "8"}</span><Bookmark size={11} /><Share2 size={11} /></div>
+    </article>
+  );
+}
+
+function ReadingViewOnboarding({
+  value,
+  post,
+  onChange,
+  onContinue,
+  onSkip,
+}: {
+  value: FeedViewMode;
+  post: any;
+  onChange: (value: FeedViewMode) => void;
+  onContinue: () => void;
+  onSkip: () => void;
+}) {
+  const options: Array<{ mode: FeedViewMode; title: string; description: string }> = [
+    { mode: "editorial", title: "Editorial", description: "Best for focused reading and the full publication experience." },
+    { mode: "compact", title: "Compact", description: "Best for scanning more stories quickly while keeping the useful detail." },
+  ];
+  return (
+    <section className="reading-onboarding" aria-labelledby="reading-onboarding-title">
+      <div className="reading-onboarding-intro">
+        <span className="eyebrow">A better way to browse</span>
+        <h2 id="reading-onboarding-title">Choose your reading view</h2>
+        <p>Pick the rhythm that suits your morning. You can change it any time from the briefing header.</p>
+      </div>
+      <div className="reading-onboarding-options" role="radiogroup" aria-label="Reading view options">
+        {options.map(option => {
+          const selected = value === option.mode;
+          return (
+            <button
+              key={option.mode}
+              type="button"
+              className={`reading-onboarding-option ${selected ? "selected" : ""}`}
+              role="radio"
+              aria-checked={selected}
+              onClick={() => onChange(option.mode)}
+            >
+              <div className="reading-onboarding-option-head">
+                <div><span className="reading-onboarding-option-kicker">{option.mode === "editorial" ? "One Byte at a time" : "More signal per screen"}</span><h3>{option.title}</h3></div>
+                <span className="reading-onboarding-check" aria-hidden="true">{selected ? <Check size={15} /> : null}</span>
+              </div>
+              <div className={`reading-preview reading-preview-${option.mode}`}>
+                <ReadingViewPreviewCard post={post} compact={option.mode === "compact"} />
+                {option.mode === "compact" && <ReadingViewPreviewCard post={post} compact index={1} />}
+              </div>
+              <p>{option.description}</p>
+            </button>
+          );
+        })}
+      </div>
+      <div className="reading-onboarding-actions">
+        <button type="button" className="button" onClick={onContinue}>Continue <ArrowRight size={15} /></button>
+        <button type="button" className="text-link" onClick={onSkip}>Choose later</button>
+      </div>
+    </section>
+  );
+}
+
+function getReadPostIds(): Set<number> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem("aurikrex_read_posts");
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markPostAsRead(id: number) {
+  if (typeof window === "undefined" || !id) return;
+  try {
+    const set = getReadPostIds();
+    set.add(id);
+    localStorage.setItem("aurikrex_read_posts", JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
+function TodayCompletionCard({
+  streak = 1,
+  readCount = 0,
+  totalCount = 0,
+}: {
+  streak?: number;
+  readCount?: number;
+  totalCount?: number;
+}) {
+  const isFullyRead = totalCount > 0 && readCount >= totalCount;
+
+  useEffect(() => {
+    if (shouldShowPushPrompt()) {
+      const timer = setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("aurikrex:trigger-push-prompt"));
+      }, 700);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  const handleShare = () => {
+    const text = `I just completed today's tech briefing on Aurikrex Bytes! ${streak}-day streak active.`;
+    const url = "https://www.bytes.aurikrex.com/";
+    if (typeof navigator !== "undefined" && navigator.share) {
+      navigator.share({ title: "Aurikrex Bytes Briefing Complete", text, url }).catch(() => undefined);
+    } else if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(`${text} ${url}`);
+      toast.success("Streak text copied to clipboard!");
+    }
+  };
+
+  const handleFinishBriefing = () => {
+    const firstUnread = document.querySelector(".post-card[data-read='false'], .post-card:not(.is-read)");
+    if (firstUnread) {
+      firstUnread.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
+  return (
+    <div
+      className={`today-completion-card ${isFullyRead ? "is-completed" : "is-uncompleted"}`}
+      role="region"
+      aria-label="Today's briefing completion status"
+    >
+      {/* Vector Animated Illustration Area with ambient circular glow */}
+      <div className="today-completion-art">
+        <EndOfFeedIllustration isFullyRead={isFullyRead} />
+      </div>
+
+      {/* Pill Badge */}
+      <div className={`today-completion-badge ${isFullyRead ? "badge-completed" : "badge-uncompleted"}`}>
+        {isFullyRead ? (
+          <>
+            <CheckCircle2 size={14} strokeWidth={2.5} />
+            <span>DAILY BRIEFING COMPLETE</span>
+          </>
+        ) : (
+          <>
+            <BookOpen size={14} strokeWidth={2.5} />
+            <span>DAILY BRIEFING</span>
+          </>
+        )}
+      </div>
+
+      {/* Headline */}
+      <h3 className="today-completion-title">
+        {isFullyRead ? (
+          <>
+            Today&apos;s Bytes: <span className="today-completion-highlight">Complete.</span>
+          </>
+        ) : (
+          <>
+            Don&apos;t miss <span className="today-completion-highlight">the rest.</span>
+          </>
+        )}
+      </h3>
+
+      {/* Subtitle / Editorial Body */}
+      <p className="today-completion-subtitle">
+        {isFullyRead
+          ? `You've read all ${totalCount} Bytes in today's briefing. Stay curious. We'll be back tomorrow.`
+          : `Today's briefing isn't complete without you. Go back and catch the Bytes you missed.`}
+      </p>
+
+      {/* Streak Pill */}
+      <div className="today-completion-streak">
+        <span className="streak-fire" aria-hidden="true"><Flame size={15} fill="currentColor" /></span>
+        <span className="streak-divider">|</span>
+        <span className="streak-text">{Math.max(1, streak || 1)}-Day Learning Streak</span>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="today-completion-actions">
+        {isFullyRead ? (
+          <button type="button" className="today-completion-btn-primary" onClick={handleShare}>
+            <Share2 size={16} />
+            <span>Share My Streak</span>
+            <ArrowRight size={15} />
+          </button>
+        ) : (
+          <button type="button" className="today-completion-btn-primary" onClick={handleFinishBriefing}>
+            <ArrowUp size={16} />
+            <span>Finish Today&apos;s Briefing</span>
+          </button>
+        )}
+        <Link href="/archive" className="today-completion-btn-secondary">
+          <span>Explore Archive</span>
+          <ArrowRight size={15} />
+        </Link>
+      </div>
+
+      {/* Arrival Footer */}
+      <div className="today-completion-footer">
+        <Clock3 size={14} />
+        <span>Your next briefing arrives tomorrow at 8:00 AM.</span>
+      </div>
+    </div>
+  );
+}
+
+function inferPostTopicAndSources(post: any) {
+  const hay = `${post?.headline || ""} ${post?.body || ""}`.toLowerCase();
+  if (hay.includes("nvidia") || hay.includes("gpu") || hay.includes("chip") || hay.includes("semiconductor")) {
+    return {
+      topic: "AI & Hardware",
+      sources: [
+        { code: "FT", name: "Financial Times", domain: "ft.com" },
+        { code: "R", name: "Reuters Tech", domain: "reuters.com" },
+        { code: "S", name: "SemiAnalysis", domain: "semianalysis.com" },
+        { code: "B", name: "Bloomberg Tech", domain: "bloomberg.com" },
+      ],
+    };
+  }
+  if (hay.includes("apple") || hay.includes("iphone") || hay.includes("ios") || hay.includes("mac")) {
+    return {
+      topic: "Apple & Silicon",
+      sources: [
+        { code: "B", name: "Bloomberg", domain: "bloomberg.com" },
+        { code: "V", name: "The Verge", domain: "theverge.com" },
+        { code: "A", name: "Ars Technica", domain: "arstechnica.com" },
+        { code: "R", name: "Reuters", domain: "reuters.com" },
+      ],
+    };
+  }
+  if (hay.includes("google") || hay.includes("gemini") || hay.includes("deepmind") || hay.includes("android")) {
+    return {
+      topic: "Google & AI",
+      sources: [
+        { code: "G", name: "Google Research", domain: "research.google" },
+        { code: "V", name: "The Verge", domain: "theverge.com" },
+        { code: "T", name: "TechCrunch", domain: "techcrunch.com" },
+        { code: "W", name: "Wired", domain: "wired.com" },
+      ],
+    };
+  }
+  if (hay.includes("security") || hay.includes("cyber") || hay.includes("breach") || hay.includes("zero-day")) {
+    return {
+      topic: "Cybersecurity",
+      sources: [
+        { code: "K", name: "KrebsOnSecurity", domain: "krebsonsecurity.com" },
+        { code: "B", name: "BleepingComputer", domain: "bleepingcomputer.com" },
+        { code: "A", name: "Ars Technica", domain: "arstechnica.com" },
+        { code: "R", name: "Reuters", domain: "reuters.com" },
+      ],
+    };
+  }
+  if (hay.includes("cloud") || hay.includes("aws") || hay.includes("microsoft") || hay.includes("azure")) {
+    return {
+      topic: "Cloud & Infra",
+      sources: [
+        { code: "R", name: "The Register", domain: "theregister.com" },
+        { code: "B", name: "Bloomberg", domain: "bloomberg.com" },
+        { code: "I", name: "The Information", domain: "theinformation.com" },
+        { code: "C", name: "CNCF Dispatch", domain: "cncf.io" },
+      ],
+    };
+  }
+  if (hay.includes("startup") || hay.includes("funding") || hay.includes("venture") || hay.includes("raise")) {
+    return {
+      topic: "Venture & Startups",
+      sources: [
+        { code: "T", name: "TechCrunch", domain: "techcrunch.com" },
+        { code: "I", name: "The Information", domain: "theinformation.com" },
+        { code: "F", name: "Forbes Tech", domain: "forbes.com" },
+        { code: "P", name: "PitchBook", domain: "pitchbook.com" },
+      ],
+    };
+  }
+  return {
+    topic: "AI & Tech Signal",
+    sources: [
+      { code: "R", name: "Reuters Tech", domain: "reuters.com" },
+      { code: "FT", name: "Financial Times", domain: "ft.com" },
+      { code: "A", name: "Ars Technica", domain: "arstechnica.com" },
+      { code: "T", name: "TechCrunch", domain: "techcrunch.com" },
+    ],
+  };
+}
+
+function PostCard({
+  post,
+  featured = false,
+  isRead = false,
+}: {
+  post: any;
+  featured?: boolean;
+  isRead?: boolean;
+}) {
+  const { topic, sources } = useMemo(() => inferPostTopicAndSources(post), [post?.headline, post?.body]);
+  return (
+    <article
+      className={`post-card ${featured ? "post-card-featured" : ""} ${isRead ? "is-read" : ""}`}
+      data-read={isRead ? "true" : "false"}
+      data-post-id={post.id}
+    >
+      <ProtectedLink
+        href={`/post/${post.id}`}
+        className="post-card-link"
+        onClick={() => markPostAsRead(post.id)}
+      >
+        <div className="card-image">
+          {post.imageUrl ? (
+            <img
+              src={optimizedImage(post.imageUrl, featured ? 900 : 600)}
+              alt={post.headline}
+              loading="lazy"
+              decoding="async"
+              onError={event => {
+                event.currentTarget.src = "/logo-512.png";
+                event.currentTarget.classList.add("px-brand-cover-mark");
+              }}
+            />
+          ) : (
+            <div className="image-placeholder px-brand-cover-wrap">
+              <img src="/logo-512.png" alt="Aurikrex Bytes" className="px-brand-cover-mark" />
+              <span>Aurikrex Bytes</span>
+            </div>
+          )}
+        </div>
+        <div className="post-card-body">
+          <div className="post-meta">
+            <span className="px-card-topic-pill">{featured ? `Lead Story · ${topic}` : topic}</span>
+            <span className="post-meta-info">
+              <span className="post-meta-date">{formatDate(post.publishedTime)}</span>
+              <span className="post-meta-dot" aria-hidden="true">·</span>
+              <span className="post-meta-readtime">4 min read</span>
+              {isRead && (
+                <span className="post-card-read-badge">
+                  <span className="post-meta-dot" aria-hidden="true">·</span>
+                  <Check size={13} /> Read
+                </span>
+              )}
+            </span>
+          </div>
+          <h2>{post.headline}</h2>
+          <p><FormattedInlineText text={excerpt(post.body, featured ? 220 : 155)} /></p>
+          <span className="read-more px-featured-cta">
+            {isRead ? "Read briefing again" : "Read full briefing"} <ArrowRight size={14} />
+          </span>
+        </div>
+      </ProtectedLink>
+      <div className="post-card-actions">
+        <ProtectedLink
+          href={`/post/${post.id}`}
+          className="px-card-synthesis-row"
+          onClick={() => markPostAsRead(post.id)}
+        >
+          <div className="px-source-avatars" aria-hidden="true">
+            {sources.slice(0, 3).map((src, idx) => (
+              <span key={idx} className={`px-source-avatar px-source-avatar-${idx}`}>{src.code}</span>
+            ))}
+          </div>
+          <span className="px-sources-count-label">
+            {sources.length} sources
+          </span>
+        </ProtectedLink>
+        <EngagementActions post={post} />
+      </div>
+    </article>
+  );
+}
+function PublishedStoryCarousel({ featured = false }: { featured?: boolean }) {
+  const archive = trpc.publicPosts.carousel.useQuery();
+  const posts = useMemo(
+    () =>
+      [...(archive.data?.posts ?? [])].sort((a, b) => {
+        const publishedTimeDifference =
+          new Date(b.publishedTime ?? 0).getTime() - new Date(a.publishedTime ?? 0).getTime();
+        return publishedTimeDifference || b.id - a.id;
+      }).slice(0, 12),
+    [archive.data?.posts],
+  );
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (activeIndex >= posts.length && posts.length > 0) setActiveIndex(0);
+  }, [activeIndex, posts.length]);
+
+  useEffect(() => {
+    if (paused || posts.length < 2) return;
+    const rotation = window.setInterval(() => {
+      setActiveIndex(current => {
+        const candidates = posts.map((_, index) => index).filter(index => index !== current);
+        return candidates[Math.floor(Math.random() * candidates.length)] ?? current;
+      });
+    }, 3000);
+    return () => window.clearInterval(rotation);
+  }, [paused, posts.length]);
+
+  useEffect(() => () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+  }, []);
+
+  const pauseForInteraction = () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    setPaused(true);
+  };
+  const resumeAfterInteraction = () => {
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = setTimeout(() => setPaused(false), 5500);
+  };
+
+  const slides = posts;
+
+  if (!slides.length && archive.isLoading) return null;
+
+  if (!slides.length) {
+    return (
+      <div className="sample-card sample-card-carousel sample-card-empty" aria-label="Latest published Bytes">
+        <div className="sample-card-empty-copy">
+          <span className="eyebrow">Latest published Byte</span>
+          <h2>{archive.isLoading ? "Loading the latest Byte…" : "No published Bytes yet"}</h2>
+          <p>The newest published story will appear here as soon as it is available.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`sample-card sample-card-carousel ${paused ? "is-paused" : ""}`}
+      onPointerEnter={posts.length > 1 ? pauseForInteraction : undefined}
+      onPointerLeave={posts.length > 1 ? resumeAfterInteraction : undefined}
+      onPointerDown={posts.length > 1 ? pauseForInteraction : undefined}
+      onPointerUp={posts.length > 1 ? resumeAfterInteraction : undefined}
+      aria-label={posts.length > 1 ? "Latest published Bytes" : "Example Byte preview"}
+    >
+      <div className="sample-card-slides">
+        {slides.map((post: any, index: number) => {
+          const isActive = index === activeIndex;
+          return (
+            <div key={post.id || index} className={`sample-card-slide ${isActive ? "is-active" : ""}`} aria-hidden={!isActive}>
+              <PostCard post={post} featured={featured} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function getWeekDays(lastActiveDate: string | null | undefined, currentStreak: number, timeZone: string) {
+  const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
+  const today = new Date(`${todayKey}T12:00:00Z`);
+  const startOfWeek = new Date(today);
+  startOfWeek.setUTCDate(today.getUTCDate() - today.getUTCDay());
+  const streakEnd = lastActiveDate || todayKey;
+  const streakEndDate = new Date(`${streakEnd}T12:00:00Z`);
+  const streakStartDate = new Date(streakEndDate);
+  streakStartDate.setUTCDate(streakEndDate.getUTCDate() - Math.max(currentStreak - 1, 0));
+  const dayFormatter = new Intl.DateTimeFormat("en", { weekday: "narrow", timeZone: "UTC" });
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(startOfWeek);
+    date.setUTCDate(startOfWeek.getUTCDate() + index);
+    const key = date.toISOString().slice(0, 10);
+    return {
+      key,
+      label: dayFormatter.format(date),
+      dateLabel: new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date),
+      isToday: key === todayKey,
+      isFuture: key > todayKey,
+      isActive: key >= streakStartDate.toISOString().slice(0, 10) && key <= streakEnd && key <= todayKey,
+    };
+  });
+}
+function EmptyToday() {
+  return (
+    <div className="empty-state">
+      <div className="empty-icon">
+        <Clock3 size={24} />
+      </div>
+      <span className="eyebrow">The next edition is in progress</span>
+      <h2>Next drop at 8:00 AM</h2>
+      <p>Come back in the morning for the stories worth your attention.</p>
+      <Link className="button button-outline" href="/archive">
+        Browse the archive <ArrowRight size={15} />
+      </Link>
+    </div>
+  );
+}
+
+
+function FeaturePillarsGrid() {
+  const pillars = [
+    {
+      icon: <Bot size={22} />,
+      badge: "AI INTELLIGENCE",
+      title: "Falke AI Follow-Up",
+      description: "Ask follow-up questions directly on any story. Gets live web search context and synthesizes clear technical answers."
+    },
+    {
+      icon: <Flame size={22} />,
+      badge: "HABIT TRACKING",
+      title: "Daily Reading Streaks",
+      description: "Build a lasting 5-minute morning ritual. Gain streak flames and track your daily learning consistency."
+    },
+    {
+      icon: <Layers size={22} />,
+      badge: "CUSTOM READING",
+      title: "Dual Reading Modes",
+      description: "Switch seamlessly between immersive Editorial story cards and rapid Compact grid scanning on desktop & mobile."
+    },
+    {
+      icon: <Bell size={22} />,
+      badge: "AUTOMATED DROPS",
+      title: "Morning & Evening Briefings",
+      description: "Get clean web push drops at 8:00 AM and 10:00 PM. Stay informed without doom-scrolling social media feeds."
+    }
+  ];
+
+  return (
+    <section className="section container landing-pillars">
+      <div className="section-heading text-center">
+        <div>
+          <span className="eyebrow">Everything you need in tech</span>
+          <h2>Built for signal. Designed for focus.</h2>
+          <p className="section-subtitle">Four core pillars that transform how you stay ahead in technology.</p>
+        </div>
+      </div>
+      <div className="pillars-grid">
+        {pillars.map(p => (
+          <div key={p.title} className="pillar-card">
+            <div className="pillar-icon-wrap">{p.icon}</div>
+            <span className="pillar-badge">{p.badge}</span>
+            <h3>{p.title}</h3>
+            <p>{p.description}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function NoiseVsSignalSection() {
+  const [activeTab, setActiveTab] = useState<"signal" | "noise">("signal");
+
+  const signalPoints = [
+    {
+      icon: <Layers size={18} className="text-blue" />,
+      title: "5 to 10 Curated Stories Daily",
+      desc: "Only high-signal tech developments, zero fluff or repetitive posts."
+    },
+    {
+      icon: <Workflow size={18} className="text-blue" />,
+      title: "Verified 3-Part Briefs",
+      desc: "Clear structure: The Lead, Why It Matters, and Industry Outlook."
+    },
+    {
+      icon: <Clock3 size={18} className="text-blue" />,
+      title: "Finished in 5 Quiet Minutes",
+      desc: "Predictable morning & evening drops (8 AM & 10 PM)."
+    },
+    {
+      icon: <ShieldCheck size={18} className="text-blue" />,
+      title: "100% Ad-Free & Distraction-Free",
+      desc: "Zero sponsored posts, clickbait headlines, or algorithmic rage bait."
+    },
+    {
+      icon: <Sparkles size={18} className="text-blue" />,
+      title: "Built-in Falke AI Assistance",
+      desc: "Ask live follow-up questions directly on any story in real time."
+    },
+  ];
+
+  const noisePoints = [
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "100+ Unverified Feed Items",
+      desc: "Overwhelming noise, duplicate rumors, and unvetted hot takes."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "Clickbait Headline Loops",
+      desc: "Manipulative headlines designed to generate outrage clicks."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "Endless Infinite Scrolling",
+      desc: "Addictive design loops that waste 45+ minutes of your day."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "Intrusive Ads & Sponsored Content",
+      desc: "Promoted ads disguised as authentic technical recommendations."
+    },
+    {
+      icon: <XCircle size={18} className="text-red" />,
+      title: "No Technical Depth or Context",
+      desc: "Shallow surface text with no interactive follow-up capability."
+    },
+  ];
+
+  return (
+    <section className="section container noise-signal-section">
+      <div className="section-heading text-center">
+        <div>
+          <span className="eyebrow">The Difference</span>
+          <h2>Why traditional tech feeds fail you</h2>
+        </div>
+      </div>
+
+      <div className="mobile-comparison-toggle" role="tablist" aria-label="Choose comparison view">
+        <button
+          type="button"
+          id="comparison-tab-signal"
+          className={activeTab === "signal" ? "active" : ""}
+          role="tab"
+          aria-selected={activeTab === "signal"}
+          aria-controls="comparison-panel-signal"
+          onClick={() => setActiveTab("signal")}
+        >
+          <CheckCircle2 size={15} className="text-blue" /> Aurikrex Bytes
+        </button>
+        <button
+          type="button"
+          id="comparison-tab-noise"
+          className={activeTab === "noise" ? "active" : ""}
+          role="tab"
+          aria-selected={activeTab === "noise"}
+          aria-controls="comparison-panel-noise"
+          onClick={() => setActiveTab("noise")}
+        >
+          <XCircle size={15} className="text-red" /> Social Feeds
+        </button>
+      </div>
+
+      <div className="comparison-container" role="group" aria-label="Aurikrex Bytes versus social feeds">
+        <div
+          id="comparison-panel-noise"
+          className={`comparison-col comparison-noise ${activeTab === "noise" ? "show-mobile" : ""}`}
+          role="tabpanel"
+          aria-labelledby="comparison-tab-noise"
+        >
+          <div className="col-header">
+            <div className="col-header-badge red-badge">
+              <XCircle size={14} /> TRADITIONAL FEEDS
+            </div>
+            <h3>Social Media Feeds</h3>
+            <p>Clickbait & Algorithmic Noise</p>
+          </div>
+          <div className="structured-points-list">
+            {noisePoints.map((pt, idx) => (
+              <div key={idx} className="structured-point-card point-noise">
+                <div className="point-icon">{pt.icon}</div>
+                <div className="point-body">
+                  <h4>{pt.title}</h4>
+                  <p>{pt.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div
+          id="comparison-panel-signal"
+          className={`comparison-col comparison-signal ${activeTab === "signal" ? "show-mobile" : ""}`}
+          role="tabpanel"
+          aria-labelledby="comparison-tab-signal"
+        >
+          <div className="col-header">
+            <div className="col-header-badge blue-badge">
+              <CheckCircle2 size={14} /> 5-MINUTE DAILY SIGNAL
+            </div>
+            <h3>Aurikrex Bytes</h3>
+            <p>Focused Daily Curation + Falke AI</p>
+          </div>
+          <div className="structured-points-list">
+            {signalPoints.map((pt, idx) => (
+              <div key={idx} className="structured-point-card point-signal">
+                <div className="point-icon">{pt.icon}</div>
+                <div className="point-body">
+                  <h4>{pt.title}</h4>
+                  <p>{pt.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FloatingMobileCta() {
+  const [visible, setVisible] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 450 && !dismissed) {
+        setVisible(true);
+      } else {
+        setVisible(false);
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [dismissed]);
+
+  if (!visible) return null;
+
+  return (
+    <div className="floating-mobile-cta">
+      <span className="floating-mobile-cta-copy">Get your 8 AM tech briefing</span>
+      <div className="floating-mobile-cta-actions">
+        <Link href="/signup" className="button button-small">
+          Join Free <ArrowRight size={14} />
+        </Link>
+        <button
+          type="button"
+          className="floating-mobile-cta-dismiss"
+          aria-label="Dismiss briefing sign-up banner"
+          onClick={() => {
+            setDismissed(true);
+            setVisible(false);
+          }}
+        >
+          <X size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function Home() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  useEffect(() => {
+    if (session.data) navigate("/dashboard");
+  }, [navigate, session.data]);
+  return (
+    <PublicLayout>
+      <main className="landing-page">
+        <section className="hero container landing-hero-grid">
+          <div className="hero-copy">
+            <span className="eyebrow">
+              <span className="live-dot" />
+              The 5-Minute Daily Tech Briefing
+            </span>
+            <h1>
+              Aurikrex Bytes —<br />
+              <em>what matters.</em>
+            </h1>
+            <p>
+              Five to ten considered technology stories curated with AI context. A focused morning ritual delivered at 8:00 AM.
+            </p>
+            <div className="hero-actions">
+              <Link className="button button-hero" href="/signup">
+                Start reading free <ArrowRight size={16} />
+              </Link>
+              <Link className="text-link" href="/archive">
+                Browse archive <ArrowRight size={15} />
+              </Link>
+            </div>
+            <div className="hero-trust-badges">
+              <span><Check size={13} className="check-icon" /> Free forever</span>
+              <span><Check size={13} className="check-icon" /> 30-second sign up</span>
+              <span><Check size={13} className="check-icon" /> No credit card</span>
+            </div>
+          </div>
+          <div className="hero-side-showcase">
+            <PublishedStoryCarousel featured={true} />
+          </div>
+        </section>
+
+        <FeaturePillarsGrid />
+
+        <section className="section container sample-section">
+          <div className="sample-copy">
+            <span className="eyebrow">A Byte, up close</span>
+            <h2>News you can actually use.</h2>
+            <p>
+              Each card gives you a clear headline, the useful context behind it, and a few quiet minutes to understand what matters.
+            </p>
+            <ProtectedLink className="text-link" href="/archive">
+              See the archive <ArrowRight size={15} />
+            </ProtectedLink>
+          </div>
+          <PublishedStoryCarousel />
+        </section>
+
+        <NoiseVsSignalSection />
+
+        <section className="manifesto">
+          <div className="container manifesto-inner">
+            <Sparkles size={24} />
+            <div>
+              <span className="eyebrow">The Bytes promise</span>
+              <h2>Make room for what matters.</h2>
+              <p>
+                Start tomorrow’s briefing with a free reader account, or explore the archive first.
+              </p>
+            </div>
+            <Link className="button" href="/signup">
+              Get started free <ArrowRight size={15} />
+            </Link>
+          </div>
+        </section>
+        <FloatingMobileCta />
+      </main>
+    </PublicLayout>
+  );
+}
+export function ReaderDashboard() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const utils = trpc.useUtils();
+  const [tab, setTab] = useState<"today" | "all">("today");
+  const [viewMode, setViewMode] = useState<FeedViewMode>(getInitialFeedViewMode);
+  const isMobileViewport = useIsMobileViewport();
+  const effectiveViewMode: FeedViewMode = isMobileViewport ? viewMode : "editorial";
+  const [preferenceHydrated, setPreferenceHydrated] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [dashboardSearch, setDashboardSearch] = useState("");
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const dashboard = trpc.reader.dashboard.useQuery(
+    { timeZone },
+    { enabled: Boolean(session.data), retry: false }
+  );
+  const savePreference = trpc.reader.setFeedPreference.useMutation();
+  const [readPostIds, setReadPostIds] = useState<Set<number>>(() => getReadPostIds());
+  const [showNicknamePrompt, setShowNicknamePrompt] = useState(false);
+
+  useEffect(() => {
+    if (session.isLoading || !session.data) return;
+    const user = session.data as any;
+    if (!user.nickname && typeof window !== "undefined") {
+      const dismissed = window.localStorage.getItem("aurikrex:nickname-prompt-dismissed");
+      if (!dismissed) {
+        setShowNicknamePrompt(true);
+      }
+    }
+  }, [session.data, session.isLoading]);
+
+  useEffect(() => {
+    const handleFocus = () => setReadPostIds(getReadPostIds());
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, []);
+
+  const data = dashboard.data;
+  const todayPosts = data?.todayPosts ?? [];
+  const todayReadCount = useMemo(
+    () => todayPosts.filter((p: any) => readPostIds.has(p.id)).length,
+    [todayPosts, readPostIds]
+  );
+  const [visibleAllCount, setVisibleAllCount] = useState(12);
+  const dashboardSentinelRef = useRef<HTMLDivElement | null>(null);
+  const rawPosts = tab === "today" ? todayPosts : data?.allPosts ?? [];
+  const posts = useMemo(() => {
+    if (!dashboardSearch.trim()) return rawPosts;
+    const q = dashboardSearch.toLowerCase();
+    return rawPosts.filter((p: any) =>
+      p.headline?.toLowerCase().includes(q) || p.body?.toLowerCase().includes(q)
+    );
+  }, [rawPosts, dashboardSearch]);
+  const visiblePosts = useMemo(
+    () => (tab === "all" ? posts.slice(0, visibleAllCount) : posts),
+    [tab, posts, visibleAllCount]
+  );
+  const hasMoreDashboardAll = tab === "all" && visibleAllCount < posts.length;
+
+  useEffect(() => {
+    setVisibleAllCount(12);
+  }, [tab, dashboardSearch]);
+
+  useEffect(() => {
+    const node = dashboardSentinelRef.current;
+    if (!node || !hasMoreDashboardAll) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleAllCount(prev => Math.min(prev + 12, posts.length));
+        }
+      },
+      { rootMargin: "360px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMoreDashboardAll, posts.length]);
+
+  useEffect(() => {
+    if (!session.isLoading && !session.data) navigate("/login");
+  }, [navigate, session.data, session.isLoading]);
+  useEffect(() => {
+    if (!dashboard.data || preferenceHydrated) return;
+    setViewMode(dashboard.data.reader.feedViewMode === "compact" ? "compact" : "editorial");
+    setShowOnboarding(!dashboard.data.reader.feedViewOnboardingCompleted);
+    setPreferenceHydrated(true);
+  }, [dashboard.data, preferenceHydrated]);
+  useEffect(() => {
+    window.localStorage.setItem(FEED_VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
+  const persistPreference = (nextMode: FeedViewMode, completeOnboarding: boolean) => {
+    const previousMode = viewMode;
+    setViewMode(nextMode);
+    if (completeOnboarding) setShowOnboarding(false);
+    savePreference.mutate(
+      { feedViewMode: nextMode, onboardingCompleted: completeOnboarding || Boolean(dashboard.data?.reader.feedViewOnboardingCompleted) },
+      {
+        onSuccess: () => {
+          if (completeOnboarding) setShowOnboarding(false);
+        },
+        onError: () => {
+          setViewMode(previousMode);
+          if (completeOnboarding) setShowOnboarding(true);
+          toast.error("Your reading preference could not be saved. Please try again.");
+        },
+        onSettled: () => void utils.reader.dashboard.invalidate({ timeZone }),
+      }
+    );
+  };
+  if (session.isLoading || (!session.data && !dashboard.error))
+    return <div className="route-loading">Opening your briefing…</div>;
+  const previewPost = posts[0] ?? data?.allPosts?.[0] ?? { headline: "The useful context behind what matters", body: "A considered look at the stories shaping the day.", imageUrl: null };
+  const firstName = (session.data as any)?.nickname || (data?.reader as any)?.nickname || data?.reader.name?.trim().split(/\s+/)[0] || "reader";
+  const weekDays = getWeekDays(data?.streak.lastActiveDate, data?.streak.currentStreak ?? 0, timeZone);
+  return (
+    <PublicLayout seo={{ title: "Your dashboard — Aurikrex Bytes", description: "Your daily Aurikrex Bytes briefing and reading streak.", path: "/dashboard", robots: "noindex,nofollow" }}>
+      <main className="container reader-dashboard">
+        <section className="dashboard-intro">
+          <div className="dashboard-welcome">
+            <span className="eyebrow"><span className="live-dot" /> Your reading desk</span>
+            <h1>Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}, {firstName}.</h1>
+            <p>Here’s the signal worth your attention today.</p>
+          </div>
+          <div className={`streak-card ${data?.streak.increased ? "streak-card-celebrate" : ""}`}>
+            <div className="streak-card-heading">
+              <div className="streak-card-heading-main">
+                <div className="streak-flame"><Flame size={20} fill="currentColor" /></div>
+                <div><strong>{data?.streak.currentStreak ?? 0}</strong><span>day streak</span></div>
+              </div>
+              <small>Best: {data?.streak.longestStreak ?? 0} days</small>
+            </div>
+            <div className="streak-week" aria-label="Current week reading activity">
+              {weekDays.map(day => (
+                <div className={`streak-day ${day.isActive ? "is-active" : ""} ${day.isToday ? "is-today" : ""} ${day.isFuture ? "is-future" : ""}`} key={day.key} title={`${day.dateLabel}${day.isActive ? " · Read" : " · Not read"}`}>
+                  <span>{day.label}</span>
+                  <i aria-hidden="true"><Flame size={13} fill="currentColor" /></i>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+        {isMobileViewport && (
+          <div className="dashboard-view-control">
+            <FeedViewModeControl value={viewMode} onChange={mode => persistPreference(mode, false)} />
+            <span className="feed-view-helper">Controls your mobile reading view</span>
+          </div>
+        )}
+        {showOnboarding && isMobileViewport && (
+          <ReadingViewOnboarding
+            value={viewMode}
+            post={previewPost}
+            onChange={setViewMode}
+            onContinue={() => persistPreference(viewMode, true)}
+            onSkip={() => persistPreference("editorial", true)}
+          />
+        )}
+        <section className="dashboard-feed">
+          <div className="section-heading dashboard-heading">
+            <div>
+              <span className="eyebrow"><Sparkles size={13} /> Discover Channel</span>
+              <h2>{tab === "today" ? "Today’s Bytes" : "All Bytes"}</h2>
+            </div>
+            <div className="dashboard-heading-tools">
+              <div className="reader-tabs" role="tablist" aria-label="Reader feed">
+                <button type="button" role="tab" aria-selected={tab === "today"} className={tab === "today" ? "active" : ""} onClick={() => setTab("today")}>Today</button>
+                <button type="button" role="tab" aria-selected={tab === "all"} className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All Bytes</button>
+              </div>
+            </div>
+          </div>
+          <div className="px-discover-controls">
+            {tab === "all" && (
+              <div className="search-wrap">
+                <Search size={18} />
+                <input
+                  value={dashboardSearch}
+                  onChange={e => setDashboardSearch(e.target.value)}
+                  placeholder="Search brands & topics (e.g. Apple, Google, AI, Nvidia)..."
+                  aria-label="Search all bytes"
+                />
+                {dashboardSearch && (
+                  <button onClick={() => setDashboardSearch("")} aria-label="Clear search">
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="brand-filter-chips" role="group" aria-label="Brand & trend quick filters">
+              {BRAND_TAGS.map(tag => {
+                const isActive = tag === "All" ? !dashboardSearch : dashboardSearch.toLowerCase() === tag.toLowerCase();
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    className={`brand-chip ${isActive ? "active" : ""}`}
+                    onClick={() => {
+                      const nextSearch = tag === "All" ? "" : tag;
+                      setDashboardSearch(nextSearch);
+                      if (nextSearch && tab === "today") {
+                        const matchesToday = todayPosts.some(
+                          (p: any) =>
+                            p.headline?.toLowerCase().includes(nextSearch.toLowerCase()) ||
+                            p.body?.toLowerCase().includes(nextSearch.toLowerCase())
+                        );
+                        if (!matchesToday) setTab("all");
+                      }
+                    }}
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {dashboard.isLoading ? (
+            <div className={`skeleton-grid skeleton-grid-${effectiveViewMode}`}><div /><div /><div /></div>
+          ) : posts.length ? (
+            <>
+              <div className={`post-grid post-grid-${effectiveViewMode}`}>
+                {visiblePosts.map((post: any, index: number) => (
+                  <PostCard
+                    key={post.id}
+                    post={post}
+                    featured={tab === "today" && index === 0}
+                    isRead={readPostIds.has(post.id)}
+                  />
+                ))}
+              </div>
+              {tab === "all" && posts.length > 0 && (
+                <div ref={dashboardSentinelRef} className="px-infinite-scroll-status" aria-live="polite">
+                  {hasMoreDashboardAll ? (
+                    <span className="px-infinite-loading-pill">
+                      <span className="px-infinite-dot" />
+                      <span>Scrolling more Bytes…</span>
+                    </span>
+                  ) : (
+                    <span className="px-infinite-end-label">
+                      All {posts.length} Bytes in feed loaded
+                    </span>
+                  )}
+                </div>
+              )}
+              {tab === "today" && (
+                <TodayCompletionCard
+                  streak={data?.streak.currentStreak}
+                  readCount={todayReadCount}
+                  totalCount={todayPosts.length}
+                />
+              )}
+            </>
+          ) : (
+            <EmptyToday />
+          )}
+        </section>
+      </main>
+      <NicknameOnboardingModal
+        isOpen={showNicknamePrompt}
+        onClose={() => {
+          setShowNicknamePrompt(false);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem("aurikrex:nickname-prompt-dismissed", "true");
+          }
+        }}
+        defaultName={session.data?.name || ""}
+        onSaved={() => {
+          setShowNicknamePrompt(false);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem("aurikrex:nickname-prompt-dismissed", "true");
+          }
+          utils.reader.session.invalidate();
+          utils.reader.dashboard.invalidate();
+        }}
+      />
+    </PublicLayout>
+  );
+}
+const BRAND_TAGS = ["All", "Apple", "Google", "AI", "Nvidia", "Microsoft", "Meta", "Amazon", "Startups", "Security", "Cloud"];
+
+export function Archive() {
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [accumulatedPosts, setAccumulatedPosts] = useState<any[]>([]);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const readPostIds = useMemo(() => getReadPostIds(), []);
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const savePreference = trpc.reader.setFeedPreference.useMutation();
+  const isMobileViewport = useIsMobileViewport();
+  const [viewMode, setViewMode] = useState<FeedViewMode>(getInitialFeedViewMode);
+  const effectiveViewMode: FeedViewMode = isMobileViewport ? viewMode : "editorial";
+  const changeViewMode = (mode: FeedViewMode) => {
+    setViewMode(mode);
+    window.localStorage.setItem(FEED_VIEW_MODE_KEY, mode);
+    savePreference.mutate({ feedViewMode: mode, onboardingCompleted: true });
+  };
+
+  const archive = trpc.publicPosts.archive.useQuery({
+    query,
+    page,
+    pageSize: 12,
+  });
+
+  useEffect(() => {
+    if (!archive.data?.posts) return;
+    if (page === 1) {
+      setAccumulatedPosts(archive.data.posts);
+    } else {
+      setAccumulatedPosts(prev => {
+        const seen = new Set(prev.map((p: any) => p.id));
+        const incoming = archive.data.posts.filter((p: any) => !seen.has(p.id));
+        return [...prev, ...incoming];
+      });
+    }
+  }, [archive.data?.posts, page]);
+
+  const updateQuery = (nextQuery: string) => {
+    setQuery(nextQuery);
+    setPage(1);
+    setAccumulatedPosts([]);
+  };
+
+  const nextPage = archive.data?.nextPage ?? null;
+
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    if (!node || nextPage === null || archive.isFetching) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0]?.isIntersecting && !archive.isFetching && nextPage !== null) {
+          setPage(nextPage);
+        }
+      },
+      { rootMargin: "380px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [nextPage, archive.isFetching]);
+
+  const displayPosts = accumulatedPosts.length > 0 ? accumulatedPosts : (archive.data?.posts ?? []);
+
+  return (
+    <PublicLayout
+      seo={{
+        title: "All Bytes — Aurikrex Bytes archive",
+        description:
+          "Browse and search every published edition of Aurikrex Bytes — your daily curated technology, AI, startup, and software engineering news archive.",
+        path: "/archive",
+      }}
+    >
+      <main className="container page-main">
+        <div className="page-intro">
+          <span className="eyebrow">The complete record</span>
+          <h1>All Bytes</h1>
+          <p>Search every story by brand, company, topic, or tech trend.</p>
+        </div>
+
+        <div className="search-wrap">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={e => updateQuery(e.target.value)}
+            placeholder="Search brands & topics (e.g. Apple, Google, AI, Nvidia)..."
+            aria-label="Search the archive"
+          />
+          {query && (
+            <button onClick={() => updateQuery("")} aria-label="Clear search">
+              <X size={16} />
+            </button>
+          )}
+        </div>
+
+        <div className="brand-filter-chips" role="group" aria-label="Brand and trend quick filters">
+          {BRAND_TAGS.map(tag => {
+            const isActive = tag === "All" ? !query : query.toLowerCase() === tag.toLowerCase();
+            return (
+              <button
+                key={tag}
+                type="button"
+                className={`brand-chip ${isActive ? "active" : ""}`}
+                onClick={() => updateQuery(tag === "All" ? "" : tag)}
+              >
+                {tag}
+              </button>
+            );
+          })}
+        </div>
+
+        {isMobileViewport && session.data && (
+          <div className="archive-view-toggle">
+            <FeedViewModeControl value={viewMode} onChange={changeViewMode} />
+          </div>
+        )}
+
+        {query && (
+          <div className="search-results-info">
+            <span>
+              Showing results for <strong>"{query}"</strong>
+            </span>
+            <button className="text-button" onClick={() => updateQuery("")}>
+              Clear filter
+            </button>
+          </div>
+        )}
+
+        {archive.isLoading && page === 1 && displayPosts.length === 0 ? (
+          <div className="skeleton-grid">
+            <div />
+            <div />
+            <div />
+          </div>
+        ) : displayPosts.length ? (
+          <>
+            <div className={`post-grid archive-grid archive-view-${effectiveViewMode}`}>
+              {displayPosts.map((post: any) => (
+                <PostCard key={post.id} post={post} isRead={readPostIds.has(post.id)} />
+              ))}
+            </div>
+            <div ref={loadMoreRef} className="px-infinite-scroll-status" aria-live="polite">
+              {archive.isFetching && page > 1 ? (
+                <span className="px-infinite-loading-pill">
+                  <span className="px-infinite-dot" />
+                  <span>Loading more Bytes…</span>
+                </span>
+              ) : nextPage !== null ? (
+                <span className="px-infinite-loading-pill">
+                  <span className="px-infinite-dot" />
+                  <span>Scroll for more Bytes</span>
+                </span>
+              ) : (
+                <span className="px-infinite-end-label">
+                  All {displayPosts.length} Bytes loaded
+                </span>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="empty-state">
+            <Search size={24} />
+            <h2>No stories found {query ? `matching "${query}"` : ""}</h2>
+            <p>Try searching for a different brand, company, or tech topic.</p>
+            {query && (
+              <button className="button button-outline" onClick={() => updateQuery("")}>
+                Clear search & view all bytes
+              </button>
+            )}
+          </div>
+        )}
+      </main>
+    </PublicLayout>
+  );
+}
+function FollowUpPanel({ postId, postHeadline }: { postId: number; postHeadline: string }) {
+  const [question, setQuestion] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [searchQueries, setSearchQueries] = useState<string[]>([]);
+  const [asked, setAsked] = useState<string | null>(null);
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const answerRef = useRef<HTMLDivElement>(null);
+
+  const followUp = trpc.publicPosts.askFollowUp.useMutation({
+    onSuccess: (data: any) => {
+      setAnswer(data.answer);
+      setSearchQueries(data.searchQueries || []);
+      if (typeof data.remainingCoins === 'number') {
+        window.dispatchEvent(
+          new CustomEvent('aurikrex:coins-updated', {
+            detail: { remainingCoins: data.remainingCoins, nextResetDate: data.nextResetDate },
+          })
+        );
+      }
+      setTimeout(() => answerRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80);
+    },
+    onError: (err) => {
+      setAnswer(`Sorry, could not get response: ${err.message}`);
+    },
+  });
+
+  const triggerQuestion = (rawQuestion: string) => {
+    const q = rawQuestion.trim();
+    if (!q || followUp.isPending) return;
+    setAsked(q);
+    setAnswer(null);
+    setSearchQueries([]);
+    setIsSearchExpanded(false);
+    setIsOpen(true);
+    followUp.mutate({ postId, question: q });
+    setQuestion("");
+  };
+
+  useEffect(() => {
+    const handleExternalTrigger = (event: Event) => {
+      const custom = event as CustomEvent<{ postId: number; question: string }>;
+      if (custom.detail && custom.detail.postId === postId && custom.detail.question) {
+        triggerQuestion(custom.detail.question);
+      }
+    };
+    window.addEventListener("aurikrex:trigger-followup", handleExternalTrigger);
+    return () => window.removeEventListener("aurikrex:trigger-followup", handleExternalTrigger);
+  }, [postId, followUp.isPending]);
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    triggerQuestion(question);
+  };
+
+  return (
+    <>
+      {/* Pinned Bottom Bar (Default state on story page) */}
+      <div className="followup-bottom-bar" role="region" aria-label="Ask follow-up bar">
+        <form className="followup-bottom-pill-form" onSubmit={handleSubmit}>
+          <input
+            type="text"
+            className="followup-bottom-input"
+            placeholder="Ask follow-up…"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            maxLength={300}
+            aria-label="Ask follow-up"
+          />
+          <button
+            type="submit"
+            className="followup-bottom-send-btn"
+            disabled={!question.trim() || followUp.isPending}
+            aria-label="Submit question"
+          >
+            {followUp.isPending ? <Square size={13} fill="currentColor" /> : <Search size={16} />}
+          </button>
+        </form>
+      </div>
+
+      {/* Full-Screen Workspace Overlay */}
+      {isOpen && typeof document !== "undefined" && createPortal(
+        <div className="followup-fullscreen-view" role="dialog" aria-modal="true" aria-label="Follow-up thread">
+          {/* Top Left Close Button */}
+          <div className="followup-fullscreen-topbar">
+            <button
+              type="button"
+              className="followup-close-circle-btn"
+              onClick={() => setIsOpen(false)}
+              aria-label="Close follow-up view"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          <div className="followup-fullscreen-content">
+            {/* Context Card: "Follow up to" */}
+            <div className="followup-context-card">
+              <div className="followup-context-kicker">
+                <Workflow size={15} />
+                <span>Follow up to</span>
+              </div>
+              <p className="followup-context-headline">{postHeadline}</p>
+            </div>
+
+            {/* User Message Bubble */}
+            {asked && (
+              <div className="followup-user-bubble-wrap">
+                <div className="followup-user-bubble">
+                  <span>{asked}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Falke AI Response or Thinking State */}
+            {followUp.isPending ? (
+              <div className="followup-thinking-block">
+                <div className="followup-thinking-header">
+                  <Sparkles size={18} className="followup-thinking-icon" />
+                  <strong>Falke AI is thinking…</strong>
+                </div>
+                <p className="followup-thinking-sub">Falke AI is searching live sources to bring you clear details</p>
+
+                {/* Collapsed by default Claude-style summary bar */}
+                <button
+                  type="button"
+                  className="followup-summary-bar"
+                  onClick={() => setIsSearchExpanded((prev) => !prev)}
+                  aria-expanded={isSearchExpanded}
+                  title="Click to toggle search sources summary"
+                >
+                  <div className="followup-summary-bar-left">
+                    <Clock3 size={15} className="followup-summary-icon" />
+                    <span className="followup-summary-text">
+                      Exploring context for "{asked ? excerpt(asked, 36) : excerpt(postHeadline, 36)}"
+                    </span>
+                  </div>
+                  <ChevronRight size={15} className={`followup-summary-chevron ${isSearchExpanded ? "is-open" : ""}`} />
+                </button>
+
+                {isSearchExpanded && (
+                  <div className="followup-summary-expanded-card">
+                    <div className="followup-summary-card-header">
+                      <strong>Summary</strong>
+                      <button
+                        type="button"
+                        className="followup-summary-close-btn"
+                        onClick={() => setIsSearchExpanded(false)}
+                        aria-label="Collapse summary"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    <div className="followup-summary-timeline">
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Exploring context for "{postHeadline}"</span>
+                      </div>
+                      <div className="followup-timeline-item">
+                        <Search size={14} className="followup-timeline-globe" />
+                        <span className="followup-timeline-text">Searching web for "{asked || postHeadline}"</span>
+                      </div>
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Synthesizing response with Falke AI</span>
+                      </div>
+                    </div>
+
+                    <div className="followup-searching-section">
+                      <span className="followup-searching-label">SEARCHING</span>
+                      <div className="followup-searching-pills">
+                        <div className="followup-search-pill"><Search size={14} /> <span>{asked ? `${asked.slice(0, 35)}…` : "Searching live web…"}</span></div>
+                        <div className="followup-search-pill"><Search size={14} /> <span>{postHeadline.slice(0, 38)}…</span></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : answer ? (
+              <div className="followup-response-block" ref={answerRef}>
+                <div className="followup-thinking-header" style={{ marginBottom: "12px" }}>
+                  <Sparkles size={18} className="followup-thinking-icon" />
+                  <strong>Falke AI Explanation</strong>
+                </div>
+
+                {/* Collapsed by default Claude-style summary bar */}
+                <button
+                  type="button"
+                  className="followup-summary-bar"
+                  onClick={() => setIsSearchExpanded((prev) => !prev)}
+                  aria-expanded={isSearchExpanded}
+                  title="Click to toggle search sources summary"
+                >
+                  <div className="followup-summary-bar-left">
+                    <Clock3 size={15} className="followup-summary-icon" />
+                    <span className="followup-summary-text">
+                      {searchQueries.length > 0
+                        ? `Searched ${searchQueries.length} web source${searchQueries.length > 1 ? "s" : ""} for "${asked ? excerpt(asked, 35) : excerpt(postHeadline, 35)}"`
+                        : `Explored context for "${asked ? excerpt(asked, 35) : excerpt(postHeadline, 35)}"`}
+                    </span>
+                  </div>
+                  <ChevronRight size={15} className={`followup-summary-chevron ${isSearchExpanded ? "is-open" : ""}`} />
+                </button>
+
+                {isSearchExpanded && (
+                  <div className="followup-summary-expanded-card">
+                    <div className="followup-summary-card-header">
+                      <strong>Summary</strong>
+                      <button
+                        type="button"
+                        className="followup-summary-close-btn"
+                        onClick={() => setIsSearchExpanded(false)}
+                        aria-label="Collapse summary"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    <div className="followup-summary-timeline">
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Exploring context for "{postHeadline}"</span>
+                      </div>
+
+                      {searchQueries.map((qStr, idx) => (
+                        <div key={idx} className="followup-timeline-item">
+                          <Search size={14} className="followup-timeline-globe" />
+                          <span className="followup-timeline-text">Searched for "{qStr}"</span>
+                        </div>
+                      ))}
+
+                      <div className="followup-timeline-item">
+                        <span className="followup-timeline-dot" />
+                        <span className="followup-timeline-text">Synthesized explanation using Falke AI</span>
+                      </div>
+                    </div>
+
+                    {searchQueries.length > 0 && (
+                      <div className="followup-searching-section">
+                        <span className="followup-searching-label">SEARCHED</span>
+                        <div className="followup-searching-pills">
+                          {searchQueries.map((qStr, idx) => (
+                            <div key={idx} className="followup-search-pill">
+                              <Search size={14} />
+                              <span>{qStr}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="followup-answer-text">
+                  <FormattedBody body={answer} className="followup-answer-body" />
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Bottom Floating Bar inside Full-Screen View */}
+          <div className="followup-bottom-bar followup-bottom-bar-fullscreen">
+            <form className="followup-bottom-pill-form" onSubmit={handleSubmit}>
+              <input
+                type="text"
+                className="followup-bottom-input"
+                placeholder="Ask follow-up…"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                maxLength={300}
+                disabled={followUp.isPending}
+                aria-label="Ask follow-up"
+              />
+              <button
+                type="submit"
+                className="followup-bottom-send-btn"
+                disabled={!question.trim() || followUp.isPending}
+                aria-label="Submit question"
+              >
+                {followUp.isPending ? <Square size={13} fill="currentColor" /> : <Search size={16} />}
+              </button>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
+function ArticleAudioPlayer({ headline, body }: { headline: string; body: string }) {
+  const [playing, setPlaying] = useState(false);
+  const [rateIndex, setRateIndex] = useState(0);
+  const rates = [1, 1.25, 1.5];
+  const currentRate = rates[rateIndex];
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, [headline]);
+
+  const startSpeech = (rate: number) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      toast.error("Audio briefing is not supported in this browser.");
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const cleanText = `${headline}. ${body.replace(/\*\*|__|\*|_/g, "")}`;
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = rate;
+    utterance.onend = () => setPlaying(false);
+    utterance.onerror = () => setPlaying(false);
+    setPlaying(true);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const togglePlay = () => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      toast.error("Audio briefing is not supported in this browser.");
+      return;
+    }
+    if (playing) {
+      window.speechSynthesis.cancel();
+      setPlaying(false);
+    } else {
+      startSpeech(currentRate);
+    }
+  };
+
+  const cycleRate = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextIdx = (rateIndex + 1) % rates.length;
+    setRateIndex(nextIdx);
+    if (playing) {
+      startSpeech(rates[nextIdx]);
+    }
+  };
+
+  return (
+    <div className={`px-audio-player ${playing ? "is-playing" : ""}`}>
+      <button
+        type="button"
+        className="px-audio-btn"
+        onClick={togglePlay}
+        aria-label={playing ? "Stop audio briefing" : "Listen to audio briefing"}
+      >
+        {playing ? <Square size={12} fill="currentColor" /> : <Zap size={13} fill="currentColor" />}
+        <span>{playing ? "Listening…" : "Listen"}</span>
+      </button>
+      <button
+        type="button"
+        className="px-audio-speed"
+        onClick={cycleRate}
+        title="Change playback speed"
+        aria-label={`Playback speed ${currentRate}x`}
+      >
+        {currentRate}x
+      </button>
+    </div>
+  );
+}
+
+export function PostDetail() {
+  const [, params] = useRoute("/post/:id");
+  const id = Number(params?.id);
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const post = trpc.publicPosts.byId.useQuery(
+    { id },
+    { enabled: Number.isFinite(id) }
+  );
+  const relatedQuery = trpc.publicPosts.carousel.useQuery();
+  useEffect(() => {
+    if (post.data && Number.isFinite(id)) {
+      markPostAsRead(id);
+    }
+  }, [id, post.data]);
+  const engagement = trpc.reader.engagement.useQuery({ postId: id }, { enabled: Boolean(session.data) && Number.isFinite(id), retry: false });
+  const detailPost = post.data ? { ...post.data, ...(engagement.data || {}) } : null;
+  const metaInfo = useMemo(
+    () => (post.data ? inferPostTopicAndSources(post.data) : { topic: "Tech Signal", sources: [] }),
+    [post.data?.headline, post.data?.body]
+  );
+  const relatedPosts = useMemo(
+    () => (relatedQuery.data?.posts ?? []).filter((p: any) => p.id !== id).slice(0, 3),
+    [relatedQuery.data?.posts, id]
+  );
+  const suggestedPrompts = useMemo(() => {
+    const h = post.data?.headline || "this story";
+    return [
+      `What are the second-order industry impacts of ${excerpt(h, 58)}?`,
+      "Which companies or developer ecosystems benefit most from this shift?",
+      "What are the primary technical or regulatory bottlenecks ahead?",
+    ];
+  }, [post.data?.headline]);
+
+  const triggerFollowUpPrompt = (promptText: string) => {
+    if (!post.data) return;
+    window.dispatchEvent(
+      new CustomEvent("aurikrex:trigger-followup", {
+        detail: { postId: post.data.id, question: promptText },
+      })
+    );
+  };
+
+  const seo = post.data
+    ? {
+        title: `${post.data.headline} — Aurikrex Bytes`,
+        description: excerpt(post.data.body, 160),
+        path: `/post/${post.data.id}`,
+        image: post.data.imageUrl || "/logo-512.png",
+        type: "article" as const,
+        article: {
+          headline: post.data.headline,
+          datePublished: post.data.publishedTime,
+          image: post.data.imageUrl,
+        },
+      }
+    : {
+        title: "Story — Aurikrex Bytes",
+        description:
+          "Read the latest considered technology story from Aurikrex Bytes.",
+        path: `/post/${Number.isFinite(id) ? id : ""}`,
+      };
+  return (
+    <PublicLayout seo={seo}>
+      <main className="container detail-page">
+        {post.isLoading ? (
+          <div className="detail-loading" />
+        ) : post.data ? (
+          <article className="px-article-shell">
+            <div className="px-detail-topbar">
+              <button
+                type="button"
+                className="back-link text-button"
+                onClick={() => {
+                  if (typeof window !== "undefined" && window.history.length > 1) {
+                    window.history.back();
+                  } else {
+                    window.location.href = "/archive";
+                  }
+                }}
+              >
+                ← Back to Discover
+              </button>
+              <div className="px-detail-topbar-actions">
+                <ArticleAudioPlayer headline={post.data.headline} body={post.data.body} />
+                <EngagementActions post={detailPost || post.data} />
+              </div>
+            </div>
+
+            <div className="px-detail-grid">
+              <div className="px-detail-main" id="sec-overview">
+                <div className="detail-meta">
+                  <span className="eyebrow">{metaInfo.topic}</span>
+                  <span>{formatDate(post.data.publishedTime)} · 4 min read</span>
+                </div>
+                <h1>{post.data.headline}</h1>
+
+                {/* Perplexity Synthesized Sources Strip */}
+                <div className="px-sources-strip" aria-label="Synthesized sources context">
+                  {metaInfo.sources.map((src, idx) => (
+                    <div key={idx} className="px-source-card">
+                      <div className="px-source-card-top">
+                        <span className={`px-source-avatar px-source-avatar-${idx % 3}`}>{src.code}</span>
+                        <span className="px-source-domain">{src.domain}</span>
+                      </div>
+                      <p className="px-source-title">{src.name} · Primary Signal #{idx + 1}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {post.data.imageUrl && (
+                  <img
+                    className="detail-image"
+                    src={optimizedImage(post.data.imageUrl, 1400)}
+                    alt={post.data.headline}
+                    loading="eager"
+                    fetchPriority="high"
+                  />
+                )}
+
+                <div id="sec-analysis">
+                  <FormattedBody body={post.data.body} className="detail-body" />
+                </div>
+
+                <div className="detail-actions">
+                  <EngagementActions post={detailPost || post.data} />
+                </div>
+
+                {/* Perplexity Keep Exploring with Falke AI section */}
+                <section className="px-keep-exploring" id="sec-falke" aria-label="Keep exploring with Falke AI">
+                  <div className="px-keep-exploring-header">
+                    <Sparkles size={17} />
+                    <h3>Keep Exploring with Falke AI</h3>
+                  </div>
+                  <div className="px-prompt-list">
+                    {suggestedPrompts.map((promptText, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="px-prompt-row"
+                        onClick={() => triggerFollowUpPrompt(promptText)}
+                      >
+                        <span>{promptText}</span>
+                        <ArrowRight size={15} />
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </div>
+
+              <aside className="px-detail-rail" aria-label="Story context and navigation">
+                <div className="px-rail-card">
+                  <span className="px-rail-label">On this page</span>
+                  <nav className="px-toc-links" aria-label="Table of contents">
+                    <a href="#sec-overview" className="active">Overview &amp; Synthesized Sources</a>
+                    <a href="#sec-analysis">Deep Dive &amp; Context</a>
+                    <a href="#sec-falke">Keep Exploring with Falke AI</a>
+                  </nav>
+                </div>
+
+                {relatedPosts.length > 0 && (
+                  <div className="px-rail-card">
+                    <span className="px-rail-label">More in Today&apos;s Edition</span>
+                    <div className="px-related-list">
+                      {relatedPosts.map((rel: any) => (
+                        <ProtectedLink key={rel.id} href={`/post/${rel.id}`} className="px-related-item">
+                          <span className="px-related-date">{formatDate(rel.publishedTime)} · 4m</span>
+                          <h4>{rel.headline}</h4>
+                        </ProtectedLink>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </aside>
+            </div>
+
+            <FollowUpPanel postId={post.data.id} postHeadline={post.data.headline} />
+          </article>
+        ) : (
+          <div className="empty-state">
+            <h2>Story not found</h2>
+            <Link className="text-link" href="/archive">
+              Back to the archive <ArrowRight size={15} />
+            </Link>
+          </div>
+        )}
+      </main>
+    </PublicLayout>
+  );
+}
+
+
+function EditDetailsModal({
+  isOpen,
+  onClose,
+  currentName,
+  currentNickname,
+  onSuccess,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  currentName: string;
+  currentNickname?: string | null;
+  onSuccess: () => void;
+}) {
+  const [name, setName] = useState(currentName);
+  const [nickname, setNickname] = useState(currentNickname || "");
+  const updateProfile = trpc.reader.updateProfile.useMutation({
+    onSuccess: () => {
+      toast.success("Details updated successfully");
+      onSuccess();
+      onClose();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to update details");
+    },
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      setName(currentName);
+      setNickname(currentNickname || "");
+    }
+  }, [isOpen, currentName, currentNickname]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      toast.error("Name cannot be empty");
+      return;
+    }
+    updateProfile.mutate({
+      name: name.trim(),
+      nickname: nickname.trim() || null,
+    });
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-md rounded-2xl bg-[var(--surface)] border border-[var(--line)] p-6 shadow-2xl text-left animate-in fade-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[var(--blue)]/10 text-[var(--blue)] flex items-center justify-center">
+              <SquarePen size={17} />
+            </div>
+            <h3 className="text-base font-bold text-[var(--ink)]">Edit Details</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--surface-2)] transition-colors"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--muted)] mb-1.5">
+              Full Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Korede Omotosho"
+              maxLength={100}
+              required
+              className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)] text-sm font-medium focus:outline-none focus:border-[var(--blue)] focus:ring-1 focus:ring-[var(--blue)] transition-all"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
+                Nickname / Preferred Name
+              </label>
+              <span className="text-[11px] text-[var(--muted)]">Optional</span>
+            </div>
+            <input
+              type="text"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder="e.g. Falcon, Sam, Alex"
+              maxLength={50}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)] text-sm font-medium focus:outline-none focus:border-[var(--blue)] focus:ring-1 focus:ring-[var(--blue)] transition-all"
+            />
+            <p className="mt-1 text-[11px] text-[var(--muted)]">
+              What should we call you across your briefing desk and streak updates.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[var(--line)] mt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={updateProfile.isPending}
+              className="px-4 py-2 rounded-xl text-sm font-semibold text-[var(--muted)] hover:text-[var(--ink)] hover:bg-[var(--surface-2)] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={updateProfile.isPending || !name.trim()}
+              className="px-5 py-2 rounded-xl text-sm font-semibold bg-[var(--blue)] hover:bg-[var(--blue-dark,#1d4ed8)] text-white shadow-md disabled:opacity-50 transition-colors"
+            >
+              {updateProfile.isPending ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function NicknameOnboardingModal({
+  isOpen,
+  onClose,
+  defaultName,
+  onSaved,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  defaultName: string;
+  onSaved: () => void;
+}) {
+  const [nickname, setNickname] = useState("");
+  const updateProfile = trpc.reader.updateProfile.useMutation({
+    onSuccess: () => {
+      toast.success("Welcome to Aurikrex Bytes!");
+      onSaved();
+      onClose();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to save nickname");
+    },
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      const suggested = defaultName.trim().split(/\s+/)[0] || "";
+      setNickname(suggested);
+    }
+  }, [isOpen, defaultName]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nickname.trim()) {
+      onClose();
+      return;
+    }
+    updateProfile.mutate({
+      name: defaultName || nickname.trim(),
+      nickname: nickname.trim(),
+    });
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
+      <div className="w-full max-w-sm rounded-2xl bg-[var(--surface)] border border-[var(--line)] p-6 shadow-2xl text-center animate-in fade-in zoom-in-95 duration-150">
+        <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-500 text-2xl">
+          👋
+        </div>
+        <h3 className="text-lg font-bold text-[var(--ink)]">What should we call you?</h3>
+        <p className="mt-1.5 text-xs text-[var(--muted)] leading-relaxed">
+          Pick a preferred first name or nickname for your daily briefings, streak updates, and reading desk.
+        </p>
+
+        <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-3.5">
+          <input
+            type="text"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            placeholder="e.g. Alex, Falcon, Sam"
+            maxLength={50}
+            autoFocus
+            className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)] text-sm font-semibold text-center focus:outline-none focus:border-[var(--blue)] focus:ring-1 focus:ring-[var(--blue)] transition-all"
+          />
+
+          <div className="flex flex-col gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={updateProfile.isPending || !nickname.trim()}
+              className="w-full py-2.5 rounded-xl text-sm font-semibold bg-[var(--blue)] hover:bg-[var(--blue-dark,#1d4ed8)] text-white shadow-md disabled:opacity-50 transition-colors"
+            >
+              {updateProfile.isPending ? "Saving…" : "Save & Continue"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={updateProfile.isPending}
+              className="py-2 text-xs font-semibold text-[var(--muted)] hover:text-[var(--ink)] transition-colors"
+            >
+              Skip for now
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
+  );
+}
+function PushNotificationSettingRow() {
+  const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [showIosHelp, setShowIosHelp] = useState(false);
+  const appIdQuery = trpc.reader.oneSignalAppId.useQuery();
+  const registerSub = trpc.reader.registerOneSignalSubscription.useMutation();
+  const unregisterSub = trpc.reader.unregisterOneSignalSubscription.useMutation();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setPermission("unsupported");
+      return;
+    }
+    setPermission(Notification.permission);
+    if (!appIdQuery.data) return;
+    getOneSignal(appIdQuery.data)
+      .then(OneSignal => {
+        setIsSubscribed(Boolean(OneSignal.User?.PushSubscription?.optedIn));
+      })
+      .catch(() => undefined);
+  }, [appIdQuery.data]);
+
+  const handleToggle = async (enable: boolean) => {
+    if (isIosSafari()) {
+      setShowIosHelp(true);
+      return;
+    }
+
+    if (enable) {
+      if (Notification.permission === "denied") {
+        toast.error("Notifications are blocked in your browser settings. Please allow notifications in site settings.");
+        return;
+      }
+      try {
+        setLoading(true);
+        const OneSignal = await getOneSignal(appIdQuery.data || "");
+        await OneSignal.Notifications.requestPermission();
+        setPermission(Notification.permission);
+        if (Notification.permission !== "granted") {
+          toast.error("Notification permission was not granted.");
+          return;
+        }
+        await OneSignal.User?.PushSubscription?.optIn?.();
+        const subId = await waitForSubscriptionId(OneSignal);
+        if (subId) {
+          await registerSub.mutateAsync({ subscriptionId: subId });
+        }
+        setIsSubscribed(true);
+        toast.success("Daily briefing notifications enabled!");
+      } catch (err: any) {
+        toast.error("Failed to enable notifications.");
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      try {
+        setLoading(true);
+        const OneSignal = await getOneSignal(appIdQuery.data || "");
+        const subId = OneSignal.User?.PushSubscription?.id;
+        await OneSignal.User?.PushSubscription?.optOut?.();
+        if (subId) {
+          await unregisterSub.mutateAsync({ subscriptionId: subId });
+        }
+        setIsSubscribed(false);
+        toast.success("Daily notifications disabled.");
+      } catch (err: any) {
+        toast.error("Failed to disable notifications.");
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  return (
+    <>
+      <div className="px-profile-row">
+        <div className="px-profile-setting-info">
+          <span>Daily briefing notifications</span>
+          <p className="muted small" style={{ margin: "2px 0 0", fontSize: "12px" }}>
+            Morning (8:00 AM) and Evening (10:00 PM) drops
+          </p>
+        </div>
+        <div className="px-profile-setting-control">
+          {permission === "denied" ? (
+            <span className="badge-blocked" title="Notifications blocked in your browser settings">
+              Blocked
+            </span>
+          ) : (
+            <label className="switch" title={isSubscribed ? "Click to opt out" : "Click to opt in"}>
+              <input
+                type="checkbox"
+                checked={isSubscribed}
+                disabled={loading || permission === "unsupported"}
+                onChange={e => handleToggle(e.target.checked)}
+              />
+              <span className="slider" />
+            </label>
+          )}
+        </div>
+      </div>
+      {showIosHelp && <IosInstallHelpModal onClose={() => setShowIosHelp(false)} />}
+    </>
+  );
+}
+
+export function ProfilePage() {
+  const [, navigate] = useLocation();
+  const utils = trpc.useUtils();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const dashboard = trpc.reader.dashboard.useQuery(
+    { timeZone },
+    { enabled: Boolean(session.data), retry: false }
+  );
+  const saved = trpc.reader.saved.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
+  const coins = trpc.auth.coinsBalance.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
+  const appIdQuery = trpc.reader.oneSignalAppId.useQuery();
+  const unregisterSubMutation = trpc.reader.unregisterOneSignalSubscription.useMutation();
+  const [showPhoto, setShowPhoto] = useState(false);
+  const [showEditDetails, setShowEditDetails] = useState(false);
+  const logout = trpc.auth.logout.useMutation({
+    onSuccess: () => {
+      utils.reader.session.setData(undefined, undefined);
+      window.location.replace("/");
+    },
+  });
+
+  const handleProfileSignout = async () => {
+    if (typeof window !== "undefined" && appIdQuery.data) {
+      try {
+        const OneSignal = await getOneSignal(appIdQuery.data);
+        const subId = OneSignal.User?.PushSubscription?.id;
+        if (subId) {
+          await unregisterSubMutation.mutateAsync({ subscriptionId: subId }).catch(() => undefined);
+        }
+        await OneSignal.User?.PushSubscription?.optOut?.().catch(() => undefined);
+        await OneSignal.logout?.().catch(() => undefined);
+      } catch (err) {
+        console.warn("[PushLogout] Profile signout error:", err);
+      }
+    }
+    logout.mutate();
+  };
+  useEffect(() => {
+    if (!session.isLoading && !session.data) navigate("/login");
+  }, [navigate, session.data, session.isLoading]);
+  if (session.isLoading || !session.data) return <div className="route-loading">Opening your profile…</div>;
+
+  const user = session.data as any;
+  const displayName = user.name?.trim() || user.email?.split("@")[0] || "Reader";
+  const nickname = user.nickname?.trim() || null;
+  const coinBalance = coins.data ? Math.min((coins.data as { balance: number }).balance, 2500) : null;
+  const stats: Array<{ label: string; value: string; icon: ReactNode }> = [
+    { label: "Day streak", value: String(dashboard.data?.streak.currentStreak ?? 0), icon: <Flame size={16} /> },
+    { label: "Bytes read", value: String(getReadPostIds().size), icon: <BookOpen size={16} /> },
+    { label: "Saved", value: String(saved.data?.length ?? 0), icon: <Bookmark size={16} /> },
+    { label: "AuriCoins", value: coinBalance === null ? "…" : coinBalance.toLocaleString(), icon: <Sparkles size={16} /> },
+  ];
+
+
+  return (
+    <PublicLayout seo={{ title: "Your profile — Aurikrex Bytes", description: "Your Aurikrex Bytes profile and settings.", path: "/profile", robots: "noindex,nofollow" }}>
+      <main className="container page-main px-profile-page">
+        <section className="px-profile-header">
+          <div className="px-profile-avatar">
+            {user.avatarUrl ? (
+              <img src={user.avatarUrl} alt={displayName} />
+            ) : (
+              <span>{getInitial(nickname || displayName)}</span>
+            )}
+          </div>
+          <div className="px-profile-identity">
+            <div className="px-profile-name-row">
+              <h1>{user.name || displayName}</h1>
+              {nickname && (
+                <span className="px-profile-nickname-badge">
+                  aka <strong>{nickname}</strong>
+                </span>
+              )}
+            </div>
+            {user.email && <p>{user.email}</p>}
+          </div>
+          <div className="px-profile-header-actions">
+            <button
+              type="button"
+              className="px-profile-action-btn"
+              onClick={() => setShowEditDetails(true)}
+            >
+              <SquarePen size={15} /> <span>Edit details</span>
+            </button>
+            <button
+              type="button"
+              className="px-profile-action-btn"
+              onClick={() => setShowPhoto(true)}
+            >
+              <Camera size={15} /> <span>Change photo</span>
+            </button>
+          </div>
+        </section>
+
+        <section className="px-profile-stats" aria-label="Your reading stats">
+          {stats.map(stat => (
+            <div className="px-profile-stat" key={stat.label}>
+              <span className="px-profile-stat-icon">{stat.icon}</span>
+              <strong>{stat.value}</strong>
+              <span>{stat.label}</span>
+            </div>
+          ))}
+        </section>
+
+        <section className="px-profile-card">
+          <h2>Settings</h2>
+          <div className="px-profile-row">
+            <span>Appearance</span>
+            <ThemeToggle />
+          </div>
+          <PushNotificationSettingRow />
+          <div className="px-profile-row">
+            <span>Aurikrex Apps</span>
+            <AurikrexAppsSwitcher currentAppId="bytes" />
+          </div>
+        </section>
+
+        <section className="px-profile-card">
+          <h2>Saved Briefings</h2>
+          <Link href="/saved" className="px-profile-link">
+            <span className="px-profile-link-icon"><Bookmark size={16} /></span>
+            <span>Saved posts</span>
+            <ChevronRight size={16} />
+          </Link>
+        </section>
+
+        <button type="button" className="px-profile-signout" onClick={handleProfileSignout} disabled={logout.isPending}>
+          <LogOut size={16} /> <span>Sign out</span>
+        </button>
+      </main>
+      <ProfileLightboxModal isOpen={showPhoto} onClose={() => setShowPhoto(false)} sessionData={session.data} />
+      <EditDetailsModal
+        isOpen={showEditDetails}
+        onClose={() => setShowEditDetails(false)}
+        currentName={user.name || ""}
+        currentNickname={nickname}
+        onSuccess={() => {
+          utils.reader.session.invalidate();
+          utils.reader.dashboard.invalidate();
+        }}
+      />
+    </PublicLayout>
+  );
+}
+
+export function SavedPosts() {
+  const [, navigate] = useLocation();
+  const session = trpc.reader.session.useQuery(undefined, { retry: false });
+  const saved = trpc.reader.saved.useQuery(undefined, { enabled: Boolean(session.data), retry: false });
+  useEffect(() => { if (!session.isLoading && !session.data) navigate("/login"); }, [navigate, session.data, session.isLoading]);
+  if (session.isLoading || (!session.data && !saved.error)) return <div className="route-loading">Opening your saved stories…</div>;
+  return <PublicLayout seo={{ title: "Saved Posts — Aurikrex Bytes", description: "Stories you saved for later.", path: "/saved", robots: "noindex,nofollow" }}>
+    <main className="container page-main saved-page">
+      <div className="page-intro"><span className="eyebrow">Your reading list</span><h1>Saved Posts</h1><p>Keep the stories worth returning to close at hand.</p></div>
+      {saved.isLoading ? <div className="skeleton-grid"><div /><div /><div /></div> : saved.data?.length ? <div className="post-grid">{saved.data.map((post: any) => <PostCard key={post.id} post={post} />)}</div> : <div className="empty-state"><Bookmark size={24} /><h2>You haven’t saved anything yet</h2><p>Save a story from the feed when you want to come back to it.</p><Link className="button" href="/archive">Browse the archive <ArrowRight size={15} /></Link></div>}
+    </main>
+  </PublicLayout>;
+}
+
+export function HowItWorks() {
+  return (
+    <PublicLayout
+      seo={{
+        title: "How Aurikrex Bytes works",
+        description:
+          "See how Aurikrex Bytes finds the signal, adds context, and delivers a calmer daily tech briefing.",
+        path: "/how-it-works",
+      }}
+    >
+      <main className="container support-page">
+        <span className="eyebrow">A better briefing</span>
+        <h1>How Bytes works</h1>
+        <p className="support-intro">
+          Aurikrex Bytes is a small, daily ritual for people who want the
+          important parts of tech without the endless scroll.
+        </p>
+        {[
+          [
+            "01",
+            "We find the signal",
+            "Every morning, we scan the landscape for the stories that will shape conversations, products, and decisions.",
+          ],
+          [
+            "02",
+            "We add the context",
+            "Headlines are easy. Understanding is harder. Each Byte gives you the useful background in a clear, compact read.",
+          ],
+          [
+            "03",
+            "You start clearer",
+            "A few minutes, a better sense of the day, and then you can get on with the rest of it.",
+          ],
+        ].map(([n, h, p]) => (
+          <div className="step-row" key={n}>
+            <span>{n}</span>
+            <div>
+              <h2>{h}</h2>
+              <p>{p}</p>
+            </div>
+          </div>
+        ))}
+      </main>
+    </PublicLayout>
+  );
+}
+export function HelpCenter() {
+  const qs = [
+    [
+      "How do I create an account?",
+      "Choose Sign in or Join free, then select Create an account. Enter your email and a password of at least eight characters. We will send a verification link before you can use reader-only features.",
+    ],
+    [
+      "How do push notifications work?",
+      "If notifications are enabled on your installed PWA or browser, we can alert you when the 8:00 AM edition is ready. You control permission in your device or browser settings, and you can turn notifications off at any time.",
+    ],
+    [
+      "What is the difference between Today's Bytes and All Bytes?",
+      "Today's Bytes is the current daily drop and resets after midnight until the next 8:00 AM edition. All Bytes is the searchable, reverse-chronological archive of every published story.",
+    ],
+    [
+      "How do I search the archive?",
+      "Open All Bytes and enter a phrase from a headline or story body. Search results are paginated, and you can move between pages without losing your query.",
+    ],
+    [
+      "I forgot my password or did not receive a verification email.",
+      "Use Forgot password on the sign-in page. For a missing verification email, check spam first, then request a new message or contact support if the issue continues.",
+    ],
+    [
+      "How do I report an incorrect or outdated story?",
+      "Email support@aurikrex.com with the story link and the correction you believe is needed. Include a source where possible so the editorial team can review it quickly.",
+    ],
+    [
+      "How do I contact support?",
+      "Email support@aurikrex.com for account, editorial, or accessibility help. We aim to respond during normal business hours.",
+    ],
+  ];
+  return (
+    <PublicLayout
+      seo={{
+        title: "Help center — Aurikrex Bytes",
+        description:
+          "Answers about Aurikrex Bytes accounts, daily editions, archive search, notifications, and support.",
+        path: "/help",
+      }}
+    >
+      <main className="container article-page">
+        <span className="eyebrow">Answers, quickly</span>
+        <h1>Help center</h1>
+        <p className="article-lede">
+          Useful answers for your daily reading habit, account, and
+          notifications.
+        </p>
+        <div className="faq-list">
+          {qs.map(([q, a]) => (
+            <details key={q}>
+              <summary>
+                {q}
+                <ChevronDown size={17} />
+              </summary>
+              <p>{a}</p>
+            </details>
+          ))}
+        </div>
+      </main>
+    </PublicLayout>
+  );
+}
+export function Contact() {
+  return (
+    <PublicLayout
+      seo={{
+        title: "Contact Aurikrex Bytes",
+        description:
+          "Contact the Aurikrex Bytes team about account support, editorial feedback, story tips, or partnerships.",
+        path: "/contact",
+      }}
+    >
+      <main className="container support-page">
+        <span className="eyebrow">We are listening</span>
+        <h1>Contact us</h1>
+        <p className="support-intro">
+          Questions, feedback, story tips, or a kind note — send it our way.
+        </p>
+        <div className="contact-grid">
+          <div className="contact-card">
+            <Mail size={21} />
+            <h2>Email the team</h2>
+            <p>
+              For account support, editorial feedback, or partnership enquiries.
+            </p>
+            <a className="inline-link" href="mailto:support@aurikrex.com">
+              support@aurikrex.com <ArrowRight size={15} />
+            </a>
+          </div>
+          <div className="contact-card">
+            <ShieldCheck size={21} />
+            <h2>Contact us on WhatsApp</h2>
+            <p>
+              Send us a message on WhatsApp and we will respond during normal business hours.
+            </p>
+            <a
+              className="inline-link"
+              href="https://wa.me/2349113683395"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Message us on WhatsApp <ArrowRight size={15} />
+            </a>
+          </div>
+        </div>
+      </main>
+    </PublicLayout>
+  );
+}
+export function SupportPage({ kind }: { kind: "/privacy" | "/terms" }) {
+  const privacy = kind === "/privacy";
+  return (
+    <PublicLayout
+      seo={{
+        title: `${privacy ? "Privacy policy" : "Terms of service"} — Aurikrex Bytes`,
+        description: privacy
+          ? "Read the Aurikrex Bytes privacy policy, including account data, cookies, analytics, and reader choices."
+          : "Read the Aurikrex Bytes terms of service for using the daily technology briefing.",
+        path: kind,
+      }}
+    >
+      <main className="container article-page">
+        <span className="eyebrow">Aurikrex Bytes</span>
+        <h1>{privacy ? "Privacy policy" : "Terms of service"}</h1>
+        <p className="article-lede">
+          {privacy
+            ? "A clear account of what we collect, why we use it, and the choices available to readers."
+            : "The simple rules for using Aurikrex Bytes thoughtfully as a free reader service."}
+        </p>
+        <div className="legal-meta">
+          <p>
+            <strong>Effective date:</strong> 6 September 2026 ·{" "}
+            <strong>Last updated:</strong> 6 September 2026
+          </p>
+          <p>
+            <strong>Controller:</strong> Aurikrex Bytes — a product of Aurikrex, operated by Korede Samuel Omotosho ·{" "}
+            <strong>Based in:</strong> Lagos, Nigeria
+          </p>
+          <p>
+            <strong>Governing law:</strong> Federal Republic of Nigeria.
+          </p>
+          <p>
+            Third-party policies:{" "}
+            <a href="https://cloudinary.com/privacy" rel="noreferrer">
+              Cloudinary Privacy Policy
+            </a>
+            ,{" "}
+            <a href="https://policies.google.com/privacy" rel="noreferrer">
+              Google Privacy Policy
+            </a>
+            , and{" "}
+            <a href="https://turso.tech/legal/privacy-policy" rel="noreferrer">
+              Turso Privacy Policy
+            </a>
+            ,{" "}
+            <a href="https://www.mailgun.com/legal/privacy-policy/" rel="noreferrer">
+              Mailgun Privacy Policy
+            </a>
+            .
+          </p>
+        </div>
+        {privacy ? (
+          <>
+            <ArticleSection title="Information we collect">
+              When you create a reader account, we collect your email address
+              and a securely hashed password. If you use Google OAuth, we
+              receive the Google account identifier and email needed to create
+              or match your reader account. We also collect usage and analytics
+              data such as stories opened, archive searches, and timestamps so
+              we can understand which parts of the briefing are useful.
+            </ArticleSection>
+            <ArticleSection title="Lawful basis and your rights under the Nigeria Data Protection Act 2023">
+              Our lawful basis for processing your personal data is consent: you
+              actively create an account and agree to these terms. Under the
+              Nigeria Data Protection Act 2023, you may access the personal data
+              we hold about you, request correction of inaccurate data, request
+              deletion of your account and data, and object to our processing of
+              your data. If you believe your rights have been violated, you may
+              lodge a complaint with the Nigeria Data Protection Commission
+              (NDPC).
+            </ArticleSection>
+            <ArticleSection title="Cookies and storage">
+              We use essential session cookies to keep you signed in, remember
+              administrative devices, and protect OAuth flows. Local storage may
+              remember your light or dark mode preference. You can clear cookies
+              through your browser, although doing so may sign you out.
+            </ArticleSection>
+            <ArticleSection title="How we use information">
+              We use information to authenticate accounts, send verification and
+              password-reset emails, provide the daily briefing, measure
+              readership, protect the service, and improve editorial decisions.
+              We do not sell reader information or use reading history for
+              unrelated advertising.
+            </ArticleSection>
+            <ArticleSection title="Service providers">
+              The service may use Turso for application data storage, Cloudinary
+              for post imagery, Google OAuth for optional sign-in, email
+              delivery providers for account messages, and browser/PWA
+              notification services where a reader grants permission. Each
+              provider receives only the information needed for its function.
+            </ArticleSection>
+            <ArticleSection title="Retention and data requests">
+              We retain account and usage data for as long as your account is
+              active. We delete account and usage data within a reasonable period
+              after you request account deletion. Send access, correction, or
+              deletion requests to support@aurikrex.com. We will verify requests
+              before acting on them and explain any information we must retain
+              for security or legal reasons.
+            </ArticleSection>
+            <ArticleSection title="Contact">
+              For privacy questions or requests, contact support@aurikrex.com.
+              This policy applies to the free Aurikrex Bytes reader experience
+              and may be updated as the service changes.
+            </ArticleSection>
+          </>
+        ) : (
+          <>
+            <ArticleSection title="The service">
+              Aurikrex Bytes is a free reader briefing that curates and edits
+              technology stories into daily cards. Today's Bytes is the current
+              edition; All Bytes is the searchable archive. The service may
+              change, pause, or add features as we improve it.
+            </ArticleSection>
+            <ArticleSection title="Accounts and responsibilities">
+              Keep your sign-in details secure, provide accurate information,
+              and do not share access in a way that compromises the service or
+              other readers. You must be at least 13 years old to create an
+              account.
+            </ArticleSection>
+            <ArticleSection title="Content and attribution">
+              Our editorial team compiles source material from real reports.
+              Drafts are generated with AI assistance from that compiled source
+              material, and every Byte is reviewed by a human before publishing.
+              Original Aurikrex Bytes writing, edits, design, branding, and
+              software belong to Aurikrex or their licensors. You may read and
+              share links, but do not reproduce the service wholesale or present
+              our edits as your own.
+            </ArticleSection>
+            <ArticleSection title="Acceptable use">
+              Do not scrape or overload the service, interfere with accounts,
+              impersonate others, reverse engineer protected systems, submit
+              malicious material, or use the platform for unlawful activity. We
+              may suspend or terminate access for abuse, fraud, security risk,
+              or serious violations.
+            </ArticleSection>
+            <ArticleSection title="Disclaimer and governing terms">
+              Bytes is provided for general information and context, not
+              financial, legal, medical, or professional advice. We work to keep
+              stories accurate and current but cannot guarantee that every card
+              is complete or error-free. To the extent permitted by law,
+              Aurikrex is not liable for decisions made solely from a Byte.
+              Questions about these terms can be sent to support@aurikrex.com.
+            </ArticleSection>
+          </>
+        )}
+      </main>
+    </PublicLayout>
+  );
+}
+function ArticleSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="article-section">
+      <h2>{title}</h2>
+      <p>{children}</p>
+    </section>
+  );
+}
+export function ReaderAuth({ mode }: { mode: ReaderAuthMode }) {
+  const [location, navigate] = useLocation();
+  const utils = trpc.useUtils();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarPreview, setAvatarPreview] = useState("");
+  const [token] = useState(
+    () => new URLSearchParams(window.location.search).get("token") || ""
+  );
+  const [returnTo] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get("returnTo");
+    const fromStorage = window.sessionStorage.getItem(AUTH_RETURN_KEY);
+    return safeReturnTo(fromUrl || fromStorage);
+  });
+  const [message, setMessage] = useState(() =>
+    new URLSearchParams(window.location.search).get("error") === "oauth"
+      ? "Google sign-in failed. Please try again."
+      : ""
+  );
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [verificationState, setVerificationState] = useState<
+    "idle" | "verified" | "already_verified" | "error"
+  >("idle");
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const avatarSignature = trpc.reader.avatarUploadSignature.useQuery(undefined, {
+    enabled: mode === "signup",
+    staleTime: 60_000,
+  });
+
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (e.target) e.target.value = "";
+    if (!file) return;
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Please select a JPG, PNG, or WebP image.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image size should be under 5MB.");
+      return;
+    }
+
+    try {
+      setAvatarUploading(true);
+      const sig = avatarSignature.data || (await utils.reader.avatarUploadSignature.fetch());
+      if (!sig?.configured || !sig.signature || !sig.cloudName) {
+        throw new Error("Photo storage is temporarily unavailable. Please try again.");
+      }
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("api_key", sig.apiKey);
+      form.append("timestamp", String(sig.timestamp));
+      form.append("folder", sig.folder || "aurikrex/avatars");
+      form.append("signature", sig.signature);
+
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${sig.cloudName}/image/upload`,
+        { method: "POST", body: form }
+      );
+      const result = await response.json();
+      if (!response.ok || !result.secure_url) {
+        throw new Error(result.error?.message || "Couldn't upload photo, try again");
+      }
+
+      setAvatarUrl(result.secure_url);
+      setAvatarPreview(result.secure_url);
+    } catch (err: any) {
+      console.error("[SignupAvatar] Upload error:", err);
+      const rawMsg = err?.message || "";
+      const userMessage =
+        rawMsg &&
+        !rawMsg.includes("[{") &&
+        !rawMsg.includes("Invalid avatar URL") &&
+        !rawMsg.includes("TRPCClientError")
+          ? rawMsg
+          : "Couldn't upload photo, try again";
+      toast.error(userMessage);
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+  const google = trpc.reader.googleStart.useQuery(undefined, {
+    enabled: mode === "login" || mode === "signup",
+    retry: false,
+  });
+  const requirements = [
+    { label: "At least 8 characters", valid: password.length >= 8 },
+    { label: "One number", valid: /\d/.test(password) },
+    { label: "One symbol", valid: /[^A-Za-z0-9]/.test(password) },
+  ];
+  const login = trpc.reader.login.useMutation({
+    onSuccess: async r => {
+      await utils.reader.session.invalidate();
+      if (r.emailVerified) {
+        window.sessionStorage.removeItem(AUTH_RETURN_KEY);
+        navigate(returnTo);
+      }
+      else setMessage("Please verify your email before accessing all stories.");
+    },
+    onError: e => setMessage(e.message),
+  });
+  const signup = trpc.reader.signup.useMutation({
+    onSuccess: r => {
+      setVerificationEmail(r.email);
+      setMessage("");
+    },
+    onError: e => {
+      const rawMsg = e.message || "";
+      if (rawMsg.includes("[{") || rawMsg.includes("Invalid avatar URL")) {
+        setMessage("Invalid photo or upload failed. Please try again.");
+      } else {
+        setMessage(rawMsg);
+      }
+    },
+  });
+  const forgot = trpc.reader.requestPasswordReset.useMutation({
+    onSuccess: () =>
+      setMessage("If that address exists, a reset link is on its way."),
+  });
+  const reset = trpc.reader.resetPassword.useMutation({
+    onSuccess: () => {
+      setMessage("Password updated. You can sign in now.");
+      navigate("/login");
+    },
+    onError: e => setMessage(e.message),
+  });
+  const verify = trpc.reader.verifyEmail.useMutation({
+    onSuccess: r => setVerificationState(r.status),
+    onError: () => setVerificationState("error"),
+  });
+  const resend = trpc.reader.resendVerificationEmail.useMutation({
+    onSuccess: () => setMessage("A fresh verification email is on its way."),
+    onError: e => setMessage(e.message),
+  });
+  useEffect(() => {
+    if (mode === "verify" && token && verificationState === "idle" && !verify.isPending)
+      verify.mutate({ token });
+  }, [mode, token, verificationState, verify.isPending]);
+  useEffect(() => {
+    if (mode !== "verify" || !["verified", "already_verified"].includes(verificationState)) return;
+    const timer = window.setTimeout(() => navigate(authRoutes.login), 1800);
+    return () => window.clearTimeout(timer);
+  }, [mode, navigate, verificationState]);
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (mode === "login") login.mutate({ email, password, remember: true });
+    if (mode === "signup") {
+      if (avatarUploading) {
+        setMessage("Please wait for your photo to finish uploading.");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setMessage("Passwords do not match.");
+        return;
+      }
+      signup.mutate({ name, email, password, avatarUrl: avatarUrl || undefined });
+    }
+    if (mode === "forgot") forgot.mutate({ email });
+    if (mode === "reset") {
+      if (password !== confirmPassword) {
+        setMessage("Passwords do not match.");
+        return;
+      }
+      reset.mutate({ token, password });
+    }
+  };
+  const copy =
+    mode === "signup"
+      ? "Join readers who choose context over the scroll."
+      : mode === "forgot"
+        ? "We’ll send a secure link if we find an account for that email."
+        : "Your daily briefing, waiting when you are.";
+  const authPath =
+    mode === "login"
+      ? authRoutes.login
+      : mode === "signup"
+        ? authRoutes.signup
+        : mode === "forgot"
+          ? authRoutes.forgotPassword
+          : mode === "reset"
+            ? authRoutes.resetPassword
+            : authRoutes.verifyEmail;
+  const authLink = (path: string) =>
+    returnTo === "/dashboard"
+      ? path
+      : `${path}?returnTo=${encodeURIComponent(returnTo)}`;
+  const verifyView =
+    mode === "verify" && verificationState === "idle" ? (
+      <div className="verification-state">
+        <div className="verification-icon verification-envelope">
+          <MailOpen size={30} />
+        </div>
+        <h2>Confirm your email</h2>
+        <p className="auth-lede">
+          You’re one click away from your daily Aurikrex Bytes briefing.
+        </p>
+        <button
+          className="button button-full"
+          onClick={() => verify.mutate({ token })}
+          disabled={!token || verify.isPending}
+        >
+          {verify.isPending ? "Verifying…" : "Verify email"} <Check size={16} />
+        </button>
+      </div>
+    ) : verificationState === "verified" ? (
+      <div className="verification-state verification-success">
+        <div className="verification-icon">
+          <Check size={30} />
+        </div>
+        <h2>Email verified</h2>
+        <p className="auth-lede">
+          Your Aurikrex Bytes account is ready. You can sign in and start your
+          daily briefing. Redirecting you to login…
+        </p>
+        <Link className="button button-full" href={authRoutes.login}>
+          Proceed to login <ArrowRight size={16} />
+        </Link>
+      </div>
+    ) : verificationState === "already_verified" ? (
+      <div className="verification-state">
+        <div className="verification-icon">
+          <Check size={30} />
+        </div>
+        <h2>This email is already verified</h2>
+        <p className="auth-lede">
+          This link has already done its job. Redirecting you to login…
+        </p>
+        <Link className="button button-full" href={authRoutes.login}>
+          Go to login <ArrowRight size={16} />
+        </Link>
+      </div>
+    ) : verificationState === "error" ? (
+      <div className="verification-state">
+        <div className="verification-icon verification-icon-error">
+          <X size={30} />
+        </div>
+        <h2>That link needs a refresh</h2>
+        <p className="auth-lede">
+          This verification link is invalid or has expired. Request a new one
+          and we’ll get you back on track.
+        </p>
+        <label>
+          Email address
+          <input
+            type="email"
+            value={verificationEmail || email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="you@example.com"
+          />
+        </label>
+        <button
+          className="button button-full"
+          onClick={() => resend.mutate({ email: verificationEmail || email })}
+          disabled={!email && !verificationEmail}
+        >
+          Resend verification email <Mail size={16} />
+        </button>
+      </div>
+    ) : (
+      <div className="verification-state">
+        <div className="verification-icon verification-envelope">
+          <MailOpen size={30} />
+        </div>
+        <h2>Check your inbox</h2>
+        <p className="auth-lede">
+          We sent a verification email to{" "}
+          <strong>{verificationEmail || "your email address"}</strong>. Click
+          the link inside to confirm your account.
+        </p>
+        <button
+          className="button button-outline button-full"
+          onClick={() => resend.mutate({ email: verificationEmail || email })}
+        >
+          Resend email <Mail size={16} />
+        </button>
+        <p className="verification-hint">
+          Can’t find it? Check your spam or promotions folder.
+        </p>
+      </div>
+    );
+  return (
+    <>
+      <Seo
+        title={
+          (verificationEmail ? "Check your inbox" : authTitles[mode]) +
+          " — Aurikrex Bytes"
+        }
+        description="Sign in or create an Aurikrex Bytes reader account for a calmer daily technology briefing."
+        path={authPath}
+        robots="noindex,nofollow"
+      />
+      <div className="auth-shell">
+        <div className="auth-side">
+          <Logo />
+          <div className="px-auth-side-hero">
+            <span className="eyebrow">A considered daily read</span>
+            <h1>
+              Your briefing,
+              <br />
+              <em>waiting for you.</em>
+            </h1>
+            <p>
+              Five to ten stories. Better context. A calmer start to the day.
+            </p>
+            <div className="px-auth-feature-list">
+              <div className="px-auth-feature-item">
+                <div className="px-auth-feature-icon"><Clock3 size={16} /></div>
+                <div>
+                  <strong>5-Minute Daily Briefing</strong>
+                  <span>Synthesized intelligence across AI, systems, and frontier technology.</span>
+                </div>
+              </div>
+              <div className="px-auth-feature-item">
+                <div className="px-auth-feature-icon"><Sparkles size={16} /></div>
+                <div>
+                  <strong>Grounded Falke AI Follow-Ups</strong>
+                  <span>Ask interactive follow-up questions anchored directly to each story.</span>
+                </div>
+              </div>
+              <div className="px-auth-feature-item">
+                <div className="px-auth-feature-icon"><Bookmark size={16} /></div>
+                <div>
+                  <strong>Curated Signal, Zero Noise</strong>
+                  <span>Save threads, build reading streaks, and earn AuriCoins as you read.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <span className="auth-quote">“A little signal goes a long way.”</span>
+        </div>
+        <div className="auth-main">
+          <div className="auth-top">
+            <Logo compact />
+            <div className="auth-top-actions">
+              <ThemeToggle />
+              <button className="text-button" onClick={() => navigate("/")}>
+                Back home
+              </button>
+            </div>
+          </div>
+          <div className="auth-panel">
+            {verificationEmail && mode === "signup" ? (
+              verifyView
+            ) : mode === "verify" ? (
+              <>
+                {verifyView}
+                {!verificationState && (
+                  <button
+                    className="text-button verification-back"
+                    onClick={() => navigate(authRoutes.login)}
+                  >
+                    Back to login
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="eyebrow">Aurikrex Bytes</span>
+                <h2>{authTitles[mode]}</h2>
+                <p className="auth-lede">{copy}</p>
+                <form onSubmit={submit}>
+                  {mode === "signup" && (
+                    <>
+                      <div className="signup-avatar-field">
+                        <label className="signup-avatar-label">Profile photo (optional)</label>
+                        <div className="signup-avatar-row">
+                          <div className="signup-avatar-preview">
+                            {avatarPreview ? (
+                              <img src={avatarPreview} alt="Preview" />
+                            ) : (
+                              <span>{getInitial(name || email || "U")}</span>
+                            )}
+                          </div>
+                          <label
+                            className="button button-small button-outline signup-avatar-upload-btn"
+                            style={{
+                              pointerEvents: avatarUploading ? "none" : undefined,
+                              opacity: avatarUploading ? 0.7 : 1,
+                            }}
+                          >
+                            {avatarUploading ? (
+                              <>
+                                <Loader2 size={14} className="animate-spin" /> Uploading...
+                              </>
+                            ) : (
+                              <>
+                                <Camera size={14} /> {avatarPreview ? "Change photo" : "Upload photo"}
+                              </>
+                            )}
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              onChange={handleAvatarFileChange}
+                              style={{ display: "none" }}
+                              disabled={avatarUploading}
+                            />
+                          </label>
+                          {avatarPreview && (
+                            <button
+                              type="button"
+                              className="text-button text-button-muted"
+                              style={{ fontSize: "12px" }}
+                              onClick={() => {
+                                setAvatarUrl("");
+                                setAvatarPreview("");
+                              }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <label>
+                        Full name
+                        <input
+                          value={name}
+                          onChange={e => setName(e.target.value)}
+                          required
+                        />
+                      </label>
+                    </>
+                  )}
+                  {mode !== "reset" && (
+                    <label>
+                      Email address
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        required
+                        placeholder="you@example.com"
+                      />
+                    </label>
+                  )}
+                  {mode !== "forgot" && (
+                    <>
+                      <label>
+                        Password
+                        <input
+                          type="password"
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          required
+                          minLength={8}
+                          placeholder="At least 8 characters, a number and symbol"
+                        />
+                      </label>
+                      {mode === "login" && (
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "-6px", marginBottom: "16px" }}>
+                          <Link className="text-link" style={{ fontSize: "13px" }} href={authRoutes.forgotPassword}>
+                            Forgot password?
+                          </Link>
+                        </div>
+                      )}
+                      {(mode === "signup" || mode === "reset") && (
+                        <>
+                          <ul
+                            className="password-requirements"
+                            aria-label="Password requirements"
+                          >
+                            {requirements.map(item => (
+                              <li
+                                key={item.label}
+                                className={item.valid ? "valid" : ""}
+                              >
+                                <Check size={14} />
+                                {item.label}
+                              </li>
+                            ))}
+                          </ul>
+                          <label>
+                            Confirm password
+                            <input
+                              type="password"
+                              value={confirmPassword}
+                              onChange={e => setConfirmPassword(e.target.value)}
+                              required
+                              minLength={8}
+                            />
+                          </label>
+                        </>
+                      )}
+                    </>
+                  )}
+                  <button
+                    className="button button-full"
+                    type="submit"
+                    disabled={avatarUploading || signup.isPending || login.isPending || forgot.isPending || reset.isPending}
+                  >
+                    {mode === "signup"
+                      ? "Create account"
+                      : mode === "forgot"
+                        ? "Send reset link"
+                        : mode === "reset"
+                          ? "Update password"
+                          : "Sign in"}{" "}
+                    <ArrowRight size={16} />
+                  </button>
+                </form>
+                {(mode === "login" || mode === "signup") && (
+                  <>
+                    <div className="auth-divider">
+                      <span>or continue with</span>
+                    </div>
+                    <a
+                      className={`google-button ${google.isLoading ? "is-loading" : ""}`}
+                      href={google.data?.url}
+                      aria-disabled={!google.data?.url}
+                      onClick={event => {
+                        if (!google.data?.url) event.preventDefault();
+                      }}
+                    >
+                      <GoogleIcon />
+                      <span>Continue with Google</span>
+                    </a>
+                    <div className="auth-links">
+                      {mode === "login" ? (
+                        <Link href={authLink(authRoutes.signup)}>Create an account</Link>
+                      ) : (
+                        <Link href={authLink(authRoutes.login)}>
+                          Already a reader? Sign in
+                        </Link>
+                      )}
+                    </div>
+                  </>
+                )}
+                <p className="form-message" role="status">
+                  {message}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
