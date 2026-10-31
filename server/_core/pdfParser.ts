@@ -97,9 +97,9 @@ function extractEntityKicker(headline: string, category: string, source?: string
       palette: {
         bg1: "#0a1120",
         bg2: "#132342",
-        accent1: "#3b82f6",
+        accent1: "#327afd",
         accent2: "#60a5fa",
-        glow: "rgba(59, 130, 246, 0.24)",
+        glow: "rgba(50, 122, 253, 0.24)",
       },
     };
   }
@@ -124,9 +124,9 @@ function extractEntityKicker(headline: string, category: string, source?: string
     palette: {
       bg1: "#0b0f19",
       bg2: "#141c2e",
-      accent1: "#3b82f6",
+      accent1: "#327afd",
       accent2: "#60a5fa",
-      glow: "rgba(59, 130, 246, 0.18)",
+      glow: "rgba(50, 122, 253, 0.18)",
     },
   };
 }

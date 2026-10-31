@@ -1,7 +1,7 @@
 @import "tailwindcss";
 :root {
   color-scheme: light;
-  --blue: #3b82f6;
+  --blue: #327afd;
   --blue-dark: #2563eb;
   --bg: #f8fafc;
   --surface: #fff;
@@ -49,7 +49,7 @@ button:disabled {
   opacity: 0.45;
 }
 :focus-visible {
-  outline: 3px solid rgba(59, 130, 246, 0.4);
+  outline: 3px solid rgba(50, 122, 253, 0.4);
   outline-offset: 3px;
 }
 .dark {
@@ -147,7 +147,7 @@ button:disabled {
 .button:hover {
   background: var(--blue-dark);
   transform: translateY(-1px);
-  box-shadow: 0 8px 16px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 8px 16px rgba(50, 122, 253, 0.2);
 }
 .button-small {
   padding: 9px 13px;
@@ -208,7 +208,7 @@ button:disabled {
   height: 7px;
   border-radius: 50%;
   background: var(--blue);
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 0 0 4px rgba(50, 122, 253, 0.15);
 }
 h1,
 h2,
@@ -316,7 +316,7 @@ h2 {
 }
 .post-card:hover {
   transform: translateY(-4px);
-  border-color: rgba(59, 130, 246, 0.5);
+  border-color: rgba(50, 122, 253, 0.5);
   box-shadow: 0 18px 38px rgba(15, 23, 42, 0.12);
 }
 .post-card-featured {
@@ -801,7 +801,7 @@ details p {
 }
 .auth-panel input:focus {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  box-shadow: 0 0 0 3px rgba(50, 122, 253, 0.12);
 }
 .google-button {
   display: flex;
@@ -1303,7 +1303,7 @@ details p {
 }
 .admin-form-card input:focus {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  box-shadow: 0 0 0 3px rgba(50, 122, 253, 0.12);
 }
 .management-page,
 .new-post-page {
@@ -2355,8 +2355,8 @@ button,
 .admin-rail-title span { display: block; margin-top: 7px; color: var(--blue); font: 700 9px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; }
 .admin-rail nav { display: grid; gap: 7px; }
 .admin-rail nav a { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 11px 13px; border: 1px solid transparent; border-radius: 10px; color: var(--muted); font-size: 13px; font-weight: 600; transition: color .18s, background .18s, border-color .18s, transform .18s; }
-.admin-rail nav a:hover, .admin-rail nav a:focus-visible { color: var(--blue); background: var(--surface-2); border-color: rgba(59,130,246,.15); transform: translateX(2px); }
-.admin-rail nav a.active { color: var(--blue); background: var(--surface-2); border-color: rgba(59,130,246,.22); box-shadow: inset 3px 0 0 var(--blue); }
+.admin-rail nav a:hover, .admin-rail nav a:focus-visible { color: var(--blue); background: var(--surface-2); border-color: rgba(50,122,253,.15); transform: translateX(2px); }
+.admin-rail nav a.active { color: var(--blue); background: var(--surface-2); border-color: rgba(50,122,253,.22); box-shadow: inset 3px 0 0 var(--blue); }
 .admin-rail-bottom { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 0 10px; }
 .public-brief-link { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 600; }
 .public-brief-link:hover { color: var(--blue); }
@@ -2373,7 +2373,7 @@ button,
 .new-post-form { display: grid; gap: 20px; }
 .image-upload-card, .new-post-fields { padding: clamp(20px, 3vw, 30px); }
 .image-upload-card .field-heading { margin-bottom: 18px; }
-.upload-zone { position: relative; display: grid; place-items: center; min-height: 220px; padding: 24px; overflow: hidden; border: 1.5px dashed rgba(59,130,246,.45); border-radius: 12px; background: linear-gradient(135deg, var(--surface-2), var(--surface)); color: var(--blue); text-align: center; cursor: pointer; transition: border-color .18s, background .18s; }
+.upload-zone { position: relative; display: grid; place-items: center; min-height: 220px; padding: 24px; overflow: hidden; border: 1.5px dashed rgba(50,122,253,.45); border-radius: 12px; background: linear-gradient(135deg, var(--surface-2), var(--surface)); color: var(--blue); text-align: center; cursor: pointer; transition: border-color .18s, background .18s; }
 .upload-zone:hover, .upload-zone:focus-within { border-color: var(--blue); background: var(--surface-2); }
 .upload-zone input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
 .upload-prompt { display: grid; gap: 5px; }
@@ -2681,7 +2681,7 @@ button,
 .reader-tabs button { border: 0; border-radius: 7px; padding: 9px 13px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; }
 .reader-tabs button.active { color: var(--blue); background: var(--surface); box-shadow: 0 3px 12px rgba(15, 23, 42, .08); }
 .header-login { display: inline-flex; align-items: center; gap: 6px; }
-@keyframes streak-pulse { 0% { box-shadow: 0 0 0 rgba(59,130,246,0); } 40% { box-shadow: 0 0 0 8px rgba(59,130,246,.12); } 100% { box-shadow: var(--shadow); } }
+@keyframes streak-pulse { 0% { box-shadow: 0 0 0 rgba(50,122,253,0); } 40% { box-shadow: 0 0 0 8px rgba(50,122,253,.12); } 100% { box-shadow: var(--shadow); } }
 @media (max-width: 800px) {
   .reader-dashboard { padding-top: 52px; }
   .dashboard-intro { align-items: stretch; flex-direction: column; padding-bottom: 45px; }
@@ -4605,17 +4605,17 @@ button,
 }
 
 .brand-chip:hover {
-  border-color: var(--primary, #3b82f6);
-  color: var(--primary, #3b82f6);
-  background: color-mix(in srgb, var(--primary, #3b82f6) 8%, transparent);
+  border-color: var(--primary, #327afd);
+  color: var(--primary, #327afd);
+  background: color-mix(in srgb, var(--primary, #327afd) 8%, transparent);
 }
 
 .brand-chip.active {
-  background: var(--primary, #3b82f6);
+  background: var(--primary, #327afd);
   color: #ffffff;
-  border-color: var(--primary, #3b82f6);
+  border-color: var(--primary, #327afd);
   font-weight: 600;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--primary, #3b82f6) 30%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--primary, #327afd) 30%, transparent);
 }
 
 .search-results-info {
@@ -4677,7 +4677,7 @@ button,
   width: 240px;
   height: 240px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(59, 130, 246, 0.16) 0%, rgba(59, 130, 246, 0.05) 55%, transparent 75%);
+  background: radial-gradient(circle, rgba(50, 122, 253, 0.16) 0%, rgba(50, 122, 253, 0.05) 55%, transparent 75%);
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
@@ -5731,7 +5731,7 @@ body.has-install-prompt {
 }
 
 .maintenance-modal-icon.icon-off {
-  background: rgba(59, 130, 246, 0.14);
+  background: rgba(50, 122, 253, 0.14);
   color: var(--blue);
 }
 
@@ -6649,7 +6649,7 @@ body.has-install-prompt {
 .pillar-card:hover {
   transform: translateY(-4px);
   border-color: color-mix(in srgb, var(--blue) 55%, var(--line));
-  box-shadow: 0 16px 34px rgba(59, 130, 246, 0.1);
+  box-shadow: 0 16px 34px rgba(50, 122, 253, 0.1);
 }
 
 .pillar-icon-wrap {
@@ -10858,8 +10858,8 @@ button.brand-chip.active {
   width: 52px;
   height: 52px;
   border-radius: 14px;
-  background: color-mix(in srgb, var(--primary, #3b82f6) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--primary, #3b82f6) 28%, transparent);
+  background: color-mix(in srgb, var(--primary, #327afd) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary, #327afd) 28%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -10880,7 +10880,7 @@ button.brand-chip.active {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--primary, #3b82f6);
+  color: var(--primary, #327afd);
   margin-bottom: 2px;
 }
 
@@ -10929,8 +10929,8 @@ button.brand-chip.active {
 }
 
 .pill-dot.evening {
-  background: #3b82f6;
-  box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+  background: #327afd;
+  box-shadow: 0 0 8px rgba(50, 122, 253, 0.5);
 }
 
 .pill-text {
@@ -10964,7 +10964,7 @@ button.brand-chip.active {
   gap: 8px;
   border-radius: 12px;
   border: none;
-  background: var(--primary, #3b82f6);
+  background: var(--primary, #327afd);
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -11024,7 +11024,7 @@ button.brand-chip.active {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--primary, #3b82f6);
+  color: var(--primary, #327afd);
   flex-shrink: 0;
 }
 
@@ -11079,7 +11079,7 @@ button.brand-chip.active {
 }
 
 input:checked + .slider {
-  background-color: var(--primary, #3b82f6);
+  background-color: var(--primary, #327afd);
 }
 
 input:checked + .slider:before {
@@ -11343,8 +11343,8 @@ input:disabled + .slider {
 }
 
 .slot-pill.evening {
-  background: rgba(59, 130, 246, 0.12);
-  color: #3b82f6;
+  background: rgba(50, 122, 253, 0.12);
+  color: #327afd;
 }
 
 .ledger-status-badge {
@@ -11363,8 +11363,8 @@ input:disabled + .slider {
 }
 
 .ledger-status-badge.sending {
-  background: rgba(59, 130, 246, 0.14);
-  color: #3b82f6;
+  background: rgba(50, 122, 253, 0.14);
+  color: #327afd;
 }
 
 .ledger-status-badge.skipped {

@@ -143,7 +143,7 @@ export function PushSubscribeButton({ variant = "header" }: PushSubscribeButtonP
         }
       >
         {permission === "granted" || isSubscribed ? (
-          <BellRing size={18} strokeWidth={2} style={{ color: "var(--primary, #3b82f6)" }} />
+          <BellRing size={18} strokeWidth={2} style={{ color: "var(--primary, #327afd)" }} />
         ) : permission === "denied" ? (
           <BellOff size={18} strokeWidth={1.8} style={{ opacity: 0.6 }} />
         ) : (
