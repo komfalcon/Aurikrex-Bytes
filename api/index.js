@@ -1344,6 +1344,1268 @@ var init_central = __esm({
   }
 });
 
+// server/pushConfig.ts
+function getLagosParts(now2 = /* @__PURE__ */ new Date()) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: PUSH_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false
+  });
+  const parts = dtf.formatToParts(now2);
+  const partMap = {};
+  for (const p of parts) {
+    if (p.type !== "literal") partMap[p.type] = p.value;
+  }
+  const year = parseInt(partMap.year, 10);
+  const month = parseInt(partMap.month, 10);
+  const day = parseInt(partMap.day, 10);
+  const hour = parseInt(partMap.hour, 10);
+  const minute = parseInt(partMap.minute, 10);
+  const second = parseInt(partMap.second, 10);
+  const yyyy = String(year);
+  const mm = String(month).padStart(2, "0");
+  const dd = String(day).padStart(2, "0");
+  const dateStr = `${yyyy}-${mm}-${dd}`;
+  return { year, month, day, hour, minute, second, dateStr };
+}
+function resolvePushSlot(requestedSlot, now2 = /* @__PURE__ */ new Date(), ignoreWindow = false) {
+  const { year, month, day, hour, dateStr } = getLagosParts(now2);
+  const normSlot = requestedSlot?.trim().toLowerCase();
+  if (normSlot && normSlot !== "morning" && normSlot !== "evening") {
+    return { isValid: false, status: "invalid_slot" };
+  }
+  const inMorningWindow = hour >= 8 && hour < 11;
+  const inEveningWindow = hour >= 22 || hour === 0;
+  let targetSlot;
+  if (normSlot === "morning") {
+    if (!ignoreWindow && !inMorningWindow) {
+      return { isValid: false, status: "outside_window" };
+    }
+    targetSlot = "morning";
+  } else if (normSlot === "evening") {
+    if (!ignoreWindow && !inEveningWindow) {
+      return { isValid: false, status: "outside_window" };
+    }
+    targetSlot = "evening";
+  } else {
+    if (inMorningWindow) {
+      targetSlot = "morning";
+    } else if (inEveningWindow) {
+      targetSlot = "evening";
+    } else {
+      if (!ignoreWindow) {
+        return { isValid: false, status: "outside_window" };
+      }
+      targetSlot = hour >= 16 || hour < 4 ? "evening" : "morning";
+    }
+  }
+  if (targetSlot === "morning") {
+    const scheduledFor = new Date(Date.UTC(year, month - 1, day, 7, 0, 0));
+    return {
+      isValid: true,
+      slot: "morning",
+      editionDate: dateStr,
+      scheduledFor
+    };
+  } else {
+    if (hour === 0) {
+      const prevDate = new Date(now2.getTime() - 2 * 60 * 60 * 1e3);
+      const prevParts = getLagosParts(prevDate);
+      const scheduledFor = new Date(
+        Date.UTC(prevParts.year, prevParts.month - 1, prevParts.day, 21, 0, 0)
+      );
+      return {
+        isValid: true,
+        slot: "evening",
+        editionDate: prevParts.dateStr,
+        scheduledFor
+      };
+    } else {
+      const scheduledFor = new Date(Date.UTC(year, month - 1, day, 21, 0, 0));
+      return {
+        isValid: true,
+        slot: "evening",
+        editionDate: dateStr,
+        scheduledFor
+      };
+    }
+  }
+}
+var PUSH_TIMEZONE;
+var init_pushConfig = __esm({
+  "server/pushConfig.ts"() {
+    "use strict";
+    PUSH_TIMEZONE = "Africa/Lagos";
+  }
+});
+
+// server/pushLedger.ts
+var pushLedger_exports = {};
+__export(pushLedger_exports, {
+  claimPushSlot: () => claimPushSlot,
+  getAdminSubscriptionIds: () => getAdminSubscriptionIds,
+  listEditionPublishedPosts: () => listEditionPublishedPosts,
+  listRecentPushSends: () => listRecentPushSends,
+  updatePushSend: () => updatePushSend
+});
+import { and as and2, asc as asc2, desc as desc2, eq as eq3, inArray as inArray2 } from "drizzle-orm";
+async function claimPushSlot(params) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const nowMs = params.now ? params.now.getTime() : Date.now();
+  const startedAt = new Date(nowMs);
+  const effectiveTriggerSource = params.force ? "manual" : params.triggerSource;
+  try {
+    const inserted = await db.insert(pushSends).values({
+      editionDate: params.editionDate,
+      slot: params.slot,
+      status: "sending",
+      triggerSource: effectiveTriggerSource,
+      scheduledFor: params.scheduledFor,
+      startedAt,
+      attempts: 1
+    }).returning({ id: pushSends.id });
+    if (inserted && inserted[0]?.id) {
+      return { claimed: true, sendId: inserted[0].id, attempts: 1 };
+    }
+  } catch {
+  }
+  const rows = await db.select().from(pushSends).where(
+    and2(
+      eq3(pushSends.editionDate, params.editionDate),
+      eq3(pushSends.slot, params.slot)
+    )
+  ).limit(1);
+  const existing = rows[0];
+  if (!existing) {
+    throw new Error("Unable to claim or read push_sends ledger row");
+  }
+  if (existing.status === "sent") {
+    if (params.force && params.resend) {
+      const reclaimed = await db.update(pushSends).set({
+        status: "sending",
+        triggerSource: "manual",
+        startedAt,
+        finishedAt: null,
+        error: `Manual resend initiated at ${(/* @__PURE__ */ new Date()).toISOString()}`,
+        attempts: 1
+      }).where(eq3(pushSends.id, existing.id)).returning({ id: pushSends.id });
+      if (reclaimed && reclaimed.length > 0) {
+        return { claimed: true, sendId: existing.id, attempts: 1 };
+      }
+    }
+    return {
+      claimed: false,
+      status: "already_done",
+      error: "Slot already sent. Pass force=1&resend=1 to resend.",
+      existing
+    };
+  }
+  if (existing.status === "skipped") {
+    if (params.force) {
+      const reclaimed = await db.update(pushSends).set({
+        status: "sending",
+        triggerSource: "manual",
+        startedAt,
+        finishedAt: null,
+        error: null,
+        attempts: 1
+      }).where(eq3(pushSends.id, existing.id)).returning({ id: pushSends.id });
+      if (reclaimed && reclaimed.length > 0) {
+        return { claimed: true, sendId: existing.id, attempts: 1 };
+      }
+    }
+    return { claimed: false, status: "already_done", existing };
+  }
+  if (existing.status === "failed") {
+    if (existing.attempts >= 3 && !params.force) {
+      return {
+        claimed: false,
+        status: "max_attempts_exceeded",
+        error: existing.error,
+        existing
+      };
+    }
+    const nextAttempts = params.force ? 1 : existing.attempts + 1;
+    const reclaimed = await db.update(pushSends).set({
+      status: "sending",
+      triggerSource: params.force ? "manual" : params.triggerSource,
+      startedAt,
+      finishedAt: null,
+      error: params.force ? null : existing.error,
+      attempts: nextAttempts
+    }).where(
+      and2(
+        eq3(pushSends.id, existing.id),
+        eq3(pushSends.status, "failed")
+      )
+    ).returning({ id: pushSends.id });
+    if (reclaimed && reclaimed.length > 0) {
+      return { claimed: true, sendId: existing.id, attempts: nextAttempts };
+    }
+    return { claimed: false, status: "in_progress", existing };
+  }
+  const startedAtMs = existing.startedAt instanceof Date ? existing.startedAt.getTime() : Number(existing.startedAt);
+  const isStale = nowMs - startedAtMs > 5 * 60 * 1e3;
+  if (existing.status === "sending" && (isStale || params.force)) {
+    if (existing.attempts >= 3 && !params.force) {
+      return {
+        claimed: false,
+        status: "max_attempts_exceeded",
+        error: existing.error,
+        existing
+      };
+    }
+    const nextAttempts = params.force ? 1 : existing.attempts + 1;
+    const reclaimed = await db.update(pushSends).set({
+      status: "sending",
+      triggerSource: params.force ? "manual" : params.triggerSource,
+      startedAt,
+      finishedAt: null,
+      error: params.force ? "Forced reclaim" : "Reclaimed stale sending claim",
+      attempts: nextAttempts
+    }).where(
+      and2(
+        eq3(pushSends.id, existing.id),
+        eq3(pushSends.status, "sending")
+      )
+    ).returning({ id: pushSends.id });
+    if (reclaimed && reclaimed.length > 0) {
+      return { claimed: true, sendId: existing.id, attempts: nextAttempts };
+    }
+    return { claimed: false, status: "in_progress", existing };
+  }
+  return { claimed: false, status: "in_progress", existing };
+}
+async function updatePushSend(sendId, updates) {
+  const db = await getDb();
+  if (!db) return;
+  const setObj = {};
+  if (updates.status) setObj.status = updates.status;
+  if (updates.finishedAt) setObj.finishedAt = updates.finishedAt;
+  if (updates.leadPostId !== void 0) setObj.leadPostId = updates.leadPostId;
+  if (updates.postsCount !== void 0) setObj.postsCount = updates.postsCount;
+  if (updates.recipientsCount !== void 0)
+    setObj.recipientsCount = updates.recipientsCount;
+  if (updates.onesignalNotificationIds) {
+    setObj.onesignalNotificationIds = JSON.stringify(
+      updates.onesignalNotificationIds
+    );
+  }
+  if (updates.invalidRemovedCount !== void 0)
+    setObj.invalidRemovedCount = updates.invalidRemovedCount;
+  if (updates.error !== void 0) setObj.error = updates.error;
+  await db.update(pushSends).set(setObj).where(eq3(pushSends.id, sendId));
+}
+async function listRecentPushSends(limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(pushSends).orderBy(desc2(pushSends.id)).limit(limit);
+}
+async function listEditionPublishedPosts(editionDate, timeZone = PUSH_TIMEZONE) {
+  const db = await getDb();
+  if (!db) return [];
+  const published = await db.select().from(posts).where(eq3(posts.status, "published")).orderBy(asc2(posts.publishedTime));
+  return published.filter(
+    (post) => post.publishedTime && localCalendarDay(post.publishedTime, timeZone) === editionDate
+  );
+}
+async function getAdminSubscriptionIds() {
+  const db = await getDb();
+  if (!db) return [];
+  const admins = await db.select({ email: adminUsers.email }).from(adminUsers).where(eq3(adminUsers.isActive, true));
+  const adminEmails = admins.map((a) => a.email.toLowerCase().trim()).filter(Boolean);
+  if (adminEmails.length === 0) return [];
+  const matchedReaders = await db.select({ id: readers.id }).from(readers).where(inArray2(readers.email, adminEmails));
+  const readerIds = matchedReaders.map((r) => r.id);
+  if (readerIds.length === 0) return [];
+  const subs = await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions).where(inArray2(oneSignalSubscriptions.readerId, readerIds));
+  return subs.map((s) => s.subscriptionId);
+}
+var init_pushLedger = __esm({
+  "server/pushLedger.ts"() {
+    "use strict";
+    init_schema();
+    init_db();
+    init_pushConfig();
+  }
+});
+
+// server/push.ts
+var push_exports = {};
+__export(push_exports, {
+  decodeHtmlEntities: () => decodeHtmlEntities,
+  fixAllCaps: () => fixAllCaps,
+  formatPushBody: () => formatPushBody,
+  formatPushNotificationContent: () => formatPushNotificationContent,
+  processPushTrigger: () => processPushTrigger,
+  sendAdminAlertEmail: () => sendAdminAlertEmail,
+  sendDailyPushNotifications: () => sendDailyPushNotifications,
+  sendTestPushNotification: () => sendTestPushNotification,
+  stripEmoji: () => stripEmoji,
+  stripSourcePrefixes: () => stripSourcePrefixes,
+  transformPushImage: () => transformPushImage,
+  truncateHeadline: () => truncateHeadline
+});
+import { inArray as inArray3 } from "drizzle-orm";
+function getOneSignalConfig() {
+  const appId = process.env.ONESIGNAL_APP_ID;
+  const apiKey = process.env.ONESIGNAL_REST_API_KEY || process.env.ONESIGNAL_API_KEY;
+  if (!appId || !apiKey) {
+    throw new Error(
+      "ONESIGNAL_APP_ID and ONESIGNAL_REST_API_KEY are required"
+    );
+  }
+  return { appId, apiKey };
+}
+function decodeHtmlEntities(str) {
+  return str.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&nbsp;/g, " ").replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec))).replace(
+    /&#x([0-9a-f]+);/gi,
+    (_, hex) => String.fromCharCode(parseInt(hex, 16))
+  );
+}
+function stripSourcePrefixes(str) {
+  return str.replace(/^(?:(?:show|ask|tell|launch)\s+hn\s*:\s*|\[[^\]]+\]\s*:?\s*)/i, "").trim();
+}
+function stripEmoji(str) {
+  return str.replace(
+    /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{200D}]/gu,
+    ""
+  ).replace(/\s+/g, " ").trim();
+}
+function fixAllCaps(str) {
+  const letters = str.replace(/[^a-zA-Z]/g, "");
+  if (letters.length >= 6) {
+    const upperCount = (str.match(/[A-Z]/g) || []).length;
+    if (upperCount / letters.length > 0.75) {
+      return str.toLowerCase().split(" ").map((word, idx) => {
+        const clean = word.replace(/[^a-z]/gi, "").toUpperCase();
+        if (COMMON_TECH_ACRONYMS.has(clean)) {
+          return word.replace(new RegExp(clean, "i"), clean);
+        }
+        if (idx === 0 || word.length > 3) {
+          return word.charAt(0).toUpperCase() + word.slice(1);
+        }
+        return word;
+      }).join(" ");
+    }
+  }
+  return str;
+}
+function truncateHeadline(str, maxLen = 90) {
+  const trimmed = str.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= maxLen) {
+    return trimmed;
+  }
+  const slice = trimmed.slice(0, maxLen - 1);
+  const lastSpace = slice.lastIndexOf(" ");
+  const cut = (lastSpace > 30 ? slice.slice(0, lastSpace) : slice).trim();
+  const cleanCut = cut.replace(/[,\-:;\s]+$/, "");
+  return `${cleanCut}\u2026`;
+}
+function formatPushBody(rawHeadline) {
+  const decoded = decodeHtmlEntities(rawHeadline);
+  const withoutPrefix = stripSourcePrefixes(decoded);
+  const withoutEmoji = stripEmoji(withoutPrefix);
+  const casingFixed = fixAllCaps(withoutEmoji);
+  return truncateHeadline(casingFixed, 90);
+}
+function transformPushImage(imageUrl, baseUrl) {
+  const fallbackUrl = `${baseUrl}/images/briefing-banner-2x1.png`;
+  if (!imageUrl || !imageUrl.startsWith("http")) {
+    return fallbackUrl;
+  }
+  if (imageUrl.includes("res.cloudinary.com") && imageUrl.includes("/upload/")) {
+    return imageUrl.replace(
+      /\/upload\/(?:[a-z]_[^/]+,?)*\/?(v\d+\/)?/i,
+      "/upload/c_fill,ar_2:1,w_1200,g_auto,f_auto,q_auto/$1"
+    );
+  }
+  return imageUrl;
+}
+function formatPushNotificationContent(story, optionsOrTimeZone, legacyNow) {
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+  let postsCount = 1;
+  let timeZone = PUSH_TIMEZONE;
+  let now2 = /* @__PURE__ */ new Date();
+  let requestedSlot = null;
+  if (typeof optionsOrTimeZone === "string") {
+    timeZone = optionsOrTimeZone;
+    if (legacyNow) now2 = legacyNow;
+  } else if (optionsOrTimeZone && typeof optionsOrTimeZone === "object") {
+    if (optionsOrTimeZone.postsCount !== void 0) {
+      postsCount = optionsOrTimeZone.postsCount;
+    }
+    if (optionsOrTimeZone.timeZone) timeZone = optionsOrTimeZone.timeZone;
+    if (optionsOrTimeZone.now) now2 = optionsOrTimeZone.now;
+    if (optionsOrTimeZone.slot) requestedSlot = optionsOrTimeZone.slot;
+  }
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "numeric",
+      hour12: false
+    }).format(now2)
+  );
+  const isMorning = requestedSlot ? requestedSlot === "morning" : hour >= 4 && hour < 16;
+  const heading = isMorning ? postsCount === 1 ? "Morning Brief \xB7 1 new Byte" : `Morning Brief \xB7 ${postsCount} new Bytes` : postsCount === 1 ? "Evening Recap \xB7 1 Byte today" : `Evening Recap \xB7 ${postsCount} Bytes today`;
+  const fallbackBanner = `${baseUrl}/images/briefing-banner-2x1.png`;
+  if (story) {
+    const content = formatPushBody(story.headline);
+    const storyUrl = `${baseUrl}/post/${story.id}`;
+    const imageUrl = transformPushImage(story.imageUrl, baseUrl);
+    return {
+      heading,
+      content,
+      url: storyUrl,
+      imageUrl,
+      buttons: [
+        { id: "read-now", text: "Read now", url: storyUrl },
+        { id: "all-bytes", text: "All Bytes", url: `${baseUrl}/` }
+      ]
+    };
+  }
+  return {
+    heading: isMorning ? "Daily Tech Briefing is Ready" : "Evening Tech Roundup",
+    content: "Catch up on today's highest-signal tech stories on Aurikrex Bytes.",
+    url: `${baseUrl}/`,
+    imageUrl: fallbackBanner,
+    buttons: [
+      { id: "all-bytes", text: "All Bytes", url: `${baseUrl}/` }
+    ]
+  };
+}
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+async function sendOneSignalBatchWithRetry(payload, deadlineMs) {
+  const { appId, apiKey } = getOneSignalConfig();
+  const maxAttempts = 3;
+  let attempt = 0;
+  let lastError = null;
+  while (attempt < maxAttempts) {
+    attempt++;
+    const now2 = Date.now();
+    if (now2 >= deadlineMs) {
+      throw new Error(
+        `Timeout: OneSignal batch dispatch exceeded run deadline (attempt ${attempt})`
+      );
+    }
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1e4);
+      const response = await fetch(ONESIGNAL_API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Key ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          app_id: appId,
+          target_channel: "push",
+          ...payload
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      const responseBody = await response.text();
+      if (response.status === 429 || response.status >= 500 && response.status < 600) {
+        lastError = new Error(
+          `OneSignal error HTTP ${response.status}: ${responseBody}`
+        );
+        if (attempt < maxAttempts) {
+          const delay = attempt === 1 ? 500 : 1500;
+          if (Date.now() + delay < deadlineMs) {
+            await new Promise((r) => setTimeout(r, delay));
+            continue;
+          }
+        }
+        throw lastError;
+      }
+      if (!response.ok) {
+        throw new Error(
+          `OneSignal request failed (${response.status}): ${responseBody}`
+        );
+      }
+      const parsed = responseBody ? JSON.parse(responseBody) : {};
+      const notificationId = parsed.id;
+      const recipients = Number(parsed.recipients ?? 0);
+      const invalidIds = [];
+      if (parsed.errors && typeof parsed.errors === "object") {
+        const errObj = parsed.errors;
+        if (Array.isArray(errObj.invalid_subscription_ids)) {
+          invalidIds.push(...errObj.invalid_subscription_ids);
+        }
+        if (Array.isArray(errObj.invalid_player_ids)) {
+          invalidIds.push(...errObj.invalid_player_ids);
+        }
+      }
+      return { notificationId, recipients, invalidIds };
+    } catch (err) {
+      lastError = err;
+      const isRetryable = err.name === "AbortError" || err.message?.includes("fetch");
+      if (isRetryable && attempt < maxAttempts) {
+        const delay = 500;
+        if (Date.now() + delay < deadlineMs) {
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+      }
+      throw err;
+    }
+  }
+  throw lastError || new Error("OneSignal batch dispatch failed after retries");
+}
+async function sendAdminAlertEmail(subject, html) {
+  const alertEmail = process.env.ADMIN_ALERT_EMAIL?.trim();
+  if (!alertEmail) {
+    console.warn(
+      "[PushAlert] ADMIN_ALERT_EMAIL not configured, skipping alert email."
+    );
+    return;
+  }
+  try {
+    const { sendEmail: sendEmail2 } = await Promise.resolve().then(() => (init_services(), services_exports));
+    await sendEmail2(alertEmail, subject, html);
+    console.info(`[PushAlert] Sent alert email to ${alertEmail}: ${subject}`);
+  } catch (err) {
+    console.error("[PushAlert] Failed to send alert email:", err);
+  }
+}
+async function processPushTrigger(options = {}) {
+  const now2 = options.now || /* @__PURE__ */ new Date();
+  const dryRun = Boolean(options.dryRun);
+  const testOnly = Boolean(options.testOnly);
+  const force = Boolean(options.force);
+  const resend = Boolean(options.resend);
+  const triggerSource = force ? "manual" : options.triggerSource || "manual";
+  const resolution = resolvePushSlot(
+    options.requestedSlot,
+    now2,
+    dryRun || testOnly || force
+  );
+  if (!resolution.isValid) {
+    return { status: resolution.status || "outside_window" };
+  }
+  const slot = resolution.slot;
+  const editionDate = resolution.editionDate;
+  const scheduledFor = resolution.scheduledFor;
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+  const iconUrl = `${baseUrl}/logo-192.png`;
+  const badgeUrl = `${baseUrl}/badge-96.png`;
+  if (dryRun) {
+    const { publishDuePosts: publishDuePosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+    await publishDuePosts2(now2);
+    const editionPosts = await listEditionPublishedPosts(editionDate);
+    if (editionPosts.length === 0) {
+      return {
+        dryRun: true,
+        status: "skipped",
+        slot,
+        editionDate,
+        reason: "no_published_posts"
+      };
+    }
+    const leadStory = editionPosts[0];
+    const notification = formatPushNotificationContent(leadStory, {
+      postsCount: editionPosts.length,
+      timeZone: PUSH_TIMEZONE,
+      now: now2,
+      slot
+    });
+    const db = await getDb();
+    const subs = db ? await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions) : [];
+    const payload = {
+      headings: { en: notification.heading },
+      contents: { en: notification.content },
+      url: notification.url,
+      priority: 10,
+      ttl: 14400,
+      chrome_web_icon: iconUrl,
+      chrome_web_badge: badgeUrl,
+      firefox_icon: iconUrl,
+      collapse_id: "aurikrex-briefing",
+      web_push_topic: "aurikrex-briefing",
+      web_buttons: notification.buttons
+    };
+    if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
+      payload.big_picture = notification.imageUrl;
+      payload.chrome_web_image = notification.imageUrl;
+    }
+    return {
+      dryRun: true,
+      status: "ready",
+      slot,
+      editionDate,
+      postsCount: editionPosts.length,
+      leadStory: { id: leadStory.id, headline: leadStory.headline },
+      recipientsCount: subs.length,
+      payload
+    };
+  }
+  if (testOnly) {
+    const { publishDuePosts: publishDuePosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+    await publishDuePosts2(now2);
+    const editionPosts = await listEditionPublishedPosts(editionDate);
+    if (editionPosts.length === 0) {
+      return {
+        testOnly: true,
+        status: "skipped",
+        slot,
+        editionDate,
+        reason: "no_published_posts"
+      };
+    }
+    const leadStory = editionPosts[0];
+    const adminSubs = await getAdminSubscriptionIds();
+    if (adminSubs.length === 0) {
+      return {
+        testOnly: true,
+        status: "no_admin_subscribers",
+        slot,
+        editionDate,
+        recipientsCount: 0
+      };
+    }
+    const notification = formatPushNotificationContent(leadStory, {
+      postsCount: editionPosts.length,
+      timeZone: PUSH_TIMEZONE,
+      now: now2,
+      slot
+    });
+    const payload = {
+      include_subscription_ids: adminSubs,
+      headings: { en: `[TEST] ${notification.heading}` },
+      contents: { en: notification.content },
+      url: notification.url,
+      priority: 10,
+      ttl: 14400,
+      chrome_web_icon: iconUrl,
+      chrome_web_badge: badgeUrl,
+      firefox_icon: iconUrl,
+      collapse_id: "aurikrex-test-briefing",
+      web_push_topic: "aurikrex-test-briefing",
+      web_buttons: notification.buttons
+    };
+    if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
+      payload.big_picture = notification.imageUrl;
+      payload.chrome_web_image = notification.imageUrl;
+    }
+    const deadlineMs = Date.now() + 24e3;
+    const result = await sendOneSignalBatchWithRetry(payload, deadlineMs);
+    return {
+      testOnly: true,
+      status: "sent",
+      slot,
+      editionDate,
+      leadPostId: leadStory.id,
+      recipientsCount: adminSubs.length,
+      notificationId: result.notificationId
+    };
+  }
+  const claim = await claimPushSlot({
+    editionDate,
+    slot,
+    triggerSource,
+    scheduledFor,
+    now: now2,
+    force,
+    resend
+  });
+  if (!claim.claimed) {
+    return { status: claim.status, message: claim.error };
+  }
+  try {
+    const { publishDuePosts: publishDuePosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+    await publishDuePosts2(now2);
+    const editionPosts = await listEditionPublishedPosts(editionDate);
+    if (editionPosts.length === 0) {
+      await updatePushSend(claim.sendId, {
+        status: "skipped",
+        finishedAt: /* @__PURE__ */ new Date(),
+        error: `No published posts for edition date ${editionDate} (${slot})`
+      });
+      await sendAdminAlertEmail(
+        `[Aurikrex Bytes] Push Skipped: No published posts for ${editionDate} (${slot})`,
+        `<p>The scheduled daily push for <strong>${editionDate} (${slot})</strong> was skipped because no published posts were found for this edition.</p>
+         <p>Trigger source: <code>${triggerSource}</code></p>
+         <p>Time: ${now2.toISOString()}</p>`
+      );
+      return {
+        status: "skipped",
+        slot,
+        editionDate,
+        reason: "no_published_posts"
+      };
+    }
+    const leadStory = editionPosts[0];
+    const notification = formatPushNotificationContent(leadStory, {
+      postsCount: editionPosts.length,
+      timeZone: PUSH_TIMEZONE,
+      now: now2,
+      slot
+    });
+    const db = await getDb();
+    if (!db) throw new Error("Database unavailable");
+    const subs = await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions);
+    const basePayload = {
+      headings: { en: notification.heading },
+      contents: { en: notification.content },
+      url: notification.url,
+      priority: 10,
+      ttl: 14400,
+      chrome_web_icon: iconUrl,
+      chrome_web_badge: badgeUrl,
+      firefox_icon: iconUrl,
+      collapse_id: "aurikrex-briefing",
+      web_push_topic: "aurikrex-briefing",
+      web_buttons: notification.buttons
+    };
+    if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
+      basePayload.big_picture = notification.imageUrl;
+      basePayload.chrome_web_image = notification.imageUrl;
+    }
+    const runDeadlineMs = Date.now() + 24e3;
+    const notificationIds = [];
+    const allInvalidIds = [];
+    let totalSent = 0;
+    if (subs.length > 0) {
+      const allIds = subs.map((s) => s.subscriptionId);
+      const batches = chunkArray(allIds, BATCH_SIZE);
+      for (const batch of batches) {
+        const batchPayload = {
+          ...basePayload,
+          include_subscription_ids: batch
+        };
+        const batchRes = await sendOneSignalBatchWithRetry(
+          batchPayload,
+          runDeadlineMs
+        );
+        if (batchRes.notificationId) {
+          notificationIds.push(batchRes.notificationId);
+        }
+        totalSent += batchRes.recipients || batch.length;
+        if (batchRes.invalidIds.length > 0) {
+          allInvalidIds.push(...batchRes.invalidIds);
+        }
+      }
+    } else {
+      const segmentPayload = {
+        ...basePayload,
+        included_segments: ["Subscribed Users"]
+      };
+      const res = await sendOneSignalBatchWithRetry(
+        segmentPayload,
+        runDeadlineMs
+      );
+      if (res.notificationId) notificationIds.push(res.notificationId);
+      totalSent += res.recipients || 1;
+      if (res.invalidIds.length > 0) allInvalidIds.push(...res.invalidIds);
+    }
+    let invalidRemovedCount = 0;
+    if (allInvalidIds.length > 0) {
+      try {
+        await db.delete(oneSignalSubscriptions).where(
+          inArray3(oneSignalSubscriptions.subscriptionId, allInvalidIds)
+        );
+        invalidRemovedCount = allInvalidIds.length;
+        console.info(
+          `[Push] Pruned ${invalidRemovedCount} invalid subscriptions from database`
+        );
+      } catch (pruneErr) {
+        console.warn("[Push] Error pruning invalid subscriptions:", pruneErr);
+      }
+    }
+    await updatePushSend(claim.sendId, {
+      status: "sent",
+      finishedAt: /* @__PURE__ */ new Date(),
+      leadPostId: leadStory.id,
+      postsCount: editionPosts.length,
+      recipientsCount: totalSent,
+      onesignalNotificationIds: notificationIds,
+      invalidRemovedCount
+    });
+    return {
+      status: "sent",
+      slot,
+      editionDate,
+      leadPostId: leadStory.id,
+      postsCount: editionPosts.length,
+      recipientsCount: totalSent,
+      notificationIds
+    };
+  } catch (error) {
+    await updatePushSend(claim.sendId, {
+      status: "failed",
+      finishedAt: /* @__PURE__ */ new Date(),
+      error: error?.message || String(error)
+    });
+    await sendAdminAlertEmail(
+      `[Aurikrex Bytes Alert] Daily Push Failed: ${editionDate} (${slot})`,
+      `<p>The scheduled push notification for <strong>${editionDate} (${slot})</strong> failed.</p>
+       <p><strong>Trigger source:</strong> <code>${triggerSource}</code></p>
+       <p><strong>Attempts:</strong> ${claim.attempts}</p>
+       <p><strong>Error:</strong></p>
+       <pre>${error?.stack || error?.message || String(error)}</pre>`
+    );
+    throw error;
+  }
+}
+async function sendDailyPushNotifications(options = {}) {
+  return processPushTrigger(options);
+}
+async function sendTestPushNotification(subscriptionId) {
+  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
+  const iconUrl = `${baseUrl}/logo-192.png`;
+  const badgeUrl = `${baseUrl}/badge-96.png`;
+  try {
+    const { appId, apiKey } = getOneSignalConfig();
+    const response = await fetch(ONESIGNAL_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Key ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        app_id: appId,
+        target_channel: "push",
+        include_subscription_ids: [subscriptionId],
+        headings: { en: "Morning Brief \xB7 1 new Byte" },
+        contents: {
+          en: "OpenAI announces reasoning improvements with faster tool execution and lower latency."
+        },
+        url: `${baseUrl}/`,
+        chrome_web_icon: iconUrl,
+        chrome_web_badge: badgeUrl,
+        firefox_icon: iconUrl,
+        big_picture: `${baseUrl}/images/briefing-banner-2x1.png`,
+        chrome_web_image: `${baseUrl}/images/briefing-banner-2x1.png`,
+        collapse_id: "aurikrex-briefing",
+        web_push_topic: "aurikrex-briefing",
+        web_buttons: [
+          { id: "read-now", text: "Read now", url: `${baseUrl}/` },
+          { id: "all-bytes", text: "All Bytes", url: `${baseUrl}/` }
+        ]
+      })
+    });
+    const responseBody = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        `OneSignal request failed (${response.status}): ${responseBody}`
+      );
+    }
+    return { success: true };
+  } catch (err) {
+    console.error("[Push] Failed to send OneSignal test notification:", err);
+    return { success: false, error: String(err) };
+  }
+}
+var ONESIGNAL_API_URL, BATCH_SIZE, COMMON_TECH_ACRONYMS;
+var init_push = __esm({
+  "server/push.ts"() {
+    "use strict";
+    init_schema();
+    init_env();
+    init_db();
+    init_pushConfig();
+    init_pushLedger();
+    ONESIGNAL_API_URL = "https://api.onesignal.com/notifications";
+    BATCH_SIZE = 2e3;
+    COMMON_TECH_ACRONYMS = /* @__PURE__ */ new Set([
+      "AI",
+      "API",
+      "AWS",
+      "CPU",
+      "GPU",
+      "HTML",
+      "HTTP",
+      "ID",
+      "IOS",
+      "IP",
+      "JSON",
+      "LLM",
+      "ML",
+      "OS",
+      "PWA",
+      "PR",
+      "RAM",
+      "REST",
+      "SDK",
+      "SEO",
+      "SQL",
+      "SSD",
+      "TCP",
+      "UI",
+      "URI",
+      "URL",
+      "USB",
+      "UX",
+      "VCF"
+    ]);
+  }
+});
+
+// server/_core/aiHealth.ts
+var aiHealth_exports = {};
+__export(aiHealth_exports, {
+  checkAiHealth: () => checkAiHealth,
+  notifyAiDegradation: () => notifyAiDegradation
+});
+async function notifyAiDegradation(provider, reason, fallbackAction) {
+  const now2 = Date.now();
+  const lastAlert = alertCooldowns.get(provider) || 0;
+  if (now2 - lastAlert < ALERT_COOLDOWN_MS) {
+    console.info(`[AIHealth] Alert cooldown active for ${provider}, skipping email.`);
+    return;
+  }
+  alertCooldowns.set(provider, now2);
+  const subject = `[Aurikrex Alert] AI Provider Degraded \u2014 ${provider}`;
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1e293b;">
+      <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px;">
+        <h2 style="color: #e11d48; margin: 0 0 8px 0; font-size: 18px;">\u26A0\uFE0F Aurikrex AI Early Warning Alert</h2>
+        <p style="margin: 0; color: #475569; font-size: 14px;">An AI provider used by Aurikrex Bytes is about to stop working or is operating on fallback.</p>
+      </div>
+
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px;">
+        <tr>
+          <td style="padding: 8px 0; color: #64748b; width: 140px;"><strong>Provider:</strong></td>
+          <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">${provider}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; color: #64748b;"><strong>Issue Detected:</strong></td>
+          <td style="padding: 8px 0; color: #e11d48; font-weight: 600;">${reason}</td>
+        </tr>
+        ${fallbackAction ? `
+        <tr>
+          <td style="padding: 8px 0; color: #64748b;"><strong>Fallback Action:</strong></td>
+          <td style="padding: 8px 0; color: #2563eb;">${fallbackAction}</td>
+        </tr>` : ""}
+        <tr>
+          <td style="padding: 8px 0; color: #64748b;"><strong>Detected At:</strong></td>
+          <td style="padding: 8px 0; color: #0f172a;">${(/* @__PURE__ */ new Date()).toISOString()}</td>
+        </tr>
+      </table>
+
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px 16px; margin-bottom: 20px; font-size: 13px; line-height: 1.5;">
+        <strong style="color: #0f172a;">Recommended Action:</strong>
+        <p style="margin: 4px 0 0 0; color: #475569;">
+          Log in to the provider's developer console (e.g. Mistral AI, NVIDIA NIM, or Cloudflare) to verify billing status, refresh API keys, or upgrade tier limits to prevent service interruption.
+        </p>
+      </div>
+
+      <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+        This automated diagnostic alert was sent from the Aurikrex Bytes Newsroom System.
+      </p>
+    </div>
+  `;
+  try {
+    await sendAdminAlertEmail(subject, html);
+    console.info(`[AIHealth] Sent degradation alert email for ${provider}: ${reason}`);
+  } catch (err) {
+    console.error(`[AIHealth] Failed to send degradation alert email:`, err);
+  }
+}
+async function checkMistral() {
+  const key = getMistralApiKey();
+  if (!key) {
+    return {
+      name: "Mistral AI",
+      status: "unconfigured",
+      model: "mistral-small-latest",
+      error: "MISTRAL_API_KEY is not set",
+      lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  const models = ["mistral-small-latest", "open-mistral-7b"];
+  let lastErr = "";
+  let rateLimited = false;
+  for (const model of models) {
+    const start = Date.now();
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6e3);
+      const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${key}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 5
+        })
+      });
+      clearTimeout(timeout);
+      const latencyMs = Date.now() - start;
+      if (res.ok) {
+        return {
+          name: "Mistral AI",
+          status: rateLimited ? "degraded" : "healthy",
+          model,
+          latencyMs,
+          error: rateLimited ? "mistral-small-latest hit 429, fell back to open-mistral-7b" : void 0,
+          lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+        };
+      } else if (res.status === 429) {
+        rateLimited = true;
+        lastErr = "HTTP 429 Rate limit exceeded";
+      } else {
+        lastErr = `HTTP ${res.status}: ${(await res.text()).slice(0, 100)}`;
+      }
+    } catch (e) {
+      lastErr = e.message || "Timeout / connection error";
+    }
+  }
+  return {
+    name: "Mistral AI",
+    status: rateLimited ? "degraded" : "down",
+    model: "mistral-small-latest",
+    error: lastErr,
+    rateLimited,
+    lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+async function checkNvidia() {
+  const key = getNvidiaApiKey();
+  if (!key) {
+    return {
+      name: "NVIDIA NIM",
+      status: "unconfigured",
+      model: "nvidia-nim",
+      error: "NVIDIA_API_KEY is not set",
+      lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  const start = Date.now();
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6e3);
+    const res = await fetch("https://integrate.api.nvidia.com/v1/models", {
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${key}` }
+    });
+    clearTimeout(timeout);
+    const latencyMs = Date.now() - start;
+    if (res.ok) {
+      return {
+        name: "NVIDIA NIM",
+        status: "healthy",
+        model: "integrate.api.nvidia.com",
+        latencyMs,
+        lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    } else {
+      const errText = (await res.text()).slice(0, 120);
+      return {
+        name: "NVIDIA NIM",
+        status: "down",
+        model: "integrate.api.nvidia.com",
+        error: `HTTP ${res.status}: ${errText}`,
+        quotaExhausted: res.status === 402 || res.status === 403,
+        lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+  } catch (e) {
+    return {
+      name: "NVIDIA NIM",
+      status: "down",
+      model: "integrate.api.nvidia.com",
+      error: e.message || "Timeout / connection error",
+      lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+}
+async function checkCloudflare() {
+  const configs = getCloudflareAiConfigs();
+  if (configs.length === 0) {
+    return {
+      name: "Cloudflare Workers AI",
+      status: "unconfigured",
+      model: "@cf/meta/llama-3.1-70b-instruct",
+      error: "CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set",
+      lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  const cf = configs[0];
+  const model = "@cf/meta/llama-3.1-70b-instruct";
+  const start = Date.now();
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6e3);
+    const url = `https://api.cloudflare.com/client/v4/accounts/${cf.accountId}/ai/run/${model}`;
+    const res = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${cf.apiToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 5
+      })
+    });
+    clearTimeout(timeout);
+    const latencyMs = Date.now() - start;
+    if (res.ok) {
+      return {
+        name: "Cloudflare Workers AI",
+        status: "healthy",
+        model,
+        latencyMs,
+        lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    } else {
+      return {
+        name: "Cloudflare Workers AI",
+        status: "down",
+        model,
+        error: `HTTP ${res.status}: ${(await res.text()).slice(0, 100)}`,
+        lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+  } catch (e) {
+    return {
+      name: "Cloudflare Workers AI",
+      status: "down",
+      model,
+      error: e.message || "Timeout / connection error",
+      lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+}
+async function checkTavily() {
+  const key = (process.env.TAVILY_API_KEY || "").trim();
+  if (!key) {
+    return {
+      name: "Tavily Search API",
+      status: "unconfigured",
+      model: "api.tavily.com",
+      error: "TAVILY_API_KEY is not set",
+      lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  const start = Date.now();
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6e3);
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: key,
+        query: "technology news",
+        max_results: 1,
+        search_depth: "basic"
+      })
+    });
+    clearTimeout(timeout);
+    const latencyMs = Date.now() - start;
+    if (res.ok) {
+      return {
+        name: "Tavily Search API",
+        status: "healthy",
+        model: "api.tavily.com",
+        latencyMs,
+        lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    } else {
+      return {
+        name: "Tavily Search API",
+        status: "down",
+        model: "api.tavily.com",
+        error: `HTTP ${res.status}: ${(await res.text()).slice(0, 100)}`,
+        lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+  } catch (e) {
+    return {
+      name: "Tavily Search API",
+      status: "down",
+      model: "api.tavily.com",
+      error: e.message || "Timeout / connection error",
+      lastChecked: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+}
+async function checkAiHealth(options) {
+  const now2 = Date.now();
+  if (!options?.forceLiveCheck && cachedHealthReport && now2 - lastCheckTime < CACHE_TTL_MS) {
+    return cachedHealthReport;
+  }
+  const [mistral, nvidia, cloudflare, tavily] = await Promise.all([
+    checkMistral(),
+    checkNvidia(),
+    checkCloudflare(),
+    checkTavily()
+  ]);
+  const providers = [mistral, nvidia, cloudflare, tavily];
+  let activeProvider = "None";
+  if (mistral.status === "healthy" || mistral.status === "degraded") {
+    activeProvider = `Mistral AI (${mistral.model})`;
+  } else if (nvidia.status === "healthy") {
+    activeProvider = "NVIDIA NIM";
+  } else if (cloudflare.status === "healthy") {
+    activeProvider = "Cloudflare Workers AI";
+  } else if (tavily.status === "healthy") {
+    activeProvider = "Tavily Direct";
+  }
+  const workingLlm = [mistral, nvidia, cloudflare].filter((p) => p.status === "healthy" || p.status === "degraded");
+  let overallStatus = "healthy";
+  if (workingLlm.length === 0) {
+    overallStatus = "critical";
+  } else if (mistral.status === "degraded" || mistral.status === "down" || workingLlm.length === 1) {
+    overallStatus = "degraded";
+  }
+  let summary = "All AI and search systems operational.";
+  if (overallStatus === "critical") {
+    summary = "CRITICAL: No AI LLM providers are currently responding. News generation and follow-up AI are offline.";
+  } else if (overallStatus === "degraded") {
+    const degradedNames = providers.filter((p) => p.status === "degraded" || p.status === "down").map((p) => p.name);
+    summary = `Degraded: ${degradedNames.join(", ")} experiencing issues; requests are operating on fallback provider (${activeProvider}).`;
+  }
+  cachedHealthReport = {
+    overallStatus,
+    activeProvider,
+    providers,
+    summary,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  lastCheckTime = now2;
+  if (overallStatus === "critical") {
+    void notifyAiDegradation("All AI Providers", summary, "Check API keys on Vercel immediately");
+  } else if (mistral.rateLimited) {
+    void notifyAiDegradation("Mistral AI", "Rate limit exceeded (HTTP 429)", "Switched to open-mistral-7b / Cloudflare fallback");
+  }
+  return cachedHealthReport;
+}
+var cachedHealthReport, lastCheckTime, CACHE_TTL_MS, alertCooldowns, ALERT_COOLDOWN_MS;
+var init_aiHealth = __esm({
+  "server/_core/aiHealth.ts"() {
+    "use strict";
+    init_aiKeys();
+    init_push();
+    cachedHealthReport = null;
+    lastCheckTime = 0;
+    CACHE_TTL_MS = 2 * 60 * 1e3;
+    alertCooldowns = /* @__PURE__ */ new Map();
+    ALERT_COOLDOWN_MS = 60 * 60 * 1e3;
+  }
+});
+
 // server/storage.ts
 var init_storage = __esm({
   "server/storage.ts"() {
@@ -1516,7 +2778,7 @@ __export(aiCurator_exports, {
   cleanHeadline: () => cleanHeadline,
   curateBytes: () => curateBytes,
   curateTenBytes: () => curateTenBytes,
-  decodeHtmlEntities: () => decodeHtmlEntities,
+  decodeHtmlEntities: () => decodeHtmlEntities2,
   extractAiBody: () => extractAiBody,
   extractSignificantTokens: () => extractSignificantTokens,
   extractSourceArticleImage: () => extractSourceArticleImage,
@@ -1607,7 +2869,7 @@ function isNonNewsHeadline(title) {
   if (/\bask\s+hn:\s+/i.test(lower)) return true;
   return false;
 }
-function decodeHtmlEntities(str) {
+function decodeHtmlEntities2(str) {
   return str.replace(/&#(\d+);/g, (_, dec) => {
     try {
       return String.fromCharCode(Number(dec));
@@ -1623,7 +2885,7 @@ function decodeHtmlEntities(str) {
   }).replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'").replace(/&#8216;/g, "'").replace(/&#8217;/g, "'").replace(/&#8220;/g, '"').replace(/&#8221;/g, '"').replace(/&#8211;/g, "\u2013").replace(/&#8212;/g, "\u2014").replace(/&ndash;/g, "\u2013").replace(/&mdash;/g, "\u2014").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 function cleanHeadline(title) {
-  let cleaned = decodeHtmlEntities(title.trim());
+  let cleaned = decodeHtmlEntities2(title.trim());
   cleaned = cleaned.replace(/^(show\s+hn|launch\s+hn|tell\s+hn)\s*:\s*/i, "");
   cleaned = cleaned.replace(/\s*\[(video|pdf|audio|\d{4})\]\s*/gi, " ");
   cleaned = cleaned.replace(/\s*\((video|pdf|audio|\d{4})\)\s*/gi, " ");
@@ -1771,7 +3033,7 @@ async function fetchRssCandidates(start, end, excludeKeys = /* @__PURE__ */ new 
           continue;
         }
         const sourceMatch = itemXml.match(/<source(?:\s+[^>]*)?>([\s\S]*?)<\/source>/i);
-        const publisherName = sourceMatch && sourceMatch[1]?.trim() ? decodeHtmlEntities(sourceMatch[1].trim()) : feed.name;
+        const publisherName = sourceMatch && sourceMatch[1]?.trim() ? decodeHtmlEntities2(sourceMatch[1].trim()) : feed.name;
         const cleanedTitle = cleanHeadline(rawTitle);
         const duplicateKey = buildDuplicateKey(cleanedTitle, url, publishedAt);
         if (excludeKeys.has(duplicateKey)) continue;
@@ -3359,916 +4621,6 @@ var init_pdfParser = __esm({
   }
 });
 
-// server/pushConfig.ts
-function getLagosParts(now2 = /* @__PURE__ */ new Date()) {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: PUSH_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "numeric",
-    minute: "numeric",
-    second: "numeric",
-    hour12: false
-  });
-  const parts = dtf.formatToParts(now2);
-  const partMap = {};
-  for (const p of parts) {
-    if (p.type !== "literal") partMap[p.type] = p.value;
-  }
-  const year = parseInt(partMap.year, 10);
-  const month = parseInt(partMap.month, 10);
-  const day = parseInt(partMap.day, 10);
-  const hour = parseInt(partMap.hour, 10);
-  const minute = parseInt(partMap.minute, 10);
-  const second = parseInt(partMap.second, 10);
-  const yyyy = String(year);
-  const mm = String(month).padStart(2, "0");
-  const dd = String(day).padStart(2, "0");
-  const dateStr = `${yyyy}-${mm}-${dd}`;
-  return { year, month, day, hour, minute, second, dateStr };
-}
-function resolvePushSlot(requestedSlot, now2 = /* @__PURE__ */ new Date(), ignoreWindow = false) {
-  const { year, month, day, hour, dateStr } = getLagosParts(now2);
-  const normSlot = requestedSlot?.trim().toLowerCase();
-  if (normSlot && normSlot !== "morning" && normSlot !== "evening") {
-    return { isValid: false, status: "invalid_slot" };
-  }
-  const inMorningWindow = hour >= 8 && hour < 11;
-  const inEveningWindow = hour >= 22 || hour === 0;
-  let targetSlot;
-  if (normSlot === "morning") {
-    if (!ignoreWindow && !inMorningWindow) {
-      return { isValid: false, status: "outside_window" };
-    }
-    targetSlot = "morning";
-  } else if (normSlot === "evening") {
-    if (!ignoreWindow && !inEveningWindow) {
-      return { isValid: false, status: "outside_window" };
-    }
-    targetSlot = "evening";
-  } else {
-    if (inMorningWindow) {
-      targetSlot = "morning";
-    } else if (inEveningWindow) {
-      targetSlot = "evening";
-    } else {
-      if (!ignoreWindow) {
-        return { isValid: false, status: "outside_window" };
-      }
-      targetSlot = hour >= 16 || hour < 4 ? "evening" : "morning";
-    }
-  }
-  if (targetSlot === "morning") {
-    const scheduledFor = new Date(Date.UTC(year, month - 1, day, 7, 0, 0));
-    return {
-      isValid: true,
-      slot: "morning",
-      editionDate: dateStr,
-      scheduledFor
-    };
-  } else {
-    if (hour === 0) {
-      const prevDate = new Date(now2.getTime() - 2 * 60 * 60 * 1e3);
-      const prevParts = getLagosParts(prevDate);
-      const scheduledFor = new Date(
-        Date.UTC(prevParts.year, prevParts.month - 1, prevParts.day, 21, 0, 0)
-      );
-      return {
-        isValid: true,
-        slot: "evening",
-        editionDate: prevParts.dateStr,
-        scheduledFor
-      };
-    } else {
-      const scheduledFor = new Date(Date.UTC(year, month - 1, day, 21, 0, 0));
-      return {
-        isValid: true,
-        slot: "evening",
-        editionDate: dateStr,
-        scheduledFor
-      };
-    }
-  }
-}
-var PUSH_TIMEZONE;
-var init_pushConfig = __esm({
-  "server/pushConfig.ts"() {
-    "use strict";
-    PUSH_TIMEZONE = "Africa/Lagos";
-  }
-});
-
-// server/pushLedger.ts
-var pushLedger_exports = {};
-__export(pushLedger_exports, {
-  claimPushSlot: () => claimPushSlot,
-  getAdminSubscriptionIds: () => getAdminSubscriptionIds,
-  listEditionPublishedPosts: () => listEditionPublishedPosts,
-  listRecentPushSends: () => listRecentPushSends,
-  updatePushSend: () => updatePushSend
-});
-import { and as and2, asc as asc2, desc as desc2, eq as eq3, inArray as inArray2 } from "drizzle-orm";
-async function claimPushSlot(params) {
-  const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
-  const nowMs = params.now ? params.now.getTime() : Date.now();
-  const startedAt = new Date(nowMs);
-  const effectiveTriggerSource = params.force ? "manual" : params.triggerSource;
-  try {
-    const inserted = await db.insert(pushSends).values({
-      editionDate: params.editionDate,
-      slot: params.slot,
-      status: "sending",
-      triggerSource: effectiveTriggerSource,
-      scheduledFor: params.scheduledFor,
-      startedAt,
-      attempts: 1
-    }).returning({ id: pushSends.id });
-    if (inserted && inserted[0]?.id) {
-      return { claimed: true, sendId: inserted[0].id, attempts: 1 };
-    }
-  } catch {
-  }
-  const rows = await db.select().from(pushSends).where(
-    and2(
-      eq3(pushSends.editionDate, params.editionDate),
-      eq3(pushSends.slot, params.slot)
-    )
-  ).limit(1);
-  const existing = rows[0];
-  if (!existing) {
-    throw new Error("Unable to claim or read push_sends ledger row");
-  }
-  if (existing.status === "sent") {
-    if (params.force && params.resend) {
-      const reclaimed = await db.update(pushSends).set({
-        status: "sending",
-        triggerSource: "manual",
-        startedAt,
-        finishedAt: null,
-        error: `Manual resend initiated at ${(/* @__PURE__ */ new Date()).toISOString()}`,
-        attempts: 1
-      }).where(eq3(pushSends.id, existing.id)).returning({ id: pushSends.id });
-      if (reclaimed && reclaimed.length > 0) {
-        return { claimed: true, sendId: existing.id, attempts: 1 };
-      }
-    }
-    return {
-      claimed: false,
-      status: "already_done",
-      error: "Slot already sent. Pass force=1&resend=1 to resend.",
-      existing
-    };
-  }
-  if (existing.status === "skipped") {
-    if (params.force) {
-      const reclaimed = await db.update(pushSends).set({
-        status: "sending",
-        triggerSource: "manual",
-        startedAt,
-        finishedAt: null,
-        error: null,
-        attempts: 1
-      }).where(eq3(pushSends.id, existing.id)).returning({ id: pushSends.id });
-      if (reclaimed && reclaimed.length > 0) {
-        return { claimed: true, sendId: existing.id, attempts: 1 };
-      }
-    }
-    return { claimed: false, status: "already_done", existing };
-  }
-  if (existing.status === "failed") {
-    if (existing.attempts >= 3 && !params.force) {
-      return {
-        claimed: false,
-        status: "max_attempts_exceeded",
-        error: existing.error,
-        existing
-      };
-    }
-    const nextAttempts = params.force ? 1 : existing.attempts + 1;
-    const reclaimed = await db.update(pushSends).set({
-      status: "sending",
-      triggerSource: params.force ? "manual" : params.triggerSource,
-      startedAt,
-      finishedAt: null,
-      error: params.force ? null : existing.error,
-      attempts: nextAttempts
-    }).where(
-      and2(
-        eq3(pushSends.id, existing.id),
-        eq3(pushSends.status, "failed")
-      )
-    ).returning({ id: pushSends.id });
-    if (reclaimed && reclaimed.length > 0) {
-      return { claimed: true, sendId: existing.id, attempts: nextAttempts };
-    }
-    return { claimed: false, status: "in_progress", existing };
-  }
-  const startedAtMs = existing.startedAt instanceof Date ? existing.startedAt.getTime() : Number(existing.startedAt);
-  const isStale = nowMs - startedAtMs > 5 * 60 * 1e3;
-  if (existing.status === "sending" && (isStale || params.force)) {
-    if (existing.attempts >= 3 && !params.force) {
-      return {
-        claimed: false,
-        status: "max_attempts_exceeded",
-        error: existing.error,
-        existing
-      };
-    }
-    const nextAttempts = params.force ? 1 : existing.attempts + 1;
-    const reclaimed = await db.update(pushSends).set({
-      status: "sending",
-      triggerSource: params.force ? "manual" : params.triggerSource,
-      startedAt,
-      finishedAt: null,
-      error: params.force ? "Forced reclaim" : "Reclaimed stale sending claim",
-      attempts: nextAttempts
-    }).where(
-      and2(
-        eq3(pushSends.id, existing.id),
-        eq3(pushSends.status, "sending")
-      )
-    ).returning({ id: pushSends.id });
-    if (reclaimed && reclaimed.length > 0) {
-      return { claimed: true, sendId: existing.id, attempts: nextAttempts };
-    }
-    return { claimed: false, status: "in_progress", existing };
-  }
-  return { claimed: false, status: "in_progress", existing };
-}
-async function updatePushSend(sendId, updates) {
-  const db = await getDb();
-  if (!db) return;
-  const setObj = {};
-  if (updates.status) setObj.status = updates.status;
-  if (updates.finishedAt) setObj.finishedAt = updates.finishedAt;
-  if (updates.leadPostId !== void 0) setObj.leadPostId = updates.leadPostId;
-  if (updates.postsCount !== void 0) setObj.postsCount = updates.postsCount;
-  if (updates.recipientsCount !== void 0)
-    setObj.recipientsCount = updates.recipientsCount;
-  if (updates.onesignalNotificationIds) {
-    setObj.onesignalNotificationIds = JSON.stringify(
-      updates.onesignalNotificationIds
-    );
-  }
-  if (updates.invalidRemovedCount !== void 0)
-    setObj.invalidRemovedCount = updates.invalidRemovedCount;
-  if (updates.error !== void 0) setObj.error = updates.error;
-  await db.update(pushSends).set(setObj).where(eq3(pushSends.id, sendId));
-}
-async function listRecentPushSends(limit = 50) {
-  const db = await getDb();
-  if (!db) return [];
-  return await db.select().from(pushSends).orderBy(desc2(pushSends.id)).limit(limit);
-}
-async function listEditionPublishedPosts(editionDate, timeZone = PUSH_TIMEZONE) {
-  const db = await getDb();
-  if (!db) return [];
-  const published = await db.select().from(posts).where(eq3(posts.status, "published")).orderBy(asc2(posts.publishedTime));
-  return published.filter(
-    (post) => post.publishedTime && localCalendarDay(post.publishedTime, timeZone) === editionDate
-  );
-}
-async function getAdminSubscriptionIds() {
-  const db = await getDb();
-  if (!db) return [];
-  const admins = await db.select({ email: adminUsers.email }).from(adminUsers).where(eq3(adminUsers.isActive, true));
-  const adminEmails = admins.map((a) => a.email.toLowerCase().trim()).filter(Boolean);
-  if (adminEmails.length === 0) return [];
-  const matchedReaders = await db.select({ id: readers.id }).from(readers).where(inArray2(readers.email, adminEmails));
-  const readerIds = matchedReaders.map((r) => r.id);
-  if (readerIds.length === 0) return [];
-  const subs = await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions).where(inArray2(oneSignalSubscriptions.readerId, readerIds));
-  return subs.map((s) => s.subscriptionId);
-}
-var init_pushLedger = __esm({
-  "server/pushLedger.ts"() {
-    "use strict";
-    init_schema();
-    init_db();
-    init_pushConfig();
-  }
-});
-
-// server/push.ts
-var push_exports = {};
-__export(push_exports, {
-  decodeHtmlEntities: () => decodeHtmlEntities2,
-  fixAllCaps: () => fixAllCaps,
-  formatPushBody: () => formatPushBody,
-  formatPushNotificationContent: () => formatPushNotificationContent,
-  processPushTrigger: () => processPushTrigger,
-  sendAdminAlertEmail: () => sendAdminAlertEmail,
-  sendDailyPushNotifications: () => sendDailyPushNotifications,
-  sendTestPushNotification: () => sendTestPushNotification,
-  stripEmoji: () => stripEmoji,
-  stripSourcePrefixes: () => stripSourcePrefixes,
-  transformPushImage: () => transformPushImage,
-  truncateHeadline: () => truncateHeadline
-});
-import { inArray as inArray3 } from "drizzle-orm";
-function getOneSignalConfig() {
-  const appId = process.env.ONESIGNAL_APP_ID;
-  const apiKey = process.env.ONESIGNAL_REST_API_KEY || process.env.ONESIGNAL_API_KEY;
-  if (!appId || !apiKey) {
-    throw new Error(
-      "ONESIGNAL_APP_ID and ONESIGNAL_REST_API_KEY are required"
-    );
-  }
-  return { appId, apiKey };
-}
-function decodeHtmlEntities2(str) {
-  return str.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&nbsp;/g, " ").replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec))).replace(
-    /&#x([0-9a-f]+);/gi,
-    (_, hex) => String.fromCharCode(parseInt(hex, 16))
-  );
-}
-function stripSourcePrefixes(str) {
-  return str.replace(/^(?:(?:show|ask|tell|launch)\s+hn\s*:\s*|\[[^\]]+\]\s*:?\s*)/i, "").trim();
-}
-function stripEmoji(str) {
-  return str.replace(
-    /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{200D}]/gu,
-    ""
-  ).replace(/\s+/g, " ").trim();
-}
-function fixAllCaps(str) {
-  const letters = str.replace(/[^a-zA-Z]/g, "");
-  if (letters.length >= 6) {
-    const upperCount = (str.match(/[A-Z]/g) || []).length;
-    if (upperCount / letters.length > 0.75) {
-      return str.toLowerCase().split(" ").map((word, idx) => {
-        const clean = word.replace(/[^a-z]/gi, "").toUpperCase();
-        if (COMMON_TECH_ACRONYMS.has(clean)) {
-          return word.replace(new RegExp(clean, "i"), clean);
-        }
-        if (idx === 0 || word.length > 3) {
-          return word.charAt(0).toUpperCase() + word.slice(1);
-        }
-        return word;
-      }).join(" ");
-    }
-  }
-  return str;
-}
-function truncateHeadline(str, maxLen = 90) {
-  const trimmed = str.replace(/\s+/g, " ").trim();
-  if (trimmed.length <= maxLen) {
-    return trimmed;
-  }
-  const slice = trimmed.slice(0, maxLen - 1);
-  const lastSpace = slice.lastIndexOf(" ");
-  const cut = (lastSpace > 30 ? slice.slice(0, lastSpace) : slice).trim();
-  const cleanCut = cut.replace(/[,\-:;\s]+$/, "");
-  return `${cleanCut}\u2026`;
-}
-function formatPushBody(rawHeadline) {
-  const decoded = decodeHtmlEntities2(rawHeadline);
-  const withoutPrefix = stripSourcePrefixes(decoded);
-  const withoutEmoji = stripEmoji(withoutPrefix);
-  const casingFixed = fixAllCaps(withoutEmoji);
-  return truncateHeadline(casingFixed, 90);
-}
-function transformPushImage(imageUrl, baseUrl) {
-  const fallbackUrl = `${baseUrl}/images/briefing-banner-2x1.png`;
-  if (!imageUrl || !imageUrl.startsWith("http")) {
-    return fallbackUrl;
-  }
-  if (imageUrl.includes("res.cloudinary.com") && imageUrl.includes("/upload/")) {
-    return imageUrl.replace(
-      /\/upload\/(?:[a-z]_[^/]+,?)*\/?(v\d+\/)?/i,
-      "/upload/c_fill,ar_2:1,w_1200,g_auto,f_auto,q_auto/$1"
-    );
-  }
-  return imageUrl;
-}
-function formatPushNotificationContent(story, optionsOrTimeZone, legacyNow) {
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
-  let postsCount = 1;
-  let timeZone = PUSH_TIMEZONE;
-  let now2 = /* @__PURE__ */ new Date();
-  let requestedSlot = null;
-  if (typeof optionsOrTimeZone === "string") {
-    timeZone = optionsOrTimeZone;
-    if (legacyNow) now2 = legacyNow;
-  } else if (optionsOrTimeZone && typeof optionsOrTimeZone === "object") {
-    if (optionsOrTimeZone.postsCount !== void 0) {
-      postsCount = optionsOrTimeZone.postsCount;
-    }
-    if (optionsOrTimeZone.timeZone) timeZone = optionsOrTimeZone.timeZone;
-    if (optionsOrTimeZone.now) now2 = optionsOrTimeZone.now;
-    if (optionsOrTimeZone.slot) requestedSlot = optionsOrTimeZone.slot;
-  }
-  const hour = Number(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      hour: "numeric",
-      hour12: false
-    }).format(now2)
-  );
-  const isMorning = requestedSlot ? requestedSlot === "morning" : hour >= 4 && hour < 16;
-  const heading = isMorning ? postsCount === 1 ? "Morning Brief \xB7 1 new Byte" : `Morning Brief \xB7 ${postsCount} new Bytes` : postsCount === 1 ? "Evening Recap \xB7 1 Byte today" : `Evening Recap \xB7 ${postsCount} Bytes today`;
-  const fallbackBanner = `${baseUrl}/images/briefing-banner-2x1.png`;
-  if (story) {
-    const content = formatPushBody(story.headline);
-    const storyUrl = `${baseUrl}/post/${story.id}`;
-    const imageUrl = transformPushImage(story.imageUrl, baseUrl);
-    return {
-      heading,
-      content,
-      url: storyUrl,
-      imageUrl,
-      buttons: [
-        { id: "read-now", text: "Read now", url: storyUrl },
-        { id: "all-bytes", text: "All Bytes", url: `${baseUrl}/` }
-      ]
-    };
-  }
-  return {
-    heading: isMorning ? "Daily Tech Briefing is Ready" : "Evening Tech Roundup",
-    content: "Catch up on today's highest-signal tech stories on Aurikrex Bytes.",
-    url: `${baseUrl}/`,
-    imageUrl: fallbackBanner,
-    buttons: [
-      { id: "all-bytes", text: "All Bytes", url: `${baseUrl}/` }
-    ]
-  };
-}
-function chunkArray(items, size) {
-  const chunks = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
-async function sendOneSignalBatchWithRetry(payload, deadlineMs) {
-  const { appId, apiKey } = getOneSignalConfig();
-  const maxAttempts = 3;
-  let attempt = 0;
-  let lastError = null;
-  while (attempt < maxAttempts) {
-    attempt++;
-    const now2 = Date.now();
-    if (now2 >= deadlineMs) {
-      throw new Error(
-        `Timeout: OneSignal batch dispatch exceeded run deadline (attempt ${attempt})`
-      );
-    }
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1e4);
-      const response = await fetch(ONESIGNAL_API_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Key ${apiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          app_id: appId,
-          target_channel: "push",
-          ...payload
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      const responseBody = await response.text();
-      if (response.status === 429 || response.status >= 500 && response.status < 600) {
-        lastError = new Error(
-          `OneSignal error HTTP ${response.status}: ${responseBody}`
-        );
-        if (attempt < maxAttempts) {
-          const delay = attempt === 1 ? 500 : 1500;
-          if (Date.now() + delay < deadlineMs) {
-            await new Promise((r) => setTimeout(r, delay));
-            continue;
-          }
-        }
-        throw lastError;
-      }
-      if (!response.ok) {
-        throw new Error(
-          `OneSignal request failed (${response.status}): ${responseBody}`
-        );
-      }
-      const parsed = responseBody ? JSON.parse(responseBody) : {};
-      const notificationId = parsed.id;
-      const recipients = Number(parsed.recipients ?? 0);
-      const invalidIds = [];
-      if (parsed.errors && typeof parsed.errors === "object") {
-        const errObj = parsed.errors;
-        if (Array.isArray(errObj.invalid_subscription_ids)) {
-          invalidIds.push(...errObj.invalid_subscription_ids);
-        }
-        if (Array.isArray(errObj.invalid_player_ids)) {
-          invalidIds.push(...errObj.invalid_player_ids);
-        }
-      }
-      return { notificationId, recipients, invalidIds };
-    } catch (err) {
-      lastError = err;
-      const isRetryable = err.name === "AbortError" || err.message?.includes("fetch");
-      if (isRetryable && attempt < maxAttempts) {
-        const delay = 500;
-        if (Date.now() + delay < deadlineMs) {
-          await new Promise((r) => setTimeout(r, delay));
-          continue;
-        }
-      }
-      throw err;
-    }
-  }
-  throw lastError || new Error("OneSignal batch dispatch failed after retries");
-}
-async function sendAdminAlertEmail(subject, html) {
-  const alertEmail = process.env.ADMIN_ALERT_EMAIL?.trim();
-  if (!alertEmail) {
-    console.warn(
-      "[PushAlert] ADMIN_ALERT_EMAIL not configured, skipping alert email."
-    );
-    return;
-  }
-  try {
-    const { sendEmail: sendEmail2 } = await Promise.resolve().then(() => (init_services(), services_exports));
-    await sendEmail2(alertEmail, subject, html);
-    console.info(`[PushAlert] Sent alert email to ${alertEmail}: ${subject}`);
-  } catch (err) {
-    console.error("[PushAlert] Failed to send alert email:", err);
-  }
-}
-async function processPushTrigger(options = {}) {
-  const now2 = options.now || /* @__PURE__ */ new Date();
-  const dryRun = Boolean(options.dryRun);
-  const testOnly = Boolean(options.testOnly);
-  const force = Boolean(options.force);
-  const resend = Boolean(options.resend);
-  const triggerSource = force ? "manual" : options.triggerSource || "manual";
-  const resolution = resolvePushSlot(
-    options.requestedSlot,
-    now2,
-    dryRun || testOnly || force
-  );
-  if (!resolution.isValid) {
-    return { status: resolution.status || "outside_window" };
-  }
-  const slot = resolution.slot;
-  const editionDate = resolution.editionDate;
-  const scheduledFor = resolution.scheduledFor;
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
-  const iconUrl = `${baseUrl}/logo-192.png`;
-  const badgeUrl = `${baseUrl}/badge-96.png`;
-  if (dryRun) {
-    const { publishDuePosts: publishDuePosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-    await publishDuePosts2(now2);
-    const editionPosts = await listEditionPublishedPosts(editionDate);
-    if (editionPosts.length === 0) {
-      return {
-        dryRun: true,
-        status: "skipped",
-        slot,
-        editionDate,
-        reason: "no_published_posts"
-      };
-    }
-    const leadStory = editionPosts[0];
-    const notification = formatPushNotificationContent(leadStory, {
-      postsCount: editionPosts.length,
-      timeZone: PUSH_TIMEZONE,
-      now: now2,
-      slot
-    });
-    const db = await getDb();
-    const subs = db ? await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions) : [];
-    const payload = {
-      headings: { en: notification.heading },
-      contents: { en: notification.content },
-      url: notification.url,
-      priority: 10,
-      ttl: 14400,
-      chrome_web_icon: iconUrl,
-      chrome_web_badge: badgeUrl,
-      firefox_icon: iconUrl,
-      collapse_id: "aurikrex-briefing",
-      web_push_topic: "aurikrex-briefing",
-      web_buttons: notification.buttons
-    };
-    if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
-      payload.big_picture = notification.imageUrl;
-      payload.chrome_web_image = notification.imageUrl;
-    }
-    return {
-      dryRun: true,
-      status: "ready",
-      slot,
-      editionDate,
-      postsCount: editionPosts.length,
-      leadStory: { id: leadStory.id, headline: leadStory.headline },
-      recipientsCount: subs.length,
-      payload
-    };
-  }
-  if (testOnly) {
-    const { publishDuePosts: publishDuePosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-    await publishDuePosts2(now2);
-    const editionPosts = await listEditionPublishedPosts(editionDate);
-    if (editionPosts.length === 0) {
-      return {
-        testOnly: true,
-        status: "skipped",
-        slot,
-        editionDate,
-        reason: "no_published_posts"
-      };
-    }
-    const leadStory = editionPosts[0];
-    const adminSubs = await getAdminSubscriptionIds();
-    if (adminSubs.length === 0) {
-      return {
-        testOnly: true,
-        status: "no_admin_subscribers",
-        slot,
-        editionDate,
-        recipientsCount: 0
-      };
-    }
-    const notification = formatPushNotificationContent(leadStory, {
-      postsCount: editionPosts.length,
-      timeZone: PUSH_TIMEZONE,
-      now: now2,
-      slot
-    });
-    const payload = {
-      include_subscription_ids: adminSubs,
-      headings: { en: `[TEST] ${notification.heading}` },
-      contents: { en: notification.content },
-      url: notification.url,
-      priority: 10,
-      ttl: 14400,
-      chrome_web_icon: iconUrl,
-      chrome_web_badge: badgeUrl,
-      firefox_icon: iconUrl,
-      collapse_id: "aurikrex-test-briefing",
-      web_push_topic: "aurikrex-test-briefing",
-      web_buttons: notification.buttons
-    };
-    if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
-      payload.big_picture = notification.imageUrl;
-      payload.chrome_web_image = notification.imageUrl;
-    }
-    const deadlineMs = Date.now() + 24e3;
-    const result = await sendOneSignalBatchWithRetry(payload, deadlineMs);
-    return {
-      testOnly: true,
-      status: "sent",
-      slot,
-      editionDate,
-      leadPostId: leadStory.id,
-      recipientsCount: adminSubs.length,
-      notificationId: result.notificationId
-    };
-  }
-  const claim = await claimPushSlot({
-    editionDate,
-    slot,
-    triggerSource,
-    scheduledFor,
-    now: now2,
-    force,
-    resend
-  });
-  if (!claim.claimed) {
-    return { status: claim.status, message: claim.error };
-  }
-  try {
-    const { publishDuePosts: publishDuePosts2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-    await publishDuePosts2(now2);
-    const editionPosts = await listEditionPublishedPosts(editionDate);
-    if (editionPosts.length === 0) {
-      await updatePushSend(claim.sendId, {
-        status: "skipped",
-        finishedAt: /* @__PURE__ */ new Date(),
-        error: `No published posts for edition date ${editionDate} (${slot})`
-      });
-      await sendAdminAlertEmail(
-        `[Aurikrex Bytes] Push Skipped: No published posts for ${editionDate} (${slot})`,
-        `<p>The scheduled daily push for <strong>${editionDate} (${slot})</strong> was skipped because no published posts were found for this edition.</p>
-         <p>Trigger source: <code>${triggerSource}</code></p>
-         <p>Time: ${now2.toISOString()}</p>`
-      );
-      return {
-        status: "skipped",
-        slot,
-        editionDate,
-        reason: "no_published_posts"
-      };
-    }
-    const leadStory = editionPosts[0];
-    const notification = formatPushNotificationContent(leadStory, {
-      postsCount: editionPosts.length,
-      timeZone: PUSH_TIMEZONE,
-      now: now2,
-      slot
-    });
-    const db = await getDb();
-    if (!db) throw new Error("Database unavailable");
-    const subs = await db.select({ subscriptionId: oneSignalSubscriptions.subscriptionId }).from(oneSignalSubscriptions);
-    const basePayload = {
-      headings: { en: notification.heading },
-      contents: { en: notification.content },
-      url: notification.url,
-      priority: 10,
-      ttl: 14400,
-      chrome_web_icon: iconUrl,
-      chrome_web_badge: badgeUrl,
-      firefox_icon: iconUrl,
-      collapse_id: "aurikrex-briefing",
-      web_push_topic: "aurikrex-briefing",
-      web_buttons: notification.buttons
-    };
-    if (notification.imageUrl && notification.imageUrl.startsWith("http")) {
-      basePayload.big_picture = notification.imageUrl;
-      basePayload.chrome_web_image = notification.imageUrl;
-    }
-    const runDeadlineMs = Date.now() + 24e3;
-    const notificationIds = [];
-    const allInvalidIds = [];
-    let totalSent = 0;
-    if (subs.length > 0) {
-      const allIds = subs.map((s) => s.subscriptionId);
-      const batches = chunkArray(allIds, BATCH_SIZE);
-      for (const batch of batches) {
-        const batchPayload = {
-          ...basePayload,
-          include_subscription_ids: batch
-        };
-        const batchRes = await sendOneSignalBatchWithRetry(
-          batchPayload,
-          runDeadlineMs
-        );
-        if (batchRes.notificationId) {
-          notificationIds.push(batchRes.notificationId);
-        }
-        totalSent += batchRes.recipients || batch.length;
-        if (batchRes.invalidIds.length > 0) {
-          allInvalidIds.push(...batchRes.invalidIds);
-        }
-      }
-    } else {
-      const segmentPayload = {
-        ...basePayload,
-        included_segments: ["Subscribed Users"]
-      };
-      const res = await sendOneSignalBatchWithRetry(
-        segmentPayload,
-        runDeadlineMs
-      );
-      if (res.notificationId) notificationIds.push(res.notificationId);
-      totalSent += res.recipients || 1;
-      if (res.invalidIds.length > 0) allInvalidIds.push(...res.invalidIds);
-    }
-    let invalidRemovedCount = 0;
-    if (allInvalidIds.length > 0) {
-      try {
-        await db.delete(oneSignalSubscriptions).where(
-          inArray3(oneSignalSubscriptions.subscriptionId, allInvalidIds)
-        );
-        invalidRemovedCount = allInvalidIds.length;
-        console.info(
-          `[Push] Pruned ${invalidRemovedCount} invalid subscriptions from database`
-        );
-      } catch (pruneErr) {
-        console.warn("[Push] Error pruning invalid subscriptions:", pruneErr);
-      }
-    }
-    await updatePushSend(claim.sendId, {
-      status: "sent",
-      finishedAt: /* @__PURE__ */ new Date(),
-      leadPostId: leadStory.id,
-      postsCount: editionPosts.length,
-      recipientsCount: totalSent,
-      onesignalNotificationIds: notificationIds,
-      invalidRemovedCount
-    });
-    return {
-      status: "sent",
-      slot,
-      editionDate,
-      leadPostId: leadStory.id,
-      postsCount: editionPosts.length,
-      recipientsCount: totalSent,
-      notificationIds
-    };
-  } catch (error) {
-    await updatePushSend(claim.sendId, {
-      status: "failed",
-      finishedAt: /* @__PURE__ */ new Date(),
-      error: error?.message || String(error)
-    });
-    await sendAdminAlertEmail(
-      `[Aurikrex Bytes Alert] Daily Push Failed: ${editionDate} (${slot})`,
-      `<p>The scheduled push notification for <strong>${editionDate} (${slot})</strong> failed.</p>
-       <p><strong>Trigger source:</strong> <code>${triggerSource}</code></p>
-       <p><strong>Attempts:</strong> ${claim.attempts}</p>
-       <p><strong>Error:</strong></p>
-       <pre>${error?.stack || error?.message || String(error)}</pre>`
-    );
-    throw error;
-  }
-}
-async function sendDailyPushNotifications(options = {}) {
-  return processPushTrigger(options);
-}
-async function sendTestPushNotification(subscriptionId) {
-  const baseUrl = appBaseUrl() || "https://www.bytes.aurikrex.com";
-  const iconUrl = `${baseUrl}/logo-192.png`;
-  const badgeUrl = `${baseUrl}/badge-96.png`;
-  try {
-    const { appId, apiKey } = getOneSignalConfig();
-    const response = await fetch(ONESIGNAL_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Key ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        app_id: appId,
-        target_channel: "push",
-        include_subscription_ids: [subscriptionId],
-        headings: { en: "Morning Brief \xB7 1 new Byte" },
-        contents: {
-          en: "OpenAI announces reasoning improvements with faster tool execution and lower latency."
-        },
-        url: `${baseUrl}/`,
-        chrome_web_icon: iconUrl,
-        chrome_web_badge: badgeUrl,
-        firefox_icon: iconUrl,
-        big_picture: `${baseUrl}/images/briefing-banner-2x1.png`,
-        chrome_web_image: `${baseUrl}/images/briefing-banner-2x1.png`,
-        collapse_id: "aurikrex-briefing",
-        web_push_topic: "aurikrex-briefing",
-        web_buttons: [
-          { id: "read-now", text: "Read now", url: `${baseUrl}/` },
-          { id: "all-bytes", text: "All Bytes", url: `${baseUrl}/` }
-        ]
-      })
-    });
-    const responseBody = await response.text();
-    if (!response.ok) {
-      throw new Error(
-        `OneSignal request failed (${response.status}): ${responseBody}`
-      );
-    }
-    return { success: true };
-  } catch (err) {
-    console.error("[Push] Failed to send OneSignal test notification:", err);
-    return { success: false, error: String(err) };
-  }
-}
-var ONESIGNAL_API_URL, BATCH_SIZE, COMMON_TECH_ACRONYMS;
-var init_push = __esm({
-  "server/push.ts"() {
-    "use strict";
-    init_schema();
-    init_env();
-    init_db();
-    init_pushConfig();
-    init_pushLedger();
-    ONESIGNAL_API_URL = "https://api.onesignal.com/notifications";
-    BATCH_SIZE = 2e3;
-    COMMON_TECH_ACRONYMS = /* @__PURE__ */ new Set([
-      "AI",
-      "API",
-      "AWS",
-      "CPU",
-      "GPU",
-      "HTML",
-      "HTTP",
-      "ID",
-      "IOS",
-      "IP",
-      "JSON",
-      "LLM",
-      "ML",
-      "OS",
-      "PWA",
-      "PR",
-      "RAM",
-      "REST",
-      "SDK",
-      "SEO",
-      "SQL",
-      "SSD",
-      "TCP",
-      "UI",
-      "URI",
-      "URL",
-      "USB",
-      "UX",
-      "VCF"
-    ]);
-  }
-});
-
 // server/aiCache.ts
 var aiCache_exports = {};
 __export(aiCache_exports, {
@@ -5517,6 +5869,17 @@ var appRouter = router({
       });
       return { success: true, id: Number(result.lastInsertRowid) };
     }),
+    aiHealth: publicProcedure.query(async ({ ctx }) => {
+      await requireAdmin(ctx);
+      const { checkAiHealth: checkAiHealth2 } = await Promise.resolve().then(() => (init_aiHealth(), aiHealth_exports));
+      return checkAiHealth2();
+    }),
+    checkAiHealth: publicProcedure.mutation(async ({ ctx }) => {
+      const admin = await requireAdmin(ctx);
+      assertPermission(admin.role, "post:create");
+      const { checkAiHealth: checkAiHealth2 } = await Promise.resolve().then(() => (init_aiHealth(), aiHealth_exports));
+      return checkAiHealth2({ forceLiveCheck: true });
+    }),
     curateNow: publicProcedure.input(
       z2.object({
         count: z2.number().int().min(5).max(30).default(25).optional()
@@ -6389,6 +6752,13 @@ Instructions:
                 `[FollowUp] Mistral AI model ${model} failed:`,
                 mistralErr instanceof Error ? mistralErr.message : String(mistralErr)
               );
+              const is429 = mistralErr?.response?.status === 429 || /429|rate limit/i.test(mistralErr?.message || "");
+              const { notifyAiDegradation: notifyAiDegradation2 } = await Promise.resolve().then(() => (init_aiHealth(), aiHealth_exports));
+              void notifyAiDegradation2(
+                "Mistral AI",
+                is429 ? "Rate limit reached (HTTP 429)" : `Model ${model} failed (${mistralErr?.message || "error"})`,
+                "Falling back to NVIDIA NIM / Cloudflare Workers AI"
+              );
             }
           }
         }
@@ -6421,6 +6791,12 @@ Instructions:
               console.warn(
                 `[FollowUp] NVIDIA NIM model ${model} failed:`,
                 nvidiaErr instanceof Error ? nvidiaErr.message : String(nvidiaErr)
+              );
+              const { notifyAiDegradation: notifyAiDegradation2 } = await Promise.resolve().then(() => (init_aiHealth(), aiHealth_exports));
+              void notifyAiDegradation2(
+                "NVIDIA NIM",
+                `Model ${model} unavailable (${nvidiaErr?.message || "error"})`,
+                "Falling back to Cloudflare Workers AI"
               );
             }
           }

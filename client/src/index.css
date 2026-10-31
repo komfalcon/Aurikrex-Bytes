@@ -11412,3 +11412,140 @@ input:disabled + .slider {
   padding: 8px 12px;
   border-radius: 8px;
 }
+
+/* ── AI Health Status Badge & Diagnostic Modal ── */
+.ai-health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.ai-health-badge.healthy {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.ai-health-badge.healthy:hover {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.5);
+}
+
+.ai-health-badge.degraded {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.ai-health-badge.degraded:hover {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.6);
+}
+
+.ai-health-badge.critical {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.35);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.2);
+}
+
+.ai-health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.ai-health-badge.healthy .ai-health-dot { background: #10b981; }
+.ai-health-badge.degraded .ai-health-dot { background: #f59e0b; animation: maintenance-pulse 2s infinite; }
+.ai-health-badge.critical .ai-health-dot { background: #ef4444; animation: maintenance-pulse 1.2s infinite; }
+
+.ai-health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin: 16px 0;
+}
+
+@media (max-width: 600px) {
+  .ai-health-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ai-provider-card {
+  background: var(--surface-2, #1e293b);
+  border: 1px solid var(--line, #334155);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ai-provider-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink, #f8fafc);
+}
+
+.ai-provider-status-pill {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.ai-provider-status-pill.healthy {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.ai-provider-status-pill.degraded {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.ai-provider-status-pill.down {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.ai-provider-status-pill.unconfigured {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.ai-provider-detail {
+  font-size: 11.5px;
+  color: var(--muted, #94a3b8);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-provider-error {
+  font-size: 11px;
+  color: #f87171;
+  margin: 0;
+  line-height: 1.3;
+}

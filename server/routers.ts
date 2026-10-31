@@ -369,6 +369,17 @@ export const appRouter = router({
         });
         return { success: true, id: Number(result.lastInsertRowid) };
       }),
+    aiHealth: publicProcedure.query(async ({ ctx }) => {
+      await requireAdmin(ctx);
+      const { checkAiHealth } = await import("./_core/aiHealth.js");
+      return checkAiHealth();
+    }),
+    checkAiHealth: publicProcedure.mutation(async ({ ctx }) => {
+      const admin = await requireAdmin(ctx);
+      assertPermission(admin.role, "post:create");
+      const { checkAiHealth } = await import("./_core/aiHealth.js");
+      return checkAiHealth({ forceLiveCheck: true });
+    }),
     curateNow: publicProcedure
       .input(
         z
@@ -1401,10 +1412,17 @@ Instructions:
                   modelUsed = model;
                   break;
                 }
-              } catch (mistralErr) {
+              } catch (mistralErr: any) {
                 console.warn(
                   `[FollowUp] Mistral AI model ${model} failed:`,
                   mistralErr instanceof Error ? mistralErr.message : String(mistralErr)
+                );
+                const is429 = mistralErr?.response?.status === 429 || /429|rate limit/i.test(mistralErr?.message || "");
+                const { notifyAiDegradation } = await import("./_core/aiHealth.js");
+                void notifyAiDegradation(
+                  "Mistral AI",
+                  is429 ? "Rate limit reached (HTTP 429)" : `Model ${model} failed (${mistralErr?.message || "error"})`,
+                  "Falling back to NVIDIA NIM / Cloudflare Workers AI"
                 );
               }
             }
@@ -1436,10 +1454,16 @@ Instructions:
                   modelUsed = model;
                   break;
                 }
-              } catch (nvidiaErr) {
+              } catch (nvidiaErr: any) {
                 console.warn(
                   `[FollowUp] NVIDIA NIM model ${model} failed:`,
                   nvidiaErr instanceof Error ? nvidiaErr.message : String(nvidiaErr)
+                );
+                const { notifyAiDegradation } = await import("./_core/aiHealth.js");
+                void notifyAiDegradation(
+                  "NVIDIA NIM",
+                  `Model ${model} unavailable (${nvidiaErr?.message || "error"})`,
+                  "Falling back to Cloudflare Workers AI"
                 );
               }
             }

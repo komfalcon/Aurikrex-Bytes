@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowRight, ArrowUpRight, CalendarClock, Check, FilePlus2, LayoutDashboard, LogOut, Moon, Search, Shield, Sun, Trash2, Send, CheckSquare, Square, AlertTriangle, KeyRound, Power, X, Bell } from "lucide-react";
+import { ArrowRight, ArrowUpRight, CalendarClock, Check, FilePlus2, LayoutDashboard, LogOut, Moon, Search, Shield, Sun, Trash2, Send, CheckSquare, Square, AlertTriangle, KeyRound, Power, X, Bell, Activity, RefreshCw, CheckCircle2 } from "lucide-react";
 import { trpc } from "../lib/trpc";
 import { Logo } from "../public/ReaderPages";
 import { useTheme } from "../contexts/ThemeContext";
@@ -214,10 +214,159 @@ function MaintenanceModal({
   );
 }
 
+
+function AiHealthBadge({
+  report,
+  onClick,
+}: {
+  report?: any;
+  onClick: () => void;
+}) {
+  const status = report?.overallStatus || "healthy";
+  const label =
+    status === "healthy"
+      ? "AI: Operational"
+      : status === "degraded"
+      ? "AI: Degraded"
+      : "AI: Critical";
+
+  return (
+    <button
+      type="button"
+      className={`ai-health-badge ${status}`}
+      onClick={onClick}
+      title={report?.summary || "Click to view AI & Search system diagnostics"}
+    >
+      <span className="ai-health-dot" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function AiHealthModal({
+  isOpen,
+  onClose,
+  report,
+  onRefresh,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  report?: any;
+  onRefresh: () => void;
+}) {
+  const checkMutation = trpc.admin.checkAiHealth.useMutation({
+    onSuccess: () => {
+      onRefresh();
+    },
+  });
+
+  if (!isOpen) return null;
+
+  const currentReport = checkMutation.data || report;
+
+  return (
+    <div className="maintenance-modal-backdrop" onClick={onClose}>
+      <div
+        className="maintenance-modal-card"
+        style={{ maxWidth: "560px" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="maintenance-modal-header">
+          <div className="maintenance-modal-header-icon" style={{ background: "rgba(59, 130, 246, 0.15)", color: "#3b82f6" }}>
+            <Activity size={20} />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: "1.1rem" }}>AI & Search System Health</h3>
+            <p className="muted" style={{ margin: "2px 0 0 0", fontSize: "0.85rem" }}>
+              Active Provider: <strong>{currentReport?.activeProvider || "Detecting…"}</strong>
+            </p>
+          </div>
+          <button type="button" className="admin-icon-button" onClick={onClose} aria-label="Close modal">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div style={{ marginTop: "1rem" }}>
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: "6px",
+              fontSize: "0.85rem",
+              background:
+                currentReport?.overallStatus === "critical"
+                  ? "rgba(239, 68, 68, 0.12)"
+                  : currentReport?.overallStatus === "degraded"
+                  ? "rgba(245, 158, 11, 0.12)"
+                  : "rgba(16, 185, 129, 0.12)",
+              color:
+                currentReport?.overallStatus === "critical"
+                  ? "#ef4444"
+                  : currentReport?.overallStatus === "degraded"
+                  ? "#f59e0b"
+                  : "#10b981",
+              border: "1px solid currentColor",
+              marginBottom: "1rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+            }}
+          >
+            {currentReport?.overallStatus === "healthy" ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            <span>{currentReport?.summary || "Probing AI providers…"}</span>
+          </div>
+
+          <div className="ai-health-grid">
+            {currentReport?.providers?.map((p: any) => (
+              <div key={p.name} className="ai-provider-card">
+                <div className="ai-provider-header">
+                  <span className="ai-provider-name">{p.name}</span>
+                  <span className={`ai-provider-status-pill ${p.status}`}>{p.status}</span>
+                </div>
+                <p className="ai-provider-detail">
+                  {p.model} {p.latencyMs ? `• ${p.latencyMs}ms` : ""}
+                </p>
+                {p.error && (
+                  <p className="ai-provider-error" title={p.error}>
+                    {p.error.length > 50 ? `${p.error.slice(0, 50)}…` : p.error}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="maintenance-modal-actions" style={{ marginTop: "1.25rem" }}>
+          <button
+            type="button"
+            className="button button-outline"
+            onClick={onClose}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={checkMutation.isPending}
+            onClick={() => checkMutation.mutate()}
+            style={{ display: "flex", alignItems: "center", gap: "6px" }}
+          >
+            <RefreshCw size={14} className={checkMutation.isPending ? "spin" : ""} />
+            {checkMutation.isPending ? "Running Probe…" : "Run Live Probe"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminFrame({ children, title, role, active }: { children: React.ReactNode; title?: string; role: string; active?: "inbox" | "new" | "team" | "analytics" | "notifications" }) {
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
+  const [showAiHealthModal, setShowAiHealthModal] = useState(false);
   const maintenanceQuery = trpc.admin.maintenanceStatus.useQuery(undefined, {
     refetchInterval: 15000,
+  });
+  const aiHealthQuery = trpc.admin.aiHealth.useQuery(undefined, {
+    refetchInterval: 30000,
   });
   const isMaintenance = Boolean(maintenanceQuery.data?.maintenance);
 
@@ -279,6 +428,10 @@ export function AdminFrame({ children, title, role, active }: { children: React.
               <h1>{title}</h1>
             </div>
             <div className="admin-header-actions">
+              <AiHealthBadge
+                report={aiHealthQuery.data}
+                onClick={() => setShowAiHealthModal(true)}
+              />
               <MaintenanceButton
                 role={role}
                 isMaintenance={isMaintenance}
@@ -293,6 +446,12 @@ export function AdminFrame({ children, title, role, active }: { children: React.
           isOpen={showMaintenanceModal}
           onClose={() => setShowMaintenanceModal(false)}
           isMaintenance={isMaintenance}
+        />
+        <AiHealthModal
+          isOpen={showAiHealthModal}
+          onClose={() => setShowAiHealthModal(false)}
+          report={aiHealthQuery.data}
+          onRefresh={() => void aiHealthQuery.refetch()}
         />
       </section>
     </main>

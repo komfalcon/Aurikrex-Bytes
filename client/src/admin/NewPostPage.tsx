@@ -42,6 +42,7 @@ export function NewPostPage() {
   const [aiRunning, setAiRunning] = useState(false);
   const [aiSuccessCount, setAiSuccessCount] = useState<number | null>(null);
   const [curateBatchSize, setCurateBatchSize] = useState<number>(25);
+  const aiHealth = trpc.admin.aiHealth.useQuery(undefined, { refetchInterval: 30000 });
   const [aiError, setAiError] = useState("");
 
   useEffect(() => {
@@ -247,9 +248,25 @@ export function NewPostPage() {
       {mode === "ai" && !editId && (
         <section className="table-card" style={{ padding: "2rem" }}>
           <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><Sparkles size={20} /> Falke AI Multi-Byte Curation Drop</h3>
-          <p className="muted" style={{ marginBottom: "1.5rem" }}>
+          <p className="muted" style={{ marginBottom: "1rem" }}>
             Click below to immediately trigger Falke AI. It will analyze current technology, frontier AI (Gemini, Claude, OpenAI), science, and breaking developments to generate 20–30 unique, non-duplicate draft Bytes with high-resolution photos so you can filter and publish the top 10 stories.
           </p>
+
+          <div style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "6px 12px",
+            borderRadius: "6px",
+            fontSize: "0.82rem",
+            marginBottom: "1.25rem",
+            background: aiHealth.data?.overallStatus === "critical" ? "rgba(239, 68, 68, 0.12)" : aiHealth.data?.overallStatus === "degraded" ? "rgba(245, 158, 11, 0.12)" : "rgba(16, 185, 129, 0.12)",
+            color: aiHealth.data?.overallStatus === "critical" ? "#ef4444" : aiHealth.data?.overallStatus === "degraded" ? "#f59e0b" : "#10b981",
+            border: "1px solid currentColor"
+          }}>
+            <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "currentColor" }} />
+            <span>Active Engine: <strong>{aiHealth.data?.activeProvider || "Mistral AI / Cloudflare Workers AI"}</strong> {aiHealth.data?.overallStatus === "degraded" ? "(Operating on fallback tier)" : ""}</span>
+          </div>
 
           <div style={{ marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
             <label htmlFor="batch-size" style={{ fontWeight: 600, fontSize: "0.95rem" }}>Batch size:</label>
