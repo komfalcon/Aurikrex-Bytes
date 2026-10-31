@@ -230,7 +230,7 @@ export function generateEditorialSvgCard(headline: string, category = "Tech"): s
       <stop offset="100%" stop-color="#141c2e" />
     </linearGradient>
     <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="0%" stop-color="#327afd" />
       <stop offset="100%" stop-color="#60a5fa" />
     </linearGradient>
   </defs>
@@ -245,7 +245,7 @@ export function generateEditorialSvgCard(headline: string, category = "Tech"): s
     ${tspans}
   </text>
   <g transform="translate(80, 530)">
-    <circle cx="10" cy="-6" r="6" fill="#3b82f6" />
+    <circle cx="10" cy="-6" r="6" fill="#327afd" />
     <text x="28" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="600" fill="#94a3b8" letter-spacing="0.5">AURIKREX BYTES &bull; VERIFIED TECH BRIEFING</text>
   </g>
 </svg>`;
