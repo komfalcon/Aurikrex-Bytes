@@ -1,0 +1,259 @@
+import crypto from "node:crypto";
+import type { NextFunction, Request, Response } from "express";
+
+const authAttempts = new Map<string, { count: number; resetAt: number }>();
+const AUTH_WINDOW_MS = 60_000;
+const AUTH_MAX_REQUESTS = 30;
+const AI_MAX_REQUESTS = 15;
+
+export function safeStringEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(String(a ?? ""), "utf8");
+  const bufB = Buffer.from(String(b ?? ""), "utf8");
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufB, bufB);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+export function safeCompareSecrets(
+  provided: string | undefined | null,
+  expected: string | undefined | null
+): boolean {
+  if (!provided || !expected) return false;
+  return safeStringEqual(provided, expected);
+}
+
+export function isSafePublicHttpsUrl(value: string | null | undefined): boolean {
+  if (!value || typeof value !== "string") return false;
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === "localhost" ||
+      host.endsWith(".local") ||
+      host.endsWith(".internal") ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^169\.254\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) ||
+      host === "0.0.0.0" ||
+      host.includes(":")
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const DEFAULT_ALLOWED_AVATAR_HOSTS = [
+  "res.cloudinary.com",
+  "googleusercontent.com",
+  "gravatar.com",
+  "githubusercontent.com",
+];
+
+export function isSafeAvatarUrl(value: string | null | undefined): boolean {
+  if (!value) return true;
+  const trimmed = value.trim();
+
+  // Reject dangerous protocols, unhosted schemes, and non-HTTPS URLs
+  if (
+    trimmed.startsWith("javascript:") ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("blob:") ||
+    trimmed.startsWith("http:")
+  ) {
+    return false;
+  }
+
+  // URL length guard
+  if (trimmed.length > 2048) return false;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:") return false;
+
+    // Guard against private IPs, localhost, and SSRF targets
+    if (!isSafePublicHttpsUrl(trimmed)) return false;
+
+    const host = parsed.hostname.toLowerCase();
+    const envHosts = (process.env.ALLOWED_AVATAR_HOSTS || "")
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean);
+    const allowedHosts = [...DEFAULT_ALLOWED_AVATAR_HOSTS, ...envHosts];
+
+    return allowedHosts.some(
+      (allowed) => host === allowed || host.endsWith("." + allowed)
+    );
+  } catch {
+    return false;
+  }
+}
+
+type FailedAttemptRecord = {
+  count: number;
+  firstAttemptAt: number;
+  lockedUntil: number | null;
+  resetSent: boolean;
+};
+
+const failedAttemptsMap = new Map<string, FailedAttemptRecord>();
+export const MAX_FAILED_BEFORE_LOCKOUT = 5;
+export const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+export const MAX_FAILED_BEFORE_AUTO_RESET = 8;
+export const ATTEMPT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+export function securityHeaders(_req: Request, res: Response, next: NextFunction) {
+  res.removeHeader("X-Powered-By");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: blob: https://res.cloudinary.com https://*.googleusercontent.com; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com https://maps.googleapis.com; connect-src 'self' https://maps.googleapis.com https://api.cloudinary.com wss:; frame-src https://accounts.google.com; form-action 'self' https://accounts.google.com");
+  if (process.env.NODE_ENV === "production" && process.env.APP_BASE_URL?.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+}
+
+export function authRateLimit(req: Request, res: Response, next: NextFunction) {
+  if (!req.originalUrl.startsWith("/api/trpc/")) return next();
+  const route = req.originalUrl.split("?")[0];
+  const isAuthRoute = /\/(reader\.(signup|login|requestPasswordReset|resetPassword|verifyEmail|resendVerificationEmail)|admin\.(login|setMaintenanceMode))$/.test(route);
+  const isAiRoute = /\/publicPosts\.(askFollowUp|reportFollowUp)$/.test(route);
+  if (!isAuthRoute && !isAiRoute) return next();
+  const maxRequests = isAiRoute ? AI_MAX_REQUESTS : AUTH_MAX_REQUESTS;
+  const clientIp = req.ip || req.socket?.remoteAddress || "unknown";
+  const key = `${clientIp}:${route}`;
+  const now = Date.now();
+  const current = authAttempts.get(key);
+  if (!current || current.resetAt <= now) authAttempts.set(key, { count: 1, resetAt: now + AUTH_WINDOW_MS });
+  else current.count += 1;
+  const attempt = authAttempts.get(key)!;
+  res.setHeader("RateLimit-Limit", maxRequests);
+  res.setHeader("RateLimit-Remaining", Math.max(0, maxRequests - attempt.count));
+  if (attempt.count > maxRequests) {
+    res.setHeader("Retry-After", String(Math.ceil((attempt.resetAt - now) / 1000)));
+    return res.status(429).json({ error: "Too many requests. Please try again shortly." });
+  }
+  next();
+}
+
+export function checkPasswordAttemptLockout(email: string): { locked: boolean; message?: string; autoResetTriggered?: boolean } {
+  const normEmail = email.trim().toLowerCase();
+  const record = failedAttemptsMap.get(normEmail);
+  if (!record) return { locked: false };
+
+  const now = Date.now();
+
+  // Check if lockout active
+  if (record.lockedUntil && record.lockedUntil > now) {
+    const remainingSec = Math.ceil((record.lockedUntil - now) / 1000);
+    const minutes = Math.ceil(remainingSec / 60);
+    return {
+      locked: true,
+      message: record.resetSent
+        ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address."
+        : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
+      autoResetTriggered: record.resetSent,
+    };
+  }
+
+  // Clear if attempt window expired
+  if (now - record.firstAttemptAt > ATTEMPT_WINDOW_MS && (!record.lockedUntil || record.lockedUntil <= now)) {
+    failedAttemptsMap.delete(normEmail);
+    return { locked: false };
+  }
+
+  if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
+    if (!record.lockedUntil || record.lockedUntil <= now) {
+      record.lockedUntil = now + LOCKOUT_DURATION_MS;
+    }
+    const remainingSec = Math.ceil((record.lockedUntil - now) / 1000);
+    const minutes = Math.ceil(remainingSec / 60);
+    return {
+      locked: true,
+      message: record.resetSent
+        ? "Account temporarily locked due to multiple failed login attempts. A password reset link has been sent to your email address."
+        : `Too many failed password attempts. Account temporarily locked for ${minutes} minute${minutes > 1 ? "s" : ""}. Please try again later or reset your password.`,
+      autoResetTriggered: record.resetSent,
+    };
+  }
+
+  return { locked: false };
+}
+
+export function recordFailedPasswordAttempt(email: string): { count: number; locked: boolean; autoResetNeeded: boolean; message: string } {
+  const normEmail = email.trim().toLowerCase();
+  const now = Date.now();
+  let record = failedAttemptsMap.get(normEmail);
+
+  if (!record || now - record.firstAttemptAt > ATTEMPT_WINDOW_MS) {
+    record = { count: 1, firstAttemptAt: now, lockedUntil: null, resetSent: false };
+  } else {
+    record.count += 1;
+  }
+
+  let locked = false;
+  let autoResetNeeded = false;
+  let message = "Invalid email or password";
+
+  if (record.count >= MAX_FAILED_BEFORE_AUTO_RESET) {
+    record.lockedUntil = now + LOCKOUT_DURATION_MS;
+    locked = true;
+    if (!record.resetSent) {
+      autoResetNeeded = true;
+      record.resetSent = true;
+    }
+    message = "Account locked due to multiple failed login attempts. A password reset link has been automatically sent to your email address.";
+  } else if (record.count >= MAX_FAILED_BEFORE_LOCKOUT) {
+    record.lockedUntil = now + LOCKOUT_DURATION_MS;
+    locked = true;
+    message = "Too many failed password attempts. Account temporarily locked for 15 minutes. Please try again later or reset your password.";
+  } else {
+    const remaining = MAX_FAILED_BEFORE_LOCKOUT - record.count;
+    message = `Invalid email or password. ${remaining} attempt${remaining > 1 ? "s" : ""} remaining before temporary account lock.`;
+  }
+
+  failedAttemptsMap.set(normEmail, record);
+  return { count: record.count, locked, autoResetNeeded, message };
+}
+
+export function resetPasswordAttempts(email: string) {
+  failedAttemptsMap.delete(email.trim().toLowerCase());
+}
+
+export function clearAllAuthRateLimitStores() {
+  authAttempts.clear();
+  failedAttemptsMap.clear();
+}
+
+
+export function isCronAuthorized(req: Request): boolean {
+  const rawAuth = (req.headers.authorization || "").trim();
+  const bearerToken = rawAuth.startsWith("Bearer ") ? rawAuth.slice(7).trim() : null;
+  const xCronSecret = ((req.headers["x-cron-secret"] as string) || "").trim();
+  const querySecret = ((req.query?.secret as string) || (req.query?.key as string) || "").trim();
+
+  const candidates = [
+    process.env.CRON_SECRET,
+    process.env.AURIKREX_CENTRAL_S2S_SECRET,
+  ]
+    .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+    .map(s => s.trim().replace(/^["']|["']$/g, ""));
+
+  if (candidates.length === 0) return false;
+
+  for (const secret of candidates) {
+    if (bearerToken && safeStringEqual(bearerToken, secret)) return true;
+    if (safeStringEqual(rawAuth, secret)) return true;
+    if (xCronSecret && safeStringEqual(xCronSecret, secret)) return true;
+    if (querySecret && safeStringEqual(querySecret, secret)) return true;
+  }
+
+  return false;
+}

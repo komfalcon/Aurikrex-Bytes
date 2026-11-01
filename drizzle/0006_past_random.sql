@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX `post_bookmarks_post_reader_unique` ON `post_bookmarks` (`post_id`,`reader_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `post_reactions_post_reader_unique` ON `post_reactions` (`post_id`,`reader_id`);

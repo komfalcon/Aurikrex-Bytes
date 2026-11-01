@@ -33,11 +33,10 @@ class ErrorBoundary extends Component<Props, State> {
 
             <h2 className="text-xl mb-4">An unexpected error occurred.</h2>
 
-            <div className="p-4 w-full rounded bg-muted overflow-auto mb-6">
-              <pre className="text-sm text-muted-foreground whitespace-break-spaces">
-                {this.state.error?.stack}
-              </pre>
-            </div>
+            <p className="text-sm text-muted-foreground text-center mb-6">
+              The briefing could not load this view. Please reload and try again.
+              {import.meta.env.DEV && this.state.error?.message ? ` (${this.state.error.message})` : ""}
+            </p>
 
             <button
               onClick={() => window.location.reload()}

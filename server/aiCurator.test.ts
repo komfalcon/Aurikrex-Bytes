@@ -1,0 +1,240 @@
+import { describe, expect, it } from "vitest";
+import {
+  areDuplicateHeadlines,
+  buildDuplicateKey,
+  canonicalizeUrl,
+  clampEditorialBrief,
+  cleanHeadline,
+  extractSignificantTokens,
+  generateEditorialSvgCard,
+  getTodayWindow,
+  isNonNewsHeadline,
+  normalizeHeadline,
+  parseAiJsonResponse,
+  scoreAndRankCandidates,
+} from "./_core/aiCurator.js";
+
+describe("verified news curation safeguards", () => {
+  it("parses JSON from AI response even with unescaped newlines and codeblocks", () => {
+    const rawAiOutput = `\`\`\`json
+{
+  "stories": [
+    {
+      "headline": "Mistral Releases New AI Model",
+      "body": "Paragraph 1: The core event happened today.\n\nParagraph 2: Strategic impact is massive.\n\nParagraph 3: Timeline is immediate.",
+      "category": "AI",
+      "sourceUrl": "https://example.com/mistral"
+    }
+  ]
+}
+\`\`\``;
+
+    const result = parseAiJsonResponse(rawAiOutput);
+    expect(result).toHaveLength(1);
+    expect(result[0].headline).toBe("Mistral Releases New AI Model");
+    expect(result[0].category).toBe("AI");
+  });
+
+  it("handles malformed JSON with unescaped literal line breaks inside strings", () => {
+    const malformedOutput = `{
+  "stories": [
+    {
+      "headline": "Unescaped Newline Test",
+      "body": "Paragraph 1 line one.
+Paragraph 2 line two.",
+      "category": "Tech"
+    }
+  ]
+}`;
+
+    const result = parseAiJsonResponse(malformedOutput);
+    expect(result).toHaveLength(1);
+    expect(result[0].headline).toBe("Unescaped Newline Test");
+  });
+
+  it("recovers completed story objects from truncated JSON outputs hit mid-stream", () => {
+    const truncatedOutput = `[
+      {
+        "headline": "First Complete Story",
+        "body": "This story was fully generated.",
+        "category": "Tech"
+      },
+      {
+        "headline": "Second Complete Story",
+        "body": "This story was also fully generated.",
+        "category": "AI"
+      },
+      {
+        "headline": "Incomplete Cutoff Story",
+        "body": "This story was cut off before closing quote`;
+
+    const result = parseAiJsonResponse(truncatedOutput);
+    expect(result).toHaveLength(2);
+    expect(result[0].headline).toBe("First Complete Story");
+    expect(result[1].headline).toBe("Second Complete Story");
+  });
+
+  it("canonicalizes tracking parameters and trailing slashes", () => {
+    expect(canonicalizeUrl("https://WWW.Example.com/story/?utm_source=x&ref=home#comments")).toBe(
+      "https://example.com/story"
+    );
+  });
+
+  it("normalizes headlines before identity hashing and disambiguates short titles by URL", () => {
+    expect(normalizeHeadline("OpenAI: New Model!")).toBe("openai new model");
+    expect(
+      buildDuplicateKey("A story", "https://example.com/a", new Date("2026-09-18T01:00:00Z"))
+    ).toBe(
+      buildDuplicateKey("A  story", "https://example.com/a/?utm_medium=x", new Date("2026-09-18T23:00:00Z"))
+    );
+
+    // Short generic titles (< 4 tokens) on different URLs do not collide
+    expect(
+      buildDuplicateKey("AI Update", "https://openai.com/blog/update", new Date("2026-09-18T01:00:00Z"))
+    ).not.toBe(
+      buildDuplicateKey("AI Update", "https://anthropic.com/news/update", new Date("2026-09-18T01:00:00Z"))
+    );
+
+    // Specific multi-token syndicated titles (4+ tokens) collapse across syndication domains
+    expect(
+      buildDuplicateKey(
+        "European Union approves landmark semiconductor subsidy package",
+        "https://reuters.com/tech/eu-chips",
+        new Date("2026-09-18T01:00:00Z")
+      )
+    ).toBe(
+      buildDuplicateKey(
+        "European Union approves landmark semiconductor subsidy package",
+        "https://yahoo.com/news/eu-chips-syndicated",
+        new Date("2026-09-18T05:00:00Z")
+      )
+    );
+  });
+
+  it("scores and ranks candidates by cross-source cluster signal and enforces publisher diversity", () => {
+    const now = new Date("2026-09-18T07:00:00Z");
+    const candidates = [
+      {
+        title: "Nvidia unveils Rubin next-generation GPU architecture for hyperscale AI",
+        url: "https://verge.com/nvidia-rubin-1",
+        publisher: "The Verge",
+        publishedAt: now,
+        duplicateKey: "k1",
+        imageUrl: "https://verge.com/img1.jpg",
+      },
+      {
+        title: "The Verge minor gadget accessory roundup",
+        url: "https://verge.com/accessory-2",
+        publisher: "The Verge",
+        publishedAt: new Date(now.getTime() - 6 * 3600 * 1000),
+        duplicateKey: "k2",
+        imageUrl: null,
+      },
+      {
+        title: "The Verge third story of the morning",
+        url: "https://verge.com/story-3",
+        publisher: "The Verge",
+        publishedAt: new Date(now.getTime() - 7 * 3600 * 1000),
+        duplicateKey: "k3",
+        imageUrl: null,
+      },
+      {
+        title: "Ars Technica analysis of Nvidia Rubin GPU architecture and HBM4 memory",
+        url: "https://arstechnica.com/nvidia-rubin",
+        publisher: "Ars Technica",
+        publishedAt: now,
+        duplicateKey: "k4",
+        imageUrl: "https://arstechnica.com/img4.jpg",
+      },
+    ];
+
+    const ranked = scoreAndRankCandidates(candidates);
+    expect(ranked).toHaveLength(4);
+    // Max 2 stories from "The Verge" in the primary top-3 diversity pass before overflow
+    const topThreeVergeCount = ranked.slice(0, 3).filter(c => c.publisher === "The Verge").length;
+    expect(topThreeVergeCount).toBeLessThanOrEqual(2);
+    // Cross-source Nvidia Rubin stories rank at the top
+    expect(ranked[0].title).toContain("Rubin");
+    expect(ranked[1].title).toContain("Rubin");
+  });
+
+  it("calculates the complete local calendar day", () => {
+    const window = getTodayWindow(new Date("2026-09-18T02:00:00Z"), "Africa/Lagos");
+    expect(window.date).toBe("2026-09-18");
+    expect(window.start.toISOString()).toBe("2026-09-17T23:00:00.000Z");
+    expect(window.end.toISOString()).toBe("2026-09-18T23:00:00.000Z");
+  });
+
+  it("cleans headlines by removing source tags, brackets, and decoding HTML entities", () => {
+    expect(cleanHeadline("Show HN: SuperDB – A fast database [video]")).toBe("SuperDB – A fast database");
+    expect(cleanHeadline("Launch HN: NextGen AI (YC W26) [pdf]")).toBe("NextGen AI (YC W26)");
+    expect(cleanHeadline("Apple&#8217;s first live music venue - The Verge")).toBe("Apple’s first live music venue");
+    expect(cleanHeadline("AT&amp;T &quot;FastNet&quot; Launch | Ars Technica")).toBe("AT&T \"FastNet\" Launch");
+  });
+
+  it("identifies and filters non-news discussions", () => {
+    expect(isNonNewsHeadline("Ask HN: What is your favorite code editor?")).toBe(true);
+    expect(isNonNewsHeadline("Tell HN: Thank you community")).toBe(true);
+    expect(isNonNewsHeadline("Ask HN: Is anyone else experiencing latency?")).toBe(true);
+    expect(isNonNewsHeadline("Who is hiring? (September 2026)")).toBe(true);
+    expect(isNonNewsHeadline("Nvidia launches new Blackwell Ultra AI accelerators")).toBe(false);
+    expect(isNonNewsHeadline("Google DeepMind publishes new frontier reasoning architecture")).toBe(false);
+  });
+
+  it("safeguards editorial briefs without appending generic filler boilerplate", () => {
+    const candidate = {
+      title: "Google announces Gemini 2.5",
+      url: "https://example.com/gemini-2-5",
+      publisher: "Ars Technica",
+      publishedAt: new Date("2026-09-18T10:00:00Z"),
+      duplicateKey: "test-key-123",
+      imageUrl: null,
+    };
+
+    // Case 1: Overly long brief (> 800 characters) is cleanly trimmed at sentence boundary
+    const longText = "Google today unveiled Gemini 2.5, introducing significant enhancements to multimodal reasoning, context retrieval, and real-time agent execution across distributed enterprise clusters. This release marks an important milestone in production AI deployment, demonstrating measurable efficiency gains and lower latency across high-throughput inference pipelines. Technical teams report substantial improvements in zero-shot coding benchmarks and tool coordination. Furthermore, infrastructure teams will appreciate the reduced memory footprint and optimized quantization workflows that simplify integration with existing Kubernetes clusters and cloud providers. Industry analysts emphasize that competitive pressures are accelerating model development cycles worldwide, compelling organizations to rethink their foundational stack investments. Production deployments will commence immediately across enterprise accounts, with general availability slated for next month.".repeat(2);
+    const clampedLong = clampEditorialBrief(longText, candidate);
+    expect(clampedLong.length).toBeLessThanOrEqual(800);
+    expect(clampedLong.endsWith(".") || clampedLong.endsWith("...")).toBe(true);
+
+    // Case 2: Authentic brief is preserved without generic filler sentences
+    const shortText = "Anthropic released Claude 4 with enhanced code interpretation and deeper agent capabilities for developer automation pipelines.";
+    const clampedShort = clampEditorialBrief(shortText, candidate);
+    expect(clampedShort).toBe(shortText);
+    expect(clampedShort).not.toContain("Verified reporting was originally published");
+    expect(clampedShort).not.toContain("Major technological developments were announced");
+  });
+
+  it("generates a valid high-contrast SVG data URL for editorial cards", () => {
+    const card = generateEditorialSvgCard("Quantum processors achieve breakthrough coherence times", "Science");
+    expect(card.startsWith("data:image/svg+xml;base64,")).toBe(true);
+    const decoded = Buffer.from(card.replace("data:image/svg+xml;base64,", ""), "base64").toString("utf-8");
+    expect(decoded).toContain("<svg");
+    expect(decoded).toContain("SCIENCE");
+    expect(decoded).toContain("AURIKREX BYTES");
+  });
+
+  it("detects cross-outlet duplicate headlines for the same breaking story (e.g. Binance $20B)", () => {
+    const headlineA = "Binance records $20 billion in institutional inflows";
+    const headlineB = "Binance sees $20B surge in institutional assets";
+    expect(areDuplicateHeadlines(headlineA, headlineB)).toBe(true);
+
+    const geminiA = "Google unveils Gemini Argon with reasoning benchmarks";
+    const geminiB = "Google announces Gemini Argon for enterprise reasoning";
+    expect(areDuplicateHeadlines(geminiA, geminiB)).toBe(true);
+
+    const carbonA = "OpenAI launches Carbon preview for developers";
+    const carbonB = "OpenAI introduces Carbon model preview";
+    expect(areDuplicateHeadlines(carbonA, carbonB)).toBe(true);
+  });
+
+  it("does not falsely deduplicate distinct stories from the same or different companies", () => {
+    const storyA = "Apple releases iOS 19 developer beta";
+    const storyB = "Google releases Android 17 developer preview";
+    expect(areDuplicateHeadlines(storyA, storyB)).toBe(false);
+
+    const nvidiaA = "Nvidia announces Blackwell Ultra chips for datacenters";
+    const nvidiaB = "Nvidia reports record earnings driven by AI";
+    expect(areDuplicateHeadlines(nvidiaA, nvidiaB)).toBe(false);
+  });
+});

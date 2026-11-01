@@ -1,0 +1,9 @@
+name = "aurikrex-notify-trigger"
+main = "src/index.ts"
+compatibility_date = "2024-04-01"
+
+[triggers]
+# Backup triggers at 2 minutes past target hour to act as secondary fallback:
+# 07:02 UTC (08:02 AM WAT) - Morning Briefing
+# 21:02 UTC (22:02 PM WAT) - Evening Recap
+crons = ["2 7 * * *", "2 21 * * *"]
