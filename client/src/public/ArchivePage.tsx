@@ -17,7 +17,6 @@ const DEFAULT_CATEGORIES = ["Tech", "AI", "Science", "Innovation", "Crypto"];
 export function Archive() {
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("");
-  const [selectedPublisher, setSelectedPublisher] = useState<string>("");
   const [page, setPage] = useState(1);
   const [accumulatedPosts, setAccumulatedPosts] = useState<any[]>([]);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -48,16 +47,12 @@ export function Archive() {
     const fromDb = facetsQuery.data?.categories ?? [];
     return Array.from(new Set([...DEFAULT_CATEGORIES, ...fromDb]));
   }, [facetsQuery.data?.categories]);
-  const publishers = useMemo(() => {
-    return (facetsQuery.data?.publishers ?? []).slice(0, 10);
-  }, [facetsQuery.data?.publishers]);
 
   const archive = trpc.publicPosts.archive.useQuery({
     query,
     page,
     pageSize: 12,
     category: selectedCategory || undefined,
-    publisher: selectedPublisher || undefined,
   });
 
   useEffect(() => {
@@ -88,15 +83,9 @@ export function Archive() {
     resetPagination();
   };
 
-  const updatePublisher = (nextPub: string) => {
-    setSelectedPublisher(prev => (prev === nextPub ? "" : nextPub));
-    resetPagination();
-  };
-
   const clearAllFilters = () => {
     setQuery("");
     setSelectedCategory("");
-    setSelectedPublisher("");
     resetPagination();
   };
 
@@ -118,14 +107,14 @@ export function Archive() {
   }, [nextPage, archive.isFetching]);
 
   const displayPosts = accumulatedPosts.length > 0 ? accumulatedPosts : (archive.data?.posts ?? []);
-  const hasActiveFilters = Boolean(query.trim() || selectedCategory || selectedPublisher);
+  const hasActiveFilters = Boolean(query.trim() || selectedCategory);
 
   return (
     <PublicLayout
       seo={{
         title: "The Library · Past Editions — Aurikrex Bytes Archive",
         description:
-          "Browse and search the complete library of past Aurikrex Bytes editions by category, publisher, or keyword.",
+          "Browse and search the complete library of past Aurikrex Bytes editions by category or keyword.",
         path: "/archive",
       }}
     >
@@ -183,22 +172,6 @@ export function Archive() {
               </button>
             ))}
           </div>
-
-          {publishers.length > 0 && (
-            <div className="brand-filter-chips archive-publisher-chips" role="group" aria-label="Filter by source publisher">
-              <span className="archive-facet-label">Sources:</span>
-              {publishers.map(pub => (
-                <button
-                  key={pub}
-                  type="button"
-                  className={`brand-chip brand-chip-subtle ${selectedPublisher === pub ? "active" : ""}`}
-                  onClick={() => updatePublisher(pub)}
-                >
-                  {pub}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         <div className="archive-view-toggle">
@@ -210,7 +183,6 @@ export function Archive() {
             <span>
               Filtering library
               {selectedCategory ? <> · Category: <strong>{selectedCategory}</strong></> : null}
-              {selectedPublisher ? <> · Source: <strong>{selectedPublisher}</strong></> : null}
               {query ? <> · Query: <strong>&ldquo;{query}&rdquo;</strong></> : null}
             </span>
             <button className="text-button" onClick={clearAllFilters}>
@@ -264,7 +236,7 @@ export function Archive() {
           <div className="empty-state">
             <Search size={24} />
             <h2>No stories found matching your filter</h2>
-            <p>Try clearing a category or publisher filter, or searching for another term.</p>
+            <p>Try clearing a category filter, or searching for another term.</p>
             {hasActiveFilters && (
               <button className="button button-outline" onClick={clearAllFilters}>
                 Clear filters &amp; view full library
