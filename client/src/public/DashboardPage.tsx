@@ -292,15 +292,7 @@ export function ReaderDashboard() {
 
         <section className="dashboard-feed">
           <div className="section-heading dashboard-heading">
-            <div>
-              <span className="eyebrow"><Sparkles size={13} /> Today&apos;s Finite Drop</span>
-              <h2>Today’s Bytes</h2>
-            </div>
-            <div className="dashboard-heading-tools">
-              <Link href="/archive" className="text-link">
-                <BookOpen size={14} /> Browse past editions in the Archive <ArrowRight size={14} />
-              </Link>
-            </div>
+            <h2>Today’s Bytes</h2>
           </div>
 
           {todayTotalCount > 0 && (

@@ -11866,3 +11866,18 @@ input:disabled + .slider {
   font-size: 13px;
   color: var(--muted);
 }
+
+
+.section-heading.dashboard-heading {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  text-align: left !important;
+  padding-top: 4px !important;
+  margin-bottom: 12px !important;
+}
+
+.section-heading.dashboard-heading h2 {
+  text-align: left !important;
+  margin: 0 !important;
+}
