@@ -27,6 +27,7 @@ import {
   getAdminById,
   getAdminByRememberToken,
   getAnalytics,
+  getArchiveFacets,
   getDb,
   getPostById,
   getPublishedPostById,
@@ -44,12 +45,15 @@ import {
   listPublishedPostsForCarousel,
   listSavedPosts,
   listTodaysPublishedPosts,
+  markTodayBriefingComplete,
   publishDuePosts,
   recordPostView,
+  recordReaderPostRead,
   recordSearchQuery,
   searchPublishedPosts,
   togglePostBookmark,
   togglePostReaction,
+  updateReaderEmailDigestPreference,
   updateReaderFeedPreference,
   isMaintenanceMode,
   setMaintenanceMode,
@@ -143,6 +147,14 @@ async function requireReader(ctx: { req: any }) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: "Session expired or revoked. Please sign in again." });
   }
   return payload;
+}
+function optionalReaderId(ctx: { req: any }): number | undefined {
+  try {
+    const token = cookies(ctx.req)[READER_COOKIE];
+    const payload = token ? readToken(token) : null;
+    if (payload && payload.kind === "reader") return payload.id;
+  } catch {}
+  return undefined;
 }
 
 export const appRouter = router({
@@ -348,6 +360,9 @@ export const appRouter = router({
           headline: z.string().min(1).max(120),
           body: z.string().min(1).max(800),
           category: z.string().optional(),
+          whyItMatters: z.string().max(240).optional().nullable(),
+          isEditorPick: z.boolean().optional(),
+          editorialRank: z.number().int().min(1).max(100).optional(),
           imageUrl: z.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").optional(),
         })
       )
@@ -363,6 +378,9 @@ export const appRouter = router({
         const result = await db.insert(posts).values({
           ...input,
           category: input.category || "Tech",
+          whyItMatters: input.whyItMatters || null,
+          isEditorPick: Boolean(input.isEditorPick),
+          editorialRank: input.editorialRank ?? 50,
           status: "draft",
           createdBy: admin.id,
           updatedAt: new Date(),
@@ -428,6 +446,9 @@ export const appRouter = router({
           headline: z.string().min(1).optional(),
           body: z.string().min(1).optional(),
           category: z.string().optional(),
+          whyItMatters: z.string().max(240).optional().nullable(),
+          isEditorPick: z.boolean().optional(),
+          editorialRank: z.number().int().min(1).max(100).optional(),
           imageUrl: z.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").nullable().optional(),
         })
       )
@@ -866,6 +887,33 @@ export const appRouter = router({
           input.onboardingCompleted
         )
       ),
+    setEmailDigestPreference: publicProcedure
+      .input(z.object({ enabled: z.boolean() }))
+      .mutation(async ({ input, ctx }) => {
+        const session = await requireReader(ctx);
+        return updateReaderEmailDigestPreference(session.id, input.enabled);
+      }),
+    markPostRead: publicProcedure
+      .input(
+        z.object({
+          postId: z.number().int().positive(),
+          timeZone: z.string().min(1).max(80).default("Africa/Lagos"),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const session = await requireReader(ctx);
+        return recordReaderPostRead(session.id, input.postId, input.timeZone);
+      }),
+    completeTodayBriefing: publicProcedure
+      .input(
+        z.object({
+          timeZone: z.string().min(1).max(80).default("Africa/Lagos"),
+        }).optional()
+      )
+      .mutation(async ({ input, ctx }) => {
+        const session = await requireReader(ctx);
+        return markTodayBriefingComplete(session.id, input?.timeZone || "Africa/Lagos");
+      }),
     dashboard: publicProcedure
       .input(z.object({ timeZone: z.string().min(1).max(80).default("UTC") }))
       .query(async ({ input, ctx }) => {
@@ -907,6 +955,7 @@ export const appRouter = router({
             message: "An account already exists",
           });
         const verificationToken = randomToken();
+        const unsubscribeToken = randomToken();
         const db = await getDb();
         if (!db)
           throw new TRPCError({
@@ -921,6 +970,8 @@ export const appRouter = router({
           verificationToken,
           verificationTokenUsed: null,
           emailVerified: false,
+          emailDigestEnabled: true,
+          emailUnsubscribeToken: unsubscribeToken,
         });
         const url = `${appBaseUrl()}/verify-email?token=${verificationToken}`;
         await sendAuthEmail(
@@ -1013,6 +1064,7 @@ export const appRouter = router({
         nickname: reader?.nickname || null,
         avatarUrl: reader?.avatarUrl || null,
         emailVerified: Boolean(reader?.emailVerified),
+        emailDigestEnabled: reader?.emailDigestEnabled ?? true,
       };
     }),
     updateProfile: publicProcedure
@@ -1200,9 +1252,16 @@ export const appRouter = router({
       await publishDuePosts();
       return { posts: await listPublishedPostsForCarousel() };
     }),
-    today: publicProcedure.query(async () => {
+    today: publicProcedure
+      .input(z.object({ timeZone: z.string().min(1).max(80).optional() }).optional())
+      .query(async ({ input, ctx }) => {
+        await publishDuePosts();
+        const readerId = optionalReaderId(ctx);
+        return listTodaysPublishedPosts(input?.timeZone || "Africa/Lagos", readerId);
+      }),
+    archiveFacets: publicProcedure.query(async () => {
       await publishDuePosts();
-      return listTodaysPublishedPosts();
+      return getArchiveFacets();
     }),
     archive: publicProcedure
       .input(
@@ -1210,14 +1269,22 @@ export const appRouter = router({
           query: z.string().max(120).default(""),
           page: z.number().int().min(1).default(1),
           pageSize: z.number().int().min(1).max(24).default(12),
+          category: z.string().max(60).optional(),
+          publisher: z.string().max(120).optional(),
         })
       )
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         await publishDuePosts();
+        const readerId = optionalReaderId(ctx);
         const result = await searchPublishedPosts(
           input.query,
           input.page,
-          input.pageSize
+          input.pageSize,
+          {
+            category: input.category,
+            publisher: input.publisher,
+            readerId,
+          }
         );
         if (input.query.trim() && input.page === 1)
           await recordSearchQuery(input.query);
@@ -1225,11 +1292,15 @@ export const appRouter = router({
       }),
     byId: publicProcedure
       .input(z.object({ id: z.number().int().positive() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         await publishDuePosts();
-        const post = await getPublishedPostById(input.id);
+        const readerId = optionalReaderId(ctx);
+        const post = await getPublishedPostById(input.id, readerId);
         if (!post) throw genericNotFound();
         await recordPostView(post.id);
+        if (readerId) {
+          await recordReaderPostRead(readerId, post.id, "Africa/Lagos").catch(() => {});
+        }
         return post;
       }),
     askFollowUp: publicProcedure
@@ -1237,6 +1308,15 @@ export const appRouter = router({
         z.object({
           postId: z.number().int().positive(),
           question: z.string().min(3).max(300).trim(),
+          history: z
+            .array(
+              z.object({
+                question: z.string().max(300),
+                answer: z.string().max(4000),
+              })
+            )
+            .max(3)
+            .optional(),
           bypassCache: z.boolean().optional(),
         })
       )
@@ -1257,6 +1337,7 @@ export const appRouter = router({
           headline: post.headline,
           body: post.body,
           question: input.question,
+          history: input.history,
         });
 
         let remainingCoins: number | undefined;
@@ -1366,20 +1447,34 @@ export const appRouter = router({
             ];
           }
 
-          const systemPrompt = `You are an intelligent tech news assistant for Aurikrex Bytes.
-The reader is asking a follow-up question regarding the following story:
+          const systemPrompt = `You are Falke AI, the executive tech intelligence assistant for Aurikrex Bytes.
+The reader is exploring a short follow-up thread (up to 4 turns) anchored to this verified story:
 
 HEADLINE: ${post.headline}
+CATEGORY: ${post.category || "Tech"}
+PUBLISHER: ${post.sourcePublisher || "Aurikrex Editorial"}
 STORY CONTENT: ${post.body}
+${post.whyItMatters ? `WHY IT MATTERS: ${post.whyItMatters}` : ""}
 
 ${webContext ? `RELEVANT LIVE WEB SEARCH CONTEXT:\n${webContext}` : "No external web search results available."}
 
 Instructions:
-1. Provide a direct, insightful, and concise answer to the reader's question in 2-3 clear paragraphs.
-2. Synthesize the provided story details and web context into a natural explanation.
-3. Keep the tone calm, authoritative, and focused on tech signal rather than hype.
+1. Provide a direct, insightful, and concise answer to the reader's current question in 2-3 clear paragraphs.
+2. Keep the original Byte pinned as primary context while building naturally on any prior turns in the thread.
+3. Keep the tone calm, authoritative, and focused on technical/strategic signal rather than hype.
 4. Do NOT repeat or copy the original story text verbatim.
 5. Do NOT invent false facts.`;
+
+          const priorMessages = (input.history || []).slice(0, 3).flatMap(turn => [
+            { role: "user" as const, content: turn.question },
+            { role: "assistant" as const, content: turn.answer },
+          ]);
+
+          const chatMessages = [
+            { role: "system" as const, content: systemPrompt },
+            ...priorMessages,
+            { role: "user" as const, content: input.question },
+          ];
 
           let answer = "";
           let modelUsed = "";
@@ -1394,10 +1489,7 @@ Instructions:
                   "https://api.mistral.ai/v1/chat/completions",
                   {
                     model,
-                    messages: [
-                      { role: "system", content: systemPrompt },
-                      { role: "user", content: input.question },
-                    ],
+                    messages: chatMessages,
                     max_tokens: 600,
                     temperature: 0.4,
                   },
@@ -1436,10 +1528,7 @@ Instructions:
                   "https://integrate.api.nvidia.com/v1/chat/completions",
                   {
                     model,
-                    messages: [
-                      { role: "system", content: systemPrompt },
-                      { role: "user", content: input.question },
-                    ],
+                    messages: chatMessages,
                     max_tokens: 600,
                     temperature: 0.4,
                   },
@@ -1479,10 +1568,7 @@ Instructions:
                   const cfRes = await axios.post(
                     url,
                     {
-                      messages: [
-                        { role: "system", content: systemPrompt },
-                        { role: "user", content: input.question },
-                      ],
+                      messages: chatMessages,
                       max_tokens: 600,
                     },
                     {

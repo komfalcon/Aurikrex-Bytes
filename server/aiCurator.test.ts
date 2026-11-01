@@ -11,6 +11,7 @@ import {
   isNonNewsHeadline,
   normalizeHeadline,
   parseAiJsonResponse,
+  scoreAndRankCandidates,
 } from "./_core/aiCurator.js";
 
 describe("verified news curation safeguards", () => {
@@ -79,13 +80,82 @@ Paragraph 2 line two.",
     );
   });
 
-  it("normalizes headlines before identity hashing", () => {
+  it("normalizes headlines before identity hashing and disambiguates short titles by URL", () => {
     expect(normalizeHeadline("OpenAI: New Model!")).toBe("openai new model");
     expect(
       buildDuplicateKey("A story", "https://example.com/a", new Date("2026-09-18T01:00:00Z"))
     ).toBe(
       buildDuplicateKey("A  story", "https://example.com/a/?utm_medium=x", new Date("2026-09-18T23:00:00Z"))
     );
+
+    // Short generic titles (< 4 tokens) on different URLs do not collide
+    expect(
+      buildDuplicateKey("AI Update", "https://openai.com/blog/update", new Date("2026-09-18T01:00:00Z"))
+    ).not.toBe(
+      buildDuplicateKey("AI Update", "https://anthropic.com/news/update", new Date("2026-09-18T01:00:00Z"))
+    );
+
+    // Specific multi-token syndicated titles (4+ tokens) collapse across syndication domains
+    expect(
+      buildDuplicateKey(
+        "European Union approves landmark semiconductor subsidy package",
+        "https://reuters.com/tech/eu-chips",
+        new Date("2026-09-18T01:00:00Z")
+      )
+    ).toBe(
+      buildDuplicateKey(
+        "European Union approves landmark semiconductor subsidy package",
+        "https://yahoo.com/news/eu-chips-syndicated",
+        new Date("2026-09-18T05:00:00Z")
+      )
+    );
+  });
+
+  it("scores and ranks candidates by cross-source cluster signal and enforces publisher diversity", () => {
+    const now = new Date("2026-09-18T07:00:00Z");
+    const candidates = [
+      {
+        title: "Nvidia unveils Rubin next-generation GPU architecture for hyperscale AI",
+        url: "https://verge.com/nvidia-rubin-1",
+        publisher: "The Verge",
+        publishedAt: now,
+        duplicateKey: "k1",
+        imageUrl: "https://verge.com/img1.jpg",
+      },
+      {
+        title: "The Verge minor gadget accessory roundup",
+        url: "https://verge.com/accessory-2",
+        publisher: "The Verge",
+        publishedAt: new Date(now.getTime() - 6 * 3600 * 1000),
+        duplicateKey: "k2",
+        imageUrl: null,
+      },
+      {
+        title: "The Verge third story of the morning",
+        url: "https://verge.com/story-3",
+        publisher: "The Verge",
+        publishedAt: new Date(now.getTime() - 7 * 3600 * 1000),
+        duplicateKey: "k3",
+        imageUrl: null,
+      },
+      {
+        title: "Ars Technica analysis of Nvidia Rubin GPU architecture and HBM4 memory",
+        url: "https://arstechnica.com/nvidia-rubin",
+        publisher: "Ars Technica",
+        publishedAt: now,
+        duplicateKey: "k4",
+        imageUrl: "https://arstechnica.com/img4.jpg",
+      },
+    ];
+
+    const ranked = scoreAndRankCandidates(candidates);
+    expect(ranked).toHaveLength(4);
+    // Max 2 stories from "The Verge" in the primary top-3 diversity pass before overflow
+    const topThreeVergeCount = ranked.slice(0, 3).filter(c => c.publisher === "The Verge").length;
+    expect(topThreeVergeCount).toBeLessThanOrEqual(2);
+    // Cross-source Nvidia Rubin stories rank at the top
+    expect(ranked[0].title).toContain("Rubin");
+    expect(ranked[1].title).toContain("Rubin");
   });
 
   it("calculates the complete local calendar day", () => {
@@ -143,6 +213,7 @@ Paragraph 2 line two.",
     expect(decoded).toContain("SCIENCE");
     expect(decoded).toContain("AURIKREX BYTES");
   });
+
   it("detects cross-outlet duplicate headlines for the same breaking story (e.g. Binance $20B)", () => {
     const headlineA = "Binance records $20 billion in institutional inflows";
     const headlineB = "Binance sees $20B surge in institutional assets";

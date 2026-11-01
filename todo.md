@@ -8,7 +8,7 @@
 - [x] Implement reader Google OAuth sign-in integration point and callback handling.
 - [x] Implement reader email verification, unverified-account state, password reset request, reset token validation, and new-password flow.
 - [x] Organize source into admin, public, and shared modules with shared types/utilities.
-- [x] Add elegant theme variables using primary #3b82f6 and Playfair Display headline typography.
+- [x] Add elegant theme variables using primary #3b82f6 and Newsreader headline typography.
 - [x] Add admin/editor and reader structural pages and route guards without exposing the disguised admin entry point.
 - [x] Add Vitest coverage for schema/auth utilities and generic admin failure behavior.
 - [x] Validate local development server, generated migration execution, TypeScript, tests, build, and route surfaces; credentialed live auth validation is documented as deployment-time handoff because secrets were intentionally omitted.

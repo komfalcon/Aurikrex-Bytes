@@ -2,7 +2,7 @@ import type { Express, NextFunction, Request, Response } from "express";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { getPostById, listPublishedPosts, isMaintenanceMode } from "../db.js";
+import { getPostById, listPublishedPosts, isMaintenanceMode, unsubscribeReaderByToken } from "../db.js";
 
 const siteUrl = () =>
   (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.com").replace(/\/$/, "");
@@ -65,9 +65,6 @@ function optimizeCloudinaryUrl(url: string) {
 
 export function createPostSeo(post: SeoPost): PostSeo {
   const canonicalUrl = `${siteUrl()}/post/${post.id}`;
-  // Use the post's Cloudinary image directly as the social preview.
-  // It's already a public CDN URL Ã¢â‚¬â€ no server-side generation, no sharp, no timeouts.
-  // Fall back to the site logo for posts that somehow have no image.
   const imageUrl = post.imageUrl
     ? optimizeCloudinaryUrl(post.imageUrl)
     : `${siteUrl()}/logo-512.png`;
@@ -224,7 +221,6 @@ async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
   const title = cleanText(post.headline).slice(0, 72) || "Aurikrex Bytes";
   const body = cleanText(post.body).slice(0, 200) || "A daily curated technology briefing.";
   const titleLines = wrapTitle(title, 46);
-  // Wrap body into lines of ~48 chars at font-size 22, max 3 lines
   const bodyLines = wrapTitle(body, 48).slice(0, 3);
 
   let coverMarkup = `<rect x="0" y="0" width="1200" height="630" fill="url(#bg)"/>`;
@@ -248,7 +244,6 @@ async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
     coverMarkup = `<rect x="0" y="0" width="1200" height="630" fill="url(#bg)"/><circle cx="950" cy="330" r="180" fill="#8b5cf6" opacity="0.32"/><path d="M850 90 C998 120 1050 250 1000 405 C960 525 845 530 790 440 C760 385 770 250 850 90" fill="#22d3ee" opacity="0.2"/>`;
   }
 
-  // Position body text dynamically below the title block
   const bodyY = 185 + titleLines.length * 58 + 28;
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
@@ -280,6 +275,38 @@ async function buildShareSvg(post: SeoPost, coverBuffer: Buffer | null) {
   return Buffer.from(svg);
 }
 
+export function buildStreakShareSvg(streak: number, leadHeadline?: string, editionDate?: string): Buffer {
+  const safeStreak = Math.max(1, Math.min(9999, Math.floor(Number(streak) || 1)));
+  const headline = cleanText(leadHeadline || "5-Minute Daily Tech Briefing Complete").slice(0, 96);
+  const lines = wrapTitle(headline, 44).slice(0, 2);
+  const dateLabel = cleanText(editionDate || new Date().toISOString().slice(0, 10));
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+    <defs>
+      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0b1220"/>
+        <stop offset="100%" stop-color="#172554"/>
+      </linearGradient>
+      <linearGradient id="flame" x1="0%" y1="100%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#2563eb"/>
+        <stop offset="50%" stop-color="#7c3aed"/>
+        <stop offset="100%" stop-color="#f59e0b"/>
+      </linearGradient>
+    </defs>
+    <rect width="1200" height="630" fill="url(#bg)"/>
+    <circle cx="1020" cy="140" r="240" fill="#3b82f6" fill-opacity="0.12"/>
+    <rect x="70" y="64" width="1060" height="502" rx="28" fill="#0f172a" fill-opacity="0.82" stroke="#3b82f6" stroke-opacity="0.35"/>
+    <text x="120" y="136" fill="#60a5fa" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="2.5">AURIKREX BYTES • DAILY READING RITUAL</text>
+    <rect x="120" y="164" width="260" height="64" rx="32" fill="url(#flame)"/>
+    <text x="250" y="206" text-anchor="middle" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700">${safeStreak}-DAY STREAK</text>
+    <text x="120" y="295" fill="#f8fafc" font-family="Georgia, serif" font-size="46" font-weight="700">Today’s Tech Drop: Complete.</text>
+    <text x="120" y="355" fill="#94a3b8" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="600">LEAD STORY (${escapeXml(dateLabel)}):</text>
+    <text x="120" y="405" fill="#e2e8f0" font-family="Georgia, serif" font-size="30">${lines.map((l, idx) => `<tspan x="120" dy="${idx === 0 ? 0 : 40}">${escapeXml(l)}</tspan>`).join("")}</text>
+    <text x="120" y="518" fill="#60a5fa" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="600">Get the 8:00 AM WAT briefing at bytes.aurikrex.com →</text>
+  </svg>`;
+  return Buffer.from(svg);
+}
+
 function wrapTitle(text: string, maxCharsPerLine: number): string[] {
   const words = text.split(" ");
   const lines: string[] = [];
@@ -294,7 +321,7 @@ function wrapTitle(text: string, maxCharsPerLine: number): string[] {
     }
   }
   if (currentLine) lines.push(currentLine);
-  return lines.slice(0, 3); // max 3 lines for card aesthetic
+  return lines.slice(0, 3);
 }
 
 async function generateShareCard(post: SeoPost): Promise<Buffer> {
@@ -342,7 +369,6 @@ async function sendPostPreview(
       return res.status(404).send("Story not found");
 
     if (mode === "image") {
-      // Cache to /tmp Ã¢â‚¬â€ writable in both local dev and Vercel serverless (unlike the static build dir).
       const tmpDir = path.join(os.tmpdir(), "ab-share-cards");
       const cacheFile = path.join(tmpDir, `post-${id}.png`);
       let png: Buffer;
@@ -352,11 +378,9 @@ async function sendPostPreview(
           png = await fs.promises.readFile(cacheFile);
         } else {
           png = await generateShareCard(post);
-          // Best-effort write; ignore errors (e.g. read-only FS edge cases)
           await fs.promises.writeFile(cacheFile, png).catch(() => undefined);
         }
       } catch {
-        // Fallback: generate fresh on every request if cache is unavailable
         png = await generateShareCard(post);
       }
       res.setHeader("Content-Type", "image/png");
@@ -444,16 +468,107 @@ export function registerSeoRoutes(app: Express) {
       );
   });
 
-  // Serve the share document (with correct OG tags) for any bot that hits /post/:id directly.
-  // "share" mode returns a self-contained HTML page Ã¢â‚¬â€ no file reading, no crash on Vercel.
-  // Development delegates to Vite which owns the HTML fallback.
+  // One-click email briefing unsubscribe endpoint
+  app.all("/api/email/unsubscribe", async (req: Request, res: Response) => {
+    const token = String(req.query.token || req.body?.token || "").trim();
+    const ok = await unsubscribeReaderByToken(token);
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Preferences — Aurikrex Bytes</title>
+</head>
+<body style="margin:0;background:#f8fafc;color:#0f172a;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <div style="max-width:460px;background:#ffffff;border:1px solid #dbe4ef;border-radius:18px;padding:36px 28px;text-align:center;box-shadow:0 12px 32px rgba(15,23,42,0.06);">
+    <div style="font-family:Georgia,serif;font-size:22px;margin-bottom:16px;">Aurikrex <strong style="color:#2563eb;">Bytes</strong></div>
+    <h1 style="font-family:Georgia,serif;font-size:26px;margin:0 0 12px;font-weight:normal;">${ok ? "You’re unsubscribed from morning emails." : "Email preference updated."}</h1>
+    <p style="color:#64748b;font-size:15px;line-height:1.6;margin:0 0 24px;">
+      You will no longer receive the 8:00 AM WAT daily email digest. You can re-enable email drops anytime from your reader profile.
+    </p>
+    <a href="${siteUrl()}/profile" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;font-size:14px;">Manage profile settings &rarr;</a>
+  </div>
+</body>
+</html>`);
+  });
+
+  // Dynamic Streak Share Card Image & Preview
+  app.get("/api/share/streak/image", async (req: Request, res: Response) => {
+    const streak = Math.max(1, Number(req.query.streak) || 1);
+    const leadId = Number(req.query.lead) || 0;
+    const date = typeof req.query.date === "string" ? req.query.date : new Date().toISOString().slice(0, 10);
+    let leadHeadline = "Five to ten considered technology stories curated daily.";
+    if (leadId > 0) {
+      const post = await getPostById(leadId);
+      if (post && post.status === "published") {
+        leadHeadline = post.headline;
+      }
+    }
+    const svg = buildStreakShareSvg(streak, leadHeadline, date);
+    try {
+      // @ts-ignore
+      const sharpMod = await import("sharp");
+      const sharp = sharpMod.default || sharpMod;
+      const png = await sharp(svg).png({ quality: 90 }).toBuffer();
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.status(200).end(png);
+    } catch {
+      res.setHeader("Content-Type", "image/svg+xml");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.status(200).end(svg);
+    }
+  });
+
+  app.get(["/share/streak", "/api/share/streak"], async (req: Request, res: Response) => {
+    const streak = Math.max(1, Number(req.query.streak) || 1);
+    const leadId = Number(req.query.lead) || 0;
+    const date = typeof req.query.date === "string" ? req.query.date : new Date().toISOString().slice(0, 10);
+    let leadPost: SeoPost | undefined;
+    if (leadId > 0) {
+      const found = await getPostById(leadId);
+      if (found && found.status === "published") leadPost = found;
+    }
+    const targetUrl = leadPost ? `${siteUrl()}/post/${leadPost.id}` : `${siteUrl()}/`;
+    const shareImageUrl = `${siteUrl()}/api/share/streak/image?streak=${streak}&lead=${leadPost?.id || 0}&date=${encodeURIComponent(date)}`;
+    const headline = `${streak}-Day Tech Briefing Streak on Aurikrex Bytes`;
+    const description = leadPost
+      ? `Completed today’s briefing — including "${leadPost.headline}". Get the 5-minute 8:00 AM WAT tech drop.`
+      : "I just finished today’s 5-minute tech briefing on Aurikrex Bytes.";
+
+    const seo: PostSeo = {
+      title: `${headline} — Aurikrex Bytes`,
+      headline,
+      description,
+      canonicalUrl: targetUrl,
+      imageUrl: shareImageUrl,
+    };
+
+    return res.status(200).type("html").send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    ${buildMetaTags(seo)}
+    <meta http-equiv="refresh" content="0;url=${htmlEscape(targetUrl)}">
+  </head>
+  <body style="background:#0b1220;color:#f8fafc;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;">
+    <main>
+      <h1 style="font-family:Georgia,serif;">${htmlEscape(headline)}</h1>
+      <p>${htmlEscape(description)}</p>
+      <a href="${htmlEscape(targetUrl)}" style="color:#60a5fa;">Continue to Aurikrex Bytes &rarr;</a>
+      <script>window.location.replace(${JSON.stringify(targetUrl)});</script>
+    </main>
+  </body>
+</html>`);
+  });
+
   app.get("/post/:id", (req: Request, res: Response, next: NextFunction) => {
     if (process.env.NODE_ENV === "development") return next();
     return void sendPostPreview(req, res, next, "share");
   });
 
-  // Vercel sends crawler requests here so social clients receive metadata without
-  // changing the normal browser rewrite to the static SPA entrypoint.
   app.get(
     "/api/share/post/:id",
     (req: Request, res: Response, next: NextFunction) => {
@@ -493,7 +608,6 @@ export function registerSeoRoutes(app: Express) {
       imageUrl: `${siteUrl()}/logo-512.png`
     };
 
-    // Inject WebSite + Organization JSON-LD on the homepage for Google brand Knowledge Panel
     const isHomepage = !pathValue || pathValue === "root";
     const extraLd = isHomepage ? `
     <script type="application/ld+json">${safeJson({

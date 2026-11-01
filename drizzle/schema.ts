@@ -42,6 +42,9 @@ export const posts = sqliteTable("posts", {
   headline: text("headline").notNull(),
   body: text("body").notNull(),
   category: text("category").notNull().default("Tech"),
+  isEditorPick: integer("is_editor_pick", { mode: "boolean" }).notNull().default(false),
+  editorialRank: integer("editorial_rank").notNull().default(0),
+  whyItMatters: text("why_it_matters"),
   status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
   scheduledTime: integer("scheduled_time", { mode: "timestamp_ms" }),
   publishedTime: integer("published_time", { mode: "timestamp_ms" }),
@@ -84,6 +87,8 @@ export const readers = sqliteTable("readers", {
   lastActiveDate: text("last_active_date"),
   feedViewMode: text("feed_view_mode", { enum: ["editorial", "compact"] }).notNull().default("editorial"),
   feedViewOnboardingCompleted: integer("feed_view_onboarding_completed", { mode: "boolean" }).notNull().default(false),
+  emailDigestEnabled: integer("email_digest_enabled", { mode: "boolean" }).notNull().default(true),
+  emailUnsubscribeToken: text("email_unsubscribe_token"),
   avatarUrl: text("avatar_url"),
   tokenVersion: integer("token_version").notNull().default(1),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -118,6 +123,16 @@ export const postBookmarks = sqliteTable("post_bookmarks", {
     .$defaultFn(now),
 }, table => ({ postReaderUnique: uniqueIndex("post_bookmarks_post_reader_unique").on(table.postId, table.readerId) }));
 
+export const readerPostReads = sqliteTable("reader_post_reads", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  readerId: integer("reader_id").notNull().references(() => readers.id, { onDelete: "cascade" }),
+  postId: integer("post_id").notNull().references(() => posts.id, { onDelete: "cascade" }),
+  editionDate: text("edition_date").notNull(),
+  readAt: integer("read_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(now),
+}, table => ({ readerPostUnique: uniqueIndex("reader_post_reads_reader_post_unique").on(table.readerId, table.postId) }));
+
 export const searchQueries = sqliteTable("search_queries", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   query: text("query").notNull(),
@@ -134,6 +149,7 @@ export type Reader = typeof readers.$inferSelect;
 export type PostView = typeof postViews.$inferSelect;
 export type PostReaction = typeof postReactions.$inferSelect;
 export type PostBookmark = typeof postBookmarks.$inferSelect;
+export type ReaderPostRead = typeof readerPostReads.$inferSelect;
 export type SearchQuery = typeof searchQueries.$inferSelect;
 
 export const pushSubscriptions = sqliteTable("push_subscriptions", {

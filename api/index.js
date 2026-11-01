@@ -10,7 +10,7 @@ var __export = (target, all) => {
 
 // drizzle/schema.ts
 import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postViews, postReactions, postBookmarks, searchQueries, pushSubscriptions, oneSignalSubscriptions, systemSettings, pushSends;
+var now, POST_STATUSES, ADMIN_ROLES, users, posts, adminUsers, readers, postViews, postReactions, postBookmarks, readerPostReads, searchQueries, pushSubscriptions, oneSignalSubscriptions, systemSettings, pushSends;
 var init_schema = __esm({
   "drizzle/schema.ts"() {
     "use strict";
@@ -46,6 +46,9 @@ var init_schema = __esm({
       headline: text("headline").notNull(),
       body: text("body").notNull(),
       category: text("category").notNull().default("Tech"),
+      isEditorPick: integer("is_editor_pick", { mode: "boolean" }).notNull().default(false),
+      editorialRank: integer("editorial_rank").notNull().default(0),
+      whyItMatters: text("why_it_matters"),
       status: text("status", { enum: POST_STATUSES }).notNull().default("draft"),
       scheduledTime: integer("scheduled_time", { mode: "timestamp_ms" }),
       publishedTime: integer("published_time", { mode: "timestamp_ms" }),
@@ -80,6 +83,8 @@ var init_schema = __esm({
       lastActiveDate: text("last_active_date"),
       feedViewMode: text("feed_view_mode", { enum: ["editorial", "compact"] }).notNull().default("editorial"),
       feedViewOnboardingCompleted: integer("feed_view_onboarding_completed", { mode: "boolean" }).notNull().default(false),
+      emailDigestEnabled: integer("email_digest_enabled", { mode: "boolean" }).notNull().default(true),
+      emailUnsubscribeToken: text("email_unsubscribe_token"),
       avatarUrl: text("avatar_url"),
       tokenVersion: integer("token_version").notNull().default(1),
       createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
@@ -102,6 +107,13 @@ var init_schema = __esm({
       readerId: integer("reader_id").notNull(),
       createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
     }, (table) => ({ postReaderUnique: uniqueIndex("post_bookmarks_post_reader_unique").on(table.postId, table.readerId) }));
+    readerPostReads = sqliteTable("reader_post_reads", {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      readerId: integer("reader_id").notNull().references(() => readers.id, { onDelete: "cascade" }),
+      postId: integer("post_id").notNull().references(() => posts.id, { onDelete: "cascade" }),
+      editionDate: text("edition_date").notNull(),
+      readAt: integer("read_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now)
+    }, (table) => ({ readerPostUnique: uniqueIndex("reader_post_reads_reader_post_unique").on(table.readerId, table.postId) }));
     searchQueries = sqliteTable("search_queries", {
       id: integer("id").primaryKey({ autoIncrement: true }),
       query: text("query").notNull(),
@@ -204,6 +216,62 @@ function updateDailyStreak(state, today) {
     increased: true
   };
 }
+function evaluateStreakDisplay(state, today) {
+  if (!state.lastActiveDate) {
+    return {
+      currentStreak: 0,
+      longestStreak: state.longestStreak,
+      lastActiveDate: null,
+      increased: false
+    };
+  }
+  const diffDays = utcDayNumber(today) - utcDayNumber(state.lastActiveDate);
+  if (diffDays === 0 || diffDays === 1) {
+    return {
+      currentStreak: state.currentStreak,
+      longestStreak: state.longestStreak,
+      lastActiveDate: state.lastActiveDate,
+      increased: false
+    };
+  }
+  return {
+    currentStreak: 0,
+    longestStreak: state.longestStreak,
+    lastActiveDate: state.lastActiveDate,
+    increased: false
+  };
+}
+function getTimeAwareEmptyTodayState(now2 = /* @__PURE__ */ new Date(), timeZone = "Africa/Lagos") {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "numeric",
+      hour12: false
+    }).format(now2)
+  ) % 24;
+  if (hour < 8) {
+    return {
+      phase: "pre_drop",
+      eyebrow: "Morning edition incoming",
+      heading: "Today\u2019s drop lands at 8:00 AM WAT",
+      body: "Our editors are finalizing today\u2019s 5\u201310 stories. Catch up on yesterday\u2019s edition in the archive while you wait."
+    };
+  }
+  if (hour < 18) {
+    return {
+      phase: "in_review",
+      eyebrow: "Newsroom in session",
+      heading: "Today\u2019s edition is being finished",
+      body: "Today\u2019s briefing is taking a little longer in editorial review. Yesterday\u2019s Bytes are ready in the archive."
+    };
+  }
+  return {
+    phase: "evening_wrap",
+    eyebrow: "Edition wrap",
+    heading: "Yesterday\u2019s Bytes are in the archive",
+    body: "No new drop was published today. Browse recent editions in the archive \u2014 tomorrow\u2019s briefing arrives at 8:00 AM WAT."
+  };
+}
 var MS_PER_DAY;
 var init_streak = __esm({
   "server/streak.ts"() {
@@ -259,11 +327,13 @@ var init_auth = __esm({
 // server/db.ts
 var db_exports = {};
 __export(db_exports, {
+  EDITION_TIMEZONE: () => EDITION_TIMEZONE,
   createIngestedPost: () => createIngestedPost,
   getAdminByEmail: () => getAdminByEmail,
   getAdminById: () => getAdminById,
   getAdminByRememberToken: () => getAdminByRememberToken,
   getAnalytics: () => getAnalytics,
+  getArchiveFacets: () => getArchiveFacets,
   getDb: () => getDb,
   getPostById: () => getPostById,
   getPublishedPostById: () => getPublishedPostById,
@@ -278,21 +348,26 @@ __export(db_exports, {
   getUserByOpenId: () => getUserByOpenId,
   isMaintenanceMode: () => isMaintenanceMode,
   listAdmins: () => listAdmins,
+  listEmailDigestRecipients: () => listEmailDigestRecipients,
   listPosts: () => listPosts,
   listPublishedPosts: () => listPublishedPosts,
   listPublishedPostsForCarousel: () => listPublishedPostsForCarousel,
   listSavedPosts: () => listSavedPosts,
   listTodaysPublishedPosts: () => listTodaysPublishedPosts,
   localCalendarDay: () => localCalendarDay,
+  markTodayBriefingComplete: () => markTodayBriefingComplete,
   publishDuePosts: () => publishDuePosts,
   recordPostView: () => recordPostView,
+  recordReaderPostRead: () => recordReaderPostRead,
   recordSearchQuery: () => recordSearchQuery,
   searchPublishedPosts: () => searchPublishedPosts,
   setMaintenanceMode: () => setMaintenanceMode,
   setSystemSetting: () => setSystemSetting,
   togglePostBookmark: () => togglePostBookmark,
   togglePostReaction: () => togglePostReaction,
+  unsubscribeReaderByToken: () => unsubscribeReaderByToken,
   updateReaderAvatar: () => updateReaderAvatar,
+  updateReaderEmailDigestPreference: () => updateReaderEmailDigestPreference,
   updateReaderFeedPreference: () => updateReaderFeedPreference,
   updateReaderProfile: () => updateReaderProfile,
   upsertUser: () => upsertUser
@@ -325,6 +400,8 @@ async function repairReaderSchema(db) {
     ["last_active_date", "text"],
     ["feed_view_mode", "text DEFAULT 'editorial' NOT NULL"],
     ["feed_view_onboarding_completed", "integer DEFAULT 0 NOT NULL"],
+    ["email_digest_enabled", "integer DEFAULT 1 NOT NULL"],
+    ["email_unsubscribe_token", "text"],
     ["avatar_url", "text"],
     ["token_version", "integer DEFAULT 1 NOT NULL"]
   ];
@@ -374,6 +451,15 @@ async function repairEngagementSchema(db) {
   )`));
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_reactions_post_reader_unique ON post_reactions (post_id, reader_id)"));
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_bookmarks_post_reader_unique ON post_bookmarks (post_id, reader_id)"));
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS reader_post_reads (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    reader_id integer NOT NULL,
+    post_id integer NOT NULL,
+    edition_date text NOT NULL,
+    read_at integer NOT NULL
+  )`));
+  await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS reader_post_reads_reader_post_unique ON reader_post_reads (reader_id, post_id)"));
+  await db.run(sql.raw("CREATE INDEX IF NOT EXISTS reader_post_reads_reader_date_idx ON reader_post_reads (reader_id, edition_date)"));
 }
 async function repairPushSendsSchema(db) {
   await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS push_sends (
@@ -431,6 +517,9 @@ async function repairVerifiedNewsSchema(db) {
     ["image_query", "text"],
     ["image_provenance", "text"],
     ["category", "text DEFAULT 'Tech' NOT NULL"],
+    ["is_editor_pick", "integer DEFAULT 0 NOT NULL"],
+    ["editorial_rank", "integer DEFAULT 0 NOT NULL"],
+    ["why_it_matters", "text"],
     ["rejection_note", "text"]
   ];
   for (const [name, definition] of repairs) {
@@ -635,6 +724,12 @@ async function listPublishedPosts(readerId) {
     id: posts.id,
     headline: posts.headline,
     body: posts.body,
+    category: posts.category,
+    sourceUrl: posts.sourceUrl,
+    sourcePublisher: posts.sourcePublisher,
+    isEditorPick: posts.isEditorPick,
+    editorialRank: posts.editorialRank,
+    whyItMatters: posts.whyItMatters,
     imageUrl: posts.imageUrl,
     publishedTime: posts.publishedTime,
     updatedAt: posts.updatedAt
@@ -643,24 +738,52 @@ async function listPublishedPosts(readerId) {
 }
 async function addEngagement(rows, readerId) {
   const db = await getDb();
-  if (!db || !rows.length) return rows.map((row) => ({ ...row, reactionCount: 0, hasReacted: false, isBookmarked: false }));
+  if (!db || !rows.length) {
+    return rows.map((row) => ({
+      ...row,
+      reactionCount: 0,
+      hasReacted: false,
+      isBookmarked: false,
+      isRead: false
+    }));
+  }
   const ids = rows.map((row) => row.id);
-  let reactions;
-  let bookmarks;
+  let reactions = [];
+  let bookmarks = [];
+  let reads = [];
   try {
-    [reactions, bookmarks] = await Promise.all([
+    [reactions, bookmarks, reads] = await Promise.all([
       db.select().from(postReactions).where(inArray(postReactions.postId, ids)),
-      db.select().from(postBookmarks).where(inArray(postBookmarks.postId, ids))
+      db.select().from(postBookmarks).where(inArray(postBookmarks.postId, ids)),
+      readerId ? db.select({ postId: readerPostReads.postId }).from(readerPostReads).where(
+        and(
+          eq(readerPostReads.readerId, readerId),
+          inArray(readerPostReads.postId, ids)
+        )
+      ) : Promise.resolve([])
     ]);
   } catch (error) {
     console.warn("[Database] Engagement tables are unavailable; serving posts without engagement state", error);
-    return rows.map((row) => ({ ...row, reactionCount: 0, hasReacted: false, isBookmarked: false }));
+    return rows.map((row) => ({
+      ...row,
+      reactionCount: 0,
+      hasReacted: false,
+      isBookmarked: false,
+      isRead: false
+    }));
   }
   const reactionCounts = /* @__PURE__ */ new Map();
   reactions.forEach((reaction) => reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1));
   const reacted = new Set(reactions.filter((reaction) => reaction.readerId === readerId).map((reaction) => reaction.postId));
   const saved = new Set(bookmarks.filter((bookmark) => bookmark.readerId === readerId).map((bookmark) => bookmark.postId));
-  return rows.map((row) => ({ ...row, reactionCount: reactionCounts.get(row.id) || 0, hasReacted: reacted.has(row.id), isBookmarked: saved.has(row.id) }));
+  const readSet = new Set(reads.map((r) => r.postId));
+  return rows.map((row) => ({
+    ...row,
+    reactionCount: reactionCounts.get(row.id) || 0,
+    hasReacted: reacted.has(row.id),
+    isBookmarked: saved.has(row.id),
+    isRead: readSet.has(row.id)
+  }));
 }
 function localCalendarDay(value, timeZone) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -670,12 +793,11 @@ function localCalendarDay(value, timeZone) {
     day: "2-digit"
   }).format(value);
 }
-async function getReaderDashboard(readerId, timeZone = process.env.APP_TIMEZONE || "UTC") {
+async function awardReaderDailyStreak(readerId, today) {
   const db = await getDb();
   if (!db) return void 0;
   const reader = await getReaderById(readerId);
   if (!reader) return void 0;
-  const today = localCalendarDay(/* @__PURE__ */ new Date(), timeZone);
   const streak = updateDailyStreak(
     {
       currentStreak: reader.currentStreak,
@@ -684,17 +806,126 @@ async function getReaderDashboard(readerId, timeZone = process.env.APP_TIMEZONE 
     },
     today
   );
-  if (streak.increased)
+  if (streak.increased) {
     await db.update(readers).set({
       currentStreak: streak.currentStreak,
       longestStreak: streak.longestStreak,
       lastActiveDate: streak.lastActiveDate
     }).where(eq(readers.id, readerId));
-  await publishDuePosts();
-  const [todayPosts, allPosts] = await Promise.all([
-    listTodaysPublishedPosts(timeZone, readerId),
-    listPublishedPosts(readerId)
+  }
+  return streak;
+}
+async function recordReaderPostRead(readerId, postId, timeZone = EDITION_TIMEZONE, now2 = /* @__PURE__ */ new Date()) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const editionDay = localCalendarDay(now2, EDITION_TIMEZONE);
+  const userToday = localCalendarDay(now2, timeZone || EDITION_TIMEZONE);
+  await db.insert(readerPostReads).values({
+    readerId,
+    postId,
+    editionDate: editionDay,
+    readAt: now2
+  }).onConflictDoUpdate({
+    target: [readerPostReads.readerId, readerPostReads.postId],
+    set: { readAt: now2 }
+  });
+  const todayPosts = await listTodaysPublishedPosts(EDITION_TIMEZONE, readerId, now2);
+  const todayReadCount = todayPosts.filter((p) => p.isRead || p.id === postId).length;
+  const isCompleted = todayPosts.length > 0 && todayReadCount >= todayPosts.length;
+  let streak;
+  if (isCompleted) {
+    streak = await awardReaderDailyStreak(readerId, userToday);
+  } else {
+    const reader = await getReaderById(readerId);
+    streak = reader ? evaluateStreakDisplay(
+      {
+        currentStreak: reader.currentStreak,
+        longestStreak: reader.longestStreak,
+        lastActiveDate: reader.lastActiveDate
+      },
+      userToday
+    ) : { currentStreak: 0, longestStreak: 0, lastActiveDate: null, increased: false };
+  }
+  return {
+    success: true,
+    postId,
+    isRead: true,
+    todayReadCount,
+    todayTotalCount: todayPosts.length,
+    isCompleted,
+    streak
+  };
+}
+async function markTodayBriefingComplete(readerId, timeZone = EDITION_TIMEZONE, now2 = /* @__PURE__ */ new Date()) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const editionDay = localCalendarDay(now2, EDITION_TIMEZONE);
+  const userToday = localCalendarDay(now2, timeZone || EDITION_TIMEZONE);
+  const todayPosts = await listTodaysPublishedPosts(EDITION_TIMEZONE, readerId, now2);
+  for (const post of todayPosts) {
+    await db.insert(readerPostReads).values({
+      readerId,
+      postId: post.id,
+      editionDate: editionDay,
+      readAt: now2
+    }).onConflictDoUpdate({
+      target: [readerPostReads.readerId, readerPostReads.postId],
+      set: { readAt: now2 }
+    });
+  }
+  let streak;
+  if (todayPosts.length > 0) {
+    streak = await awardReaderDailyStreak(readerId, userToday);
+  } else {
+    const reader = await getReaderById(readerId);
+    streak = reader ? evaluateStreakDisplay(
+      {
+        currentStreak: reader.currentStreak,
+        longestStreak: reader.longestStreak,
+        lastActiveDate: reader.lastActiveDate
+      },
+      userToday
+    ) : { currentStreak: 0, longestStreak: 0, lastActiveDate: null, increased: false };
+  }
+  return {
+    success: true,
+    todayReadCount: todayPosts.length,
+    todayTotalCount: todayPosts.length,
+    isCompleted: todayPosts.length > 0,
+    streak
+  };
+}
+async function getReaderDashboard(readerId, timeZone = EDITION_TIMEZONE, now2 = /* @__PURE__ */ new Date()) {
+  const db = await getDb();
+  if (!db) return void 0;
+  const reader = await getReaderById(readerId);
+  if (!reader) return void 0;
+  await publishDuePosts(now2);
+  const userToday = localCalendarDay(now2, timeZone || EDITION_TIMEZONE);
+  const [todayPosts, readerReads] = await Promise.all([
+    listTodaysPublishedPosts(EDITION_TIMEZONE, readerId, now2),
+    db.select({
+      postId: readerPostReads.postId,
+      editionDate: readerPostReads.editionDate
+    }).from(readerPostReads).where(eq(readerPostReads.readerId, readerId))
   ]);
+  const readPostIds = readerReads.map((r) => r.postId);
+  const readSet = new Set(readPostIds);
+  const todayReadCount = todayPosts.filter((p) => readSet.has(p.id)).length;
+  const isCompleted = todayPosts.length > 0 && todayReadCount >= todayPosts.length;
+  let streak = evaluateStreakDisplay(
+    {
+      currentStreak: reader.currentStreak,
+      longestStreak: reader.longestStreak,
+      lastActiveDate: reader.lastActiveDate
+    },
+    userToday
+  );
+  if (isCompleted && reader.lastActiveDate !== userToday) {
+    const awarded = await awardReaderDailyStreak(readerId, userToday);
+    if (awarded) streak = awarded;
+  }
+  const emptyState = getTimeAwareEmptyTodayState(now2, EDITION_TIMEZONE);
   return {
     reader: {
       id: reader.id,
@@ -702,36 +933,54 @@ async function getReaderDashboard(readerId, timeZone = process.env.APP_TIMEZONE 
       nickname: reader.nickname || null,
       email: reader.email,
       feedViewMode: reader.feedViewMode,
-      feedViewOnboardingCompleted: reader.feedViewOnboardingCompleted
+      feedViewOnboardingCompleted: reader.feedViewOnboardingCompleted,
+      emailDigestEnabled: reader.emailDigestEnabled ?? true
     },
     streak,
     todayPosts,
-    allPosts
+    readPostIds,
+    totalBytesRead: readPostIds.length,
+    todayReadCount,
+    todayTotalCount: todayPosts.length,
+    isCompleted,
+    emptyState
   };
 }
-async function listTodaysPublishedPosts(timeZone = process.env.APP_TIMEZONE || "UTC", readerId) {
+async function listTodaysPublishedPosts(timeZone = EDITION_TIMEZONE, readerId, now2 = /* @__PURE__ */ new Date()) {
   const db = await getDb();
   if (!db) return [];
-  const today = localCalendarDay(/* @__PURE__ */ new Date(), timeZone);
-  const published = await db.select().from(posts).where(eq(posts.status, "published")).orderBy(asc(posts.publishedTime));
-  return addEngagement(published.filter(
+  const today = localCalendarDay(now2, timeZone);
+  const published = await db.select().from(posts).where(eq(posts.status, "published")).orderBy(
+    desc(posts.isEditorPick),
+    asc(posts.editorialRank),
+    asc(posts.publishedTime),
+    asc(posts.id)
+  );
+  const todays = published.filter(
     (post) => post.publishedTime && localCalendarDay(post.publishedTime, timeZone) === today
-  ), readerId);
+  ).slice(0, 10);
+  return addEngagement(todays, readerId);
 }
-async function getPublishedPostById(id) {
+async function getPublishedPostById(id, readerId) {
   const db = await getDb();
   if (!db) return void 0;
   const result = await db.select().from(posts).where(and(eq(posts.id, id), eq(posts.status, "published"))).limit(1);
-  return result[0] ? (await addEngagement(result))[0] : void 0;
+  return result[0] ? (await addEngagement(result, readerId))[0] : void 0;
 }
 async function getReaderPostEngagement(postId, readerId) {
   const db = await getDb();
-  if (!db) return { reactionCount: 0, hasReacted: false, isBookmarked: false };
-  const [reactions, bookmark] = await Promise.all([
+  if (!db) return { reactionCount: 0, hasReacted: false, isBookmarked: false, isRead: false };
+  const [reactions, bookmark, readRow] = await Promise.all([
     db.select().from(postReactions).where(eq(postReactions.postId, postId)),
-    db.select().from(postBookmarks).where(and(eq(postBookmarks.postId, postId), eq(postBookmarks.readerId, readerId))).limit(1)
+    db.select().from(postBookmarks).where(and(eq(postBookmarks.postId, postId), eq(postBookmarks.readerId, readerId))).limit(1),
+    db.select().from(readerPostReads).where(and(eq(readerPostReads.postId, postId), eq(readerPostReads.readerId, readerId))).limit(1)
   ]);
-  return { reactionCount: reactions.length, hasReacted: reactions.some((reaction) => reaction.readerId === readerId), isBookmarked: Boolean(bookmark[0]) };
+  return {
+    reactionCount: reactions.length,
+    hasReacted: reactions.some((reaction) => reaction.readerId === readerId),
+    isBookmarked: Boolean(bookmark[0]),
+    isRead: Boolean(readRow[0])
+  };
 }
 async function togglePostReaction(postId, readerId) {
   const db = await getDb();
@@ -756,6 +1005,12 @@ async function listSavedPosts(readerId) {
     id: posts.id,
     headline: posts.headline,
     body: posts.body,
+    category: posts.category,
+    sourceUrl: posts.sourceUrl,
+    sourcePublisher: posts.sourcePublisher,
+    isEditorPick: posts.isEditorPick,
+    editorialRank: posts.editorialRank,
+    whyItMatters: posts.whyItMatters,
     imageUrl: posts.imageUrl,
     publishedTime: posts.publishedTime,
     updatedAt: posts.updatedAt,
@@ -763,22 +1018,106 @@ async function listSavedPosts(readerId) {
   }).from(postBookmarks).innerJoin(posts, eq(posts.id, postBookmarks.postId)).where(and(eq(postBookmarks.readerId, readerId), eq(posts.status, "published"))).orderBy(desc(postBookmarks.createdAt));
   return addEngagement(rows, readerId);
 }
-async function searchPublishedPosts(query, page, pageSize) {
+async function searchPublishedPosts(query, page, pageSize, options) {
   const db = await getDb();
   if (!db) return { posts: [], nextPage: null };
   const normalizedQuery = query.trim().toLowerCase();
-  const search = normalizedQuery ? or(
-    like(posts.headline, `%${normalizedQuery}%`),
-    like(posts.body, `%${normalizedQuery}%`),
-    like(posts.category, `%${normalizedQuery}%`),
-    like(posts.sourcePublisher, `%${normalizedQuery}%`)
-  ) : void 0;
-  const where = search ? and(eq(posts.status, "published"), search) : eq(posts.status, "published");
+  const conditions = [eq(posts.status, "published")];
+  if (options?.category && options.category !== "All") {
+    conditions.push(eq(posts.category, options.category));
+  }
+  if (options?.publisher && options.publisher !== "All") {
+    conditions.push(eq(posts.sourcePublisher, options.publisher));
+  }
+  if (normalizedQuery) {
+    conditions.push(
+      or(
+        like(posts.headline, `%${normalizedQuery}%`),
+        like(posts.body, `%${normalizedQuery}%`),
+        like(posts.category, `%${normalizedQuery}%`),
+        like(posts.sourcePublisher, `%${normalizedQuery}%`)
+      )
+    );
+  }
+  const where = conditions.length === 1 ? conditions[0] : and(...conditions);
   const rows = await db.select().from(posts).where(where).orderBy(desc(posts.publishedTime), desc(posts.id)).limit(pageSize + 1).offset((page - 1) * pageSize);
   return {
-    posts: await addEngagement(rows.slice(0, pageSize)),
+    posts: await addEngagement(rows.slice(0, pageSize), options?.readerId),
     nextPage: rows.length > pageSize ? page + 1 : null
   };
+}
+async function getArchiveFacets() {
+  const db = await getDb();
+  if (!db) return { categories: ["Tech", "AI", "Science", "Innovation", "Crypto"], publishers: [], totalPublished: 0 };
+  const rows = await db.select({
+    category: posts.category,
+    sourcePublisher: posts.sourcePublisher
+  }).from(posts).where(eq(posts.status, "published"));
+  const categoryCounts = /* @__PURE__ */ new Map();
+  const publisherCounts = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const cat = (row.category || "Tech").trim();
+    if (cat) categoryCounts.set(cat, (categoryCounts.get(cat) || 0) + 1);
+    const pub = (row.sourcePublisher || "").trim();
+    if (pub) publisherCounts.set(pub, (publisherCounts.get(pub) || 0) + 1);
+  }
+  const defaultCategories = ["AI", "Tech", "Science", "Innovation", "Crypto"];
+  const categories = Array.from(
+    /* @__PURE__ */ new Set([
+      ...Array.from(categoryCounts.entries()).sort((a, b) => b[1] - a[1]).map(([c]) => c),
+      ...defaultCategories
+    ])
+  );
+  const publishers = Array.from(publisherCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([p]) => p);
+  return {
+    categories,
+    publishers,
+    totalPublished: rows.length
+  };
+}
+async function updateReaderEmailDigestPreference(readerId, enabled) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const reader = await getReaderById(readerId);
+  const token = reader?.emailUnsubscribeToken || randomToken();
+  await db.update(readers).set({
+    emailDigestEnabled: enabled,
+    emailUnsubscribeToken: token
+  }).where(eq(readers.id, readerId));
+  return { emailDigestEnabled: enabled };
+}
+async function unsubscribeReaderByToken(token) {
+  const db = await getDb();
+  if (!db || !token) return false;
+  const rows = await db.select().from(readers).where(eq(readers.emailUnsubscribeToken, token)).limit(1);
+  if (!rows[0]) return false;
+  await db.update(readers).set({ emailDigestEnabled: false }).where(eq(readers.id, rows[0].id));
+  return true;
+}
+async function listEmailDigestRecipients() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select().from(readers).where(
+    and(
+      eq(readers.emailVerified, true),
+      eq(readers.emailDigestEnabled, true)
+    )
+  );
+  const recipients = [];
+  for (const r of rows) {
+    let unsubToken = r.emailUnsubscribeToken;
+    if (!unsubToken) {
+      unsubToken = randomToken();
+      await db.update(readers).set({ emailUnsubscribeToken: unsubToken }).where(eq(readers.id, r.id));
+    }
+    recipients.push({
+      id: r.id,
+      email: r.email,
+      name: r.nickname || r.name || r.email.split("@")[0] || "Reader",
+      unsubscribeToken: unsubToken
+    });
+  }
+  return recipients;
 }
 async function recordPostView(postId, readerId) {
   const db = await getDb();
@@ -887,7 +1226,7 @@ async function isMaintenanceMode() {
 async function setMaintenanceMode(enabled) {
   await setSystemSetting("maintenance_mode", enabled ? "true" : "false");
 }
-var _db, _schemaRepair;
+var _db, _schemaRepair, EDITION_TIMEZONE;
 var init_db = __esm({
   "server/db.ts"() {
     "use strict";
@@ -897,6 +1236,7 @@ var init_db = __esm({
     init_auth();
     _db = null;
     _schemaRepair = null;
+    EDITION_TIMEZONE = process.env.APP_TIMEZONE || "Africa/Lagos";
   }
 });
 
@@ -1114,10 +1454,13 @@ var init_security = __esm({
 var services_exports = {};
 __export(services_exports, {
   cloudinaryConfigured: () => cloudinaryConfigured,
+  dailyDigestEmailHtml: () => dailyDigestEmailHtml,
+  extractWhyItMattersLine: () => extractWhyItMattersLine,
   getCloudinaryUploadSignature: () => getCloudinaryUploadSignature,
   resetPasswordEmailHtml: () => resetPasswordEmailHtml,
   sendAuthEmail: () => sendAuthEmail,
   sendEmail: () => sendEmail,
+  sendMorningEmailDigest: () => sendMorningEmailDigest,
   sendSupportEmail: () => sendSupportEmail,
   verificationEmailHtml: () => verificationEmailHtml
 });
@@ -1138,7 +1481,7 @@ function mailTransport() {
     } : void 0
   });
 }
-async function sendEmail(to, subject, html, fromAddress) {
+async function sendEmail(to, subject, html, fromAddress, headers) {
   const defaultFrom = process.env.RESEND_FROM || process.env.SMTP_FROM || "Aurikrex Bytes <info@aurikrex.com>";
   const from = fromAddress || defaultFrom;
   const resendApiKey = process.env.RESEND_API_KEY;
@@ -1154,7 +1497,8 @@ async function sendEmail(to, subject, html, fromAddress) {
           from,
           to: [to],
           subject,
-          html
+          html,
+          ...headers ? { headers } : {}
         })
       });
       if (!response.ok) {
@@ -1176,7 +1520,7 @@ async function sendEmail(to, subject, html, fromAddress) {
   }
   const transport = mailTransport();
   if (transport) {
-    await transport.sendMail({ from, to, subject, html });
+    await transport.sendMail({ from, to, subject, html, headers });
     return;
   }
   console.info(`[Email placeholder] ${subject} for ${to}`);
@@ -1194,6 +1538,126 @@ function verificationEmailHtml(url) {
 }
 function resetPasswordEmailHtml(url) {
   return `<!doctype html><html><body style="margin:0;background:#f4f3ef;color:#172033;font-family:Arial,sans-serif"><div style="max-width:620px;margin:0 auto;padding:42px 20px"><div style="background:#fff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden"><div style="padding:28px 34px;border-bottom:1px solid #ececf0"><div style="font-family:Georgia,serif;font-size:24px;color:#172033">Aurikrex <strong style="color:#2f67d8">Bytes</strong></div></div><div style="padding:44px 34px 38px"><div style="color:#2f67d8;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase">Account Security</div><h1 style="font-family:Georgia,serif;font-size:36px;line-height:1.1;font-weight:normal;margin:14px 0 16px">Reset your password.</h1><p style="font-size:16px;line-height:1.7;color:#626b7c;margin:0 0 26px">We received a request to reset the password for your Aurikrex Bytes account. Click the button below to choose a new password.</p><a href="${url}" style="display:inline-block;background:#2f67d8;color:#fff;text-decoration:none;border-radius:8px;padding:15px 24px;font-size:15px;font-weight:bold">Reset Password &nbsp;\u2192</a><p style="font-size:12px;line-height:1.6;color:#8991a0;margin:28px 0 0">This link expires in 30 minutes. If you didn't request a password reset, you can safely ignore this email.</p></div><div style="padding:22px 34px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6">Aurikrex Bytes \u2014 what matters in tech.<br />Need a hand? <a href="mailto:support@aurikrex.com" style="color:#2f67d8">support@aurikrex.com</a></div></div></div></body></html>`;
+}
+function escapeHtml(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function extractWhyItMattersLine(post) {
+  if (post.whyItMatters && post.whyItMatters.trim().length > 10) {
+    const clean = post.whyItMatters.replace(/\*\*|__|\*|_/g, "").trim();
+    return clean.length > 175 ? `${clean.slice(0, 172).trim()}\u2026` : clean;
+  }
+  const paragraphs = (post.body || "").replace(/\r\n/g, "\n").split(/\n\s*\n/).map((p) => p.replace(/\*\*|__|\*|_/g, "").trim()).filter(Boolean);
+  const target = paragraphs[1] || paragraphs[0] || "";
+  const firstSentenceMatch = target.match(/^(.+?[.!?])(?:\s|$)/);
+  const line = firstSentenceMatch ? firstSentenceMatch[1].trim() : target;
+  return line.length > 175 ? `${line.slice(0, 172).trim()}\u2026` : line;
+}
+function dailyDigestEmailHtml(params) {
+  const baseUrl = (params.baseUrl || process.env.APP_BASE_URL || "https://www.bytes.aurikrex.com").replace(/\/$/, "");
+  const items = params.posts.slice(0, 10);
+  const greetingName = params.readerName ? `, ${escapeHtml(params.readerName)}` : "";
+  const storiesMarkup = items.map((post, index) => {
+    const whyLine = escapeHtml(extractWhyItMattersLine(post));
+    const cat = escapeHtml(post.category || "Tech");
+    const pub = post.sourcePublisher ? ` &middot; ${escapeHtml(post.sourcePublisher)}` : "";
+    const leadBadge = index === 0 || post.isEditorPick ? `<span style="display:inline-block;background:#eff6ff;color:#1d4ed8;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:3px 8px;border-radius:999px;margin-right:6px;">Lead Pick</span>` : "";
+    const storyUrl = `${baseUrl}/post/${post.id}`;
+    return `<div style="padding:18px 0;border-bottom:1px solid #ececf0;">
+        <div style="margin-bottom:6px;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;">
+          ${leadBadge}<span>${cat}${pub}</span>
+        </div>
+        <h2 style="font-family:Georgia,serif;font-size:19px;line-height:1.3;margin:0 0 8px;font-weight:normal;">
+          <a href="${storyUrl}" style="color:#0f172a;text-decoration:none;">${escapeHtml(post.headline)}</a>
+        </h2>
+        <p style="font-size:14px;line-height:1.55;color:#475569;margin:0 0 10px;">
+          <strong style="color:#1e293b;">Why it matters:</strong> ${whyLine}
+        </p>
+        <a href="${storyUrl}" style="font-size:13px;font-weight:600;color:#2f67d8;text-decoration:none;">Read full brief &rarr;</a>
+      </div>`;
+  }).join("");
+  return `<!doctype html>
+<html>
+<body style="margin:0;background:#f4f3ef;color:#172033;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+  <div style="max-width:620px;margin:0 auto;padding:32px 16px;">
+    <div style="background:#ffffff;border:1px solid #e3e4e8;border-radius:18px;overflow:hidden;">
+      <div style="padding:24px 30px;border-bottom:1px solid #ececf0;display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-family:Georgia,serif;font-size:22px;color:#172033;">
+          Aurikrex <strong style="color:#2f67d8;">Bytes</strong>
+        </div>
+        <div style="font-size:12px;color:#64748b;font-weight:600;">8:00 AM WAT Edition &middot; ${escapeHtml(params.editionDate)}</div>
+      </div>
+      <div style="padding:32px 30px 28px;">
+        <div style="color:#2f67d8;font-size:11px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;">
+          Today&rsquo;s Finite Tech Drop (${items.length} ${items.length === 1 ? "Byte" : "Bytes"})
+        </div>
+        <h1 style="font-family:Georgia,serif;font-size:28px;line-height:1.18;font-weight:normal;margin:10px 0 8px;color:#0f172a;">
+          Good morning${greetingName}. Here is what matters today.
+        </h1>
+        <p style="font-size:14px;line-height:1.6;color:#64748b;margin:0 0 18px;">
+          Five quiet minutes of high-signal tech context. Open your desk to complete today&rsquo;s reading streak.
+        </p>
+        ${storiesMarkup}
+        <div style="margin-top:26px;text-align:center;">
+          <a href="${baseUrl}/dashboard" style="display:inline-block;background:#2f67d8;color:#ffffff;text-decoration:none;border-radius:10px;padding:14px 26px;font-size:15px;font-weight:700;">
+            Open Today&rsquo;s Reading Desk &rarr;
+          </a>
+        </div>
+      </div>
+      <div style="padding:20px 30px;background:#f8f8f6;border-top:1px solid #ececf0;color:#737b89;font-size:12px;line-height:1.6;">
+        Aurikrex Bytes &mdash; A calmer way to keep up.<br />
+        Prefer web push only? <a href="${escapeHtml(params.unsubscribeUrl)}" style="color:#2f67d8;text-decoration:underline;">Unsubscribe from the 8:00 AM email briefing</a> or manage preferences in your <a href="${baseUrl}/profile" style="color:#2f67d8;text-decoration:underline;">reader profile</a>.
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+async function sendMorningEmailDigest(editionDate, editionPosts, options) {
+  if (!editionPosts.length) {
+    return { sentCount: 0, skipped: true };
+  }
+  const {
+    getSystemSetting: getSystemSetting2,
+    setSystemSetting: setSystemSetting2,
+    listEmailDigestRecipients: listEmailDigestRecipients2
+  } = await Promise.resolve().then(() => (init_db(), db_exports));
+  const ledgerKey = `email_digest_sent_${editionDate}`;
+  if (!options?.force) {
+    const alreadySent = await getSystemSetting2(ledgerKey);
+    if (alreadySent === "true") {
+      return { sentCount: 0, skipped: true };
+    }
+  }
+  const recipients = await listEmailDigestRecipients2();
+  if (!recipients.length) {
+    await setSystemSetting2(ledgerKey, "true");
+    return { sentCount: 0 };
+  }
+  const baseUrl = (process.env.APP_BASE_URL || "https://www.bytes.aurikrex.com").replace(/\/$/, "");
+  const leadHeadline = editionPosts[0]?.headline || "Today's Tech Briefing";
+  const subject = `\u2615 ${leadHeadline} (+${Math.max(0, editionPosts.length - 1)} more in today's Bytes)`;
+  let sentCount = 0;
+  for (const recipient of recipients) {
+    const unsubscribeUrl = `${baseUrl}/api/email/unsubscribe?token=${encodeURIComponent(recipient.unsubscribeToken)}`;
+    const html = dailyDigestEmailHtml({
+      editionDate,
+      posts: editionPosts,
+      readerName: recipient.name,
+      unsubscribeUrl,
+      baseUrl
+    });
+    try {
+      await sendEmail(recipient.email, subject, html, void 0, {
+        "List-Unsubscribe": `<${unsubscribeUrl}>`
+      });
+      sentCount++;
+    } catch (err) {
+      console.warn(`[EmailDigest] Failed sending to ${recipient.email}:`, err);
+    }
+  }
+  await setSystemSetting2(ledgerKey, "true");
+  return { sentCount };
 }
 async function sendSupportEmail(to, subject, html) {
   await sendEmail(
@@ -2134,6 +2598,18 @@ async function processPushTrigger(options = {}) {
       onesignalNotificationIds: notificationIds,
       invalidRemovedCount
     });
+    let emailDigestSent = 0;
+    if (slot === "morning") {
+      try {
+        const { sendMorningEmailDigest: sendMorningEmailDigest2 } = await Promise.resolve().then(() => (init_services(), services_exports));
+        const digestRes = await sendMorningEmailDigest2(editionDate, editionPosts, {
+          force: force && resend
+        });
+        emailDigestSent = digestRes.sentCount;
+      } catch (emailErr) {
+        console.warn("[Push] Morning email digest error:", emailErr);
+      }
+    }
     return {
       status: "sent",
       slot,
@@ -2141,6 +2617,7 @@ async function processPushTrigger(options = {}) {
       leadPostId: leadStory.id,
       postsCount: editionPosts.length,
       recipientsCount: totalSent,
+      emailDigestSent,
       notificationIds
     };
   } catch (error) {
@@ -2789,9 +3266,31 @@ __export(aiCurator_exports, {
   isNonNewsHeadline: () => isNonNewsHeadline,
   normalizeHeadline: () => normalizeHeadline,
   parseAiJsonResponse: () => parseAiJsonResponse,
-  runNightlyCuration: () => runNightlyCuration
+  runNightlyCuration: () => runNightlyCuration,
+  scoreAndRankCandidates: () => scoreAndRankCandidates
 });
 import { createHash } from "node:crypto";
+function extractSignificantTokens(title) {
+  const normalized = title.toLowerCase().replace(/\$(\d+(?:\.\d+)?)\s*b(?:n|illion)?\b/gi, " $1 billion ").replace(/\$(\d+(?:\.\d+)?)\s*m(?:n|illion)?\b/gi, " $1 million ").replace(/\$(\d+(?:\.\d+)?)\s*t(?:rillion)?\b/gi, " $1 trillion ").replace(/[^a-z0-9]+/g, " ");
+  const words = normalized.split(/\s+/).filter((w) => w.length >= 2 && !STOP_WORDS.has(w));
+  return new Set(words);
+}
+function areDuplicateHeadlines(titleA, titleB) {
+  if (!titleA || !titleB) return false;
+  if (normalizeHeadline(titleA) === normalizeHeadline(titleB)) return true;
+  const tokensA = extractSignificantTokens(titleA);
+  const tokensB = extractSignificantTokens(titleB);
+  if (tokensA.size === 0 || tokensB.size === 0) return false;
+  let sharedCount = 0;
+  for (const t2 of tokensA) {
+    if (tokensB.has(t2)) sharedCount++;
+  }
+  const unionSize = (/* @__PURE__ */ new Set([...tokensA, ...tokensB])).size;
+  const jaccard = unionSize > 0 ? sharedCount / unionSize : 0;
+  if (sharedCount >= 3) return true;
+  if (sharedCount >= 2 && (jaccard >= 0.35 || tokensA.size <= 4 || tokensB.size <= 4)) return true;
+  return false;
+}
 function normalizeHeadline(value) {
   return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -2808,8 +3307,66 @@ function canonicalizeUrl(value) {
   }
 }
 function buildDuplicateKey(title, url, publishedAt) {
-  void url;
-  return createHash("sha256").update(`${normalizeHeadline(title)}|${publishedAt.toISOString().slice(0, 10)}`).digest("hex");
+  const normalized = normalizeHeadline(title);
+  const tokens = normalized.split(" ").filter(Boolean);
+  const datePart = publishedAt.toISOString().slice(0, 10);
+  const identity = tokens.length < 4 ? `${normalized}|${canonicalizeUrl(url)}|${datePart}` : `${normalized}|${datePart}`;
+  return createHash("sha256").update(identity).digest("hex");
+}
+function extractHeadlineTokens(title) {
+  return normalizeHeadline(title).split(" ").filter((token) => token.length >= 3 && !STOP_WORDS.has(token));
+}
+function scoreAndRankCandidates(candidates) {
+  if (candidates.length <= 1) return candidates;
+  const tokenPublishers = /* @__PURE__ */ new Map();
+  for (const candidate of candidates) {
+    const tokens = new Set(extractHeadlineTokens(candidate.title));
+    const pubKey = candidate.publisher.toLowerCase();
+    for (const token of tokens) {
+      if (!tokenPublishers.has(token)) {
+        tokenPublishers.set(token, /* @__PURE__ */ new Set());
+      }
+      tokenPublishers.get(token).add(pubKey);
+    }
+  }
+  const nowMs = Date.now();
+  const scored = candidates.map((candidate) => {
+    const tokens = extractHeadlineTokens(candidate.title);
+    let clusterPoints = 0;
+    for (const token of tokens) {
+      const pubCount = tokenPublishers.get(token)?.size || 1;
+      if (pubCount > 1) {
+        clusterPoints += (pubCount - 1) * 12;
+      }
+    }
+    const hnBoost = Math.min(35, Math.log1p(Math.max(0, candidate.points || 0)) * 5);
+    const ageHours = Math.max(0, (nowMs - candidate.publishedAt.getTime()) / 36e5);
+    const recencyBoost = Math.max(0, 24 - Math.min(24, ageHours * 0.5));
+    const totalScore = Math.round((clusterPoints + hnBoost + recencyBoost) * 100) / 100;
+    return {
+      ...candidate,
+      clusterScore: totalScore
+    };
+  });
+  scored.sort((a, b) => {
+    const scoreDiff = (b.clusterScore || 0) - (a.clusterScore || 0);
+    if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
+    return b.publishedAt.getTime() - a.publishedAt.getTime();
+  });
+  const primary = [];
+  const overflow = [];
+  const publisherCounts = /* @__PURE__ */ new Map();
+  for (const item of scored) {
+    const pubKey = item.publisher.toLowerCase();
+    const count = publisherCounts.get(pubKey) || 0;
+    if (primary.length < 15 && count < 2) {
+      primary.push(item);
+      publisherCounts.set(pubKey, count + 1);
+    } else {
+      overflow.push(item);
+    }
+  }
+  return [...primary, ...overflow];
 }
 function localDate(timeZone, date = /* @__PURE__ */ new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
@@ -2836,28 +3393,8 @@ function publisherFromUrl(url) {
   }
 }
 function getHdUnsplashCoverUrl(headline, category = "Tech", seedOffset = 0) {
+  void seedOffset;
   return generateEditorialSvgCard(headline, category);
-}
-function extractSignificantTokens(title) {
-  const normalized = title.toLowerCase().replace(/\$(\d+(?:\.\d+)?)\s*b(?:n|illion)?\b/gi, " $1 billion ").replace(/\$(\d+(?:\.\d+)?)\s*m(?:n|illion)?\b/gi, " $1 million ").replace(/\$(\d+(?:\.\d+)?)\s*t(?:rillion)?\b/gi, " $1 trillion ").replace(/[^a-z0-9]+/g, " ");
-  const words = normalized.split(/\s+/).filter((w) => w.length >= 2 && !STOP_WORDS.has(w));
-  return new Set(words);
-}
-function areDuplicateHeadlines(titleA, titleB) {
-  if (!titleA || !titleB) return false;
-  if (normalizeHeadline(titleA) === normalizeHeadline(titleB)) return true;
-  const tokensA = extractSignificantTokens(titleA);
-  const tokensB = extractSignificantTokens(titleB);
-  if (tokensA.size === 0 || tokensB.size === 0) return false;
-  let sharedCount = 0;
-  for (const t2 of tokensA) {
-    if (tokensB.has(t2)) sharedCount++;
-  }
-  const unionSize = (/* @__PURE__ */ new Set([...tokensA, ...tokensB])).size;
-  const jaccard = unionSize > 0 ? sharedCount / unionSize : 0;
-  if (sharedCount >= 3) return true;
-  if (sharedCount >= 2 && (jaccard >= 0.35 || tokensA.size <= 4 || tokensB.size <= 4)) return true;
-  return false;
 }
 function isNonNewsHeadline(title) {
   const lower = title.toLowerCase().trim();
@@ -3099,14 +3636,15 @@ async function fetchCandidatesForTimeframe(start, end, excludeKeys = /* @__PURE_
           publisher: publisherFromUrl(url),
           publishedAt,
           duplicateKey,
-          imageUrl: null
+          imageUrl: null,
+          points: Number(hit.points || 0)
         });
       }
     }
   }
-  const candidateList = Array.from(candidates.values()).sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+  const ranked = scoreAndRankCandidates(Array.from(candidates.values()));
   const deduped = [];
-  for (const item of candidateList) {
+  for (const item of ranked) {
     if (!deduped.some((existing) => areDuplicateHeadlines(existing.title, item.title))) {
       deduped.push(item);
     }
@@ -3129,6 +3667,7 @@ function imageQuery(title) {
   return title.replace(/[^a-z0-9 ]/gi, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 8).join(" ");
 }
 function clampEditorialBrief(body, candidate) {
+  void candidate;
   let text2 = body.trim().replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
   if (text2.length > 800) {
     const truncated = text2.slice(0, 790);
@@ -3260,13 +3799,29 @@ EDITORIAL RULES:
    - Paragraph 3 (The Outlook): What happens next, timeline, release dates, or key metrics to watch.
 3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 550 and 750 characters.
 4. Headline: Crisp, punchy, active voice, under 90 characters. Never include publisher names or tags like "Show HN:".
-5. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
-6. Return a valid JSON object ONLY:
+5. Why It Matters Line: A single punchy 1-sentence takeaway (under 180 characters) summarizing why this matters.
+6. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
+7. Return a valid JSON object ONLY:
    {
      "headline": "Crisp Headline under 90 chars",
      "body": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...",
+     "whyItMatters": "Single-sentence executive takeaway under 180 chars.",
      "category": "Tech"
    }`;
+  const buildBriefOutput = (item) => {
+    const headline = extractAiHeadline(item, candidate.title);
+    const rawBody = extractAiBody(item);
+    const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+    const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
+    const whyItMatters = extractWhyItMattersLine({
+      whyItMatters: typeof item.whyItMatters === "string" ? item.whyItMatters : null,
+      body
+    });
+    if (headline && body && body.length > 100) {
+      return { headline, body, category, whyItMatters };
+    }
+    return null;
+  };
   if (mistralKey) {
     const mistralModels = ["mistral-small-latest", "open-mixtral-8x7b", "open-mistral-7b"];
     for (const model of mistralModels) {
@@ -3294,14 +3849,8 @@ EDITORIAL RULES:
           const content = resData.choices?.[0]?.message?.content || "";
           const parsed = parseAiJsonResponse(content);
           if (parsed && parsed.length > 0) {
-            const item = parsed[0];
-            const headline = extractAiHeadline(item, candidate.title);
-            const rawBody = extractAiBody(item);
-            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
-            if (headline && body && body.length > 100) {
-              return { headline, body, category };
-            }
+            const out = buildBriefOutput(parsed[0]);
+            if (out) return out;
           }
         } else if (response.status === 429) {
           await new Promise((r) => setTimeout(r, 300));
@@ -3341,14 +3890,8 @@ EDITORIAL RULES:
             const content = resData.choices?.[0]?.message?.content || "";
             const parsed = parseAiJsonResponse(content);
             if (parsed && parsed.length > 0) {
-              const item = parsed[0];
-              const headline = extractAiHeadline(item, candidate.title);
-              const rawBody = extractAiBody(item);
-              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
-              if (headline && body && body.length > 100) {
-                return { headline, body, category };
-              }
+              const out = buildBriefOutput(parsed[0]);
+              if (out) return out;
             }
           }
         } catch {
@@ -3382,14 +3925,8 @@ EDITORIAL RULES:
             const content = resData.result?.response || resData.result?.text || "";
             const parsed = parseAiJsonResponse(content);
             if (parsed && parsed.length > 0) {
-              const item = parsed[0];
-              const headline = extractAiHeadline(item, candidate.title);
-              const rawBody = extractAiBody(item);
-              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category)) ? String(item.category) : "Tech";
-              if (headline && body && body.length > 100) {
-                return { headline, body, category };
-              }
+              const out = buildBriefOutput(parsed[0]);
+              if (out) return out;
             }
           }
         } catch {
@@ -3461,7 +3998,8 @@ async function curateBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdentifi
           candidate,
           headline: brief.headline,
           body: brief.body,
-          category: brief.category
+          category: brief.category,
+          whyItMatters: brief.whyItMatters
         };
       })
     );
@@ -3480,7 +4018,7 @@ async function curateBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdentifi
   }
   console.info(`[AICurator] Successfully generated ${draftItems.length} authentic AI candidate briefs. Resolving cover images in parallel...`);
   const curatedBytes = await Promise.all(
-    draftItems.map(async (draft) => {
+    draftItems.map(async (draft, index) => {
       let imageUrl = draft.candidate.imageUrl;
       let provenance = "source-article";
       if (!imageUrl) {
@@ -3501,6 +4039,9 @@ async function curateBytes(excludeKeys = /* @__PURE__ */ new Set(), userIdentifi
         headline: draft.headline,
         body: draft.body,
         category: draft.category,
+        whyItMatters: draft.whyItMatters,
+        isEditorPick: index === 0,
+        editorialRank: index + 1,
         imageUrl,
         sourceUrl: draft.candidate.url,
         sourcePublisher: draft.candidate.publisher,
@@ -3525,13 +4066,17 @@ async function runNightlyCuration(status = "draft", userIdentifier, targetCount 
   const bytes = await curateBytes(excludeKeys, userIdentifier, targetCount);
   if (!bytes.length) return 0;
   let count = 0;
-  for (const byte of bytes) {
+  for (let index = 0; index < bytes.length; index++) {
+    const byte = bytes[index];
     if (!byte.duplicateKey || excludeKeys.has(byte.duplicateKey)) continue;
     try {
       await db.insert(posts).values({
         headline: byte.headline,
         body: byte.body,
         category: byte.category || "Tech",
+        whyItMatters: byte.whyItMatters || extractWhyItMattersLine({ body: byte.body }),
+        isEditorPick: byte.isEditorPick ?? index === 0,
+        editorialRank: byte.editorialRank ?? index + 1,
         imageUrl: byte.imageUrl,
         status,
         createdBy: 1,
@@ -3560,6 +4105,7 @@ var init_aiCurator = __esm({
     init_schema();
     init_aiKeys();
     init_imageGeneration();
+    init_services();
     STOP_WORDS = /* @__PURE__ */ new Set([
       "a",
       "about",
@@ -3708,7 +4254,20 @@ var init_aiCurator = __esm({
       "records",
       "hits",
       "shows",
-      "plans"
+      "plans",
+      "next",
+      "year",
+      "years",
+      "day",
+      "days",
+      "week",
+      "month",
+      "use",
+      "using",
+      "used",
+      "may",
+      "launch",
+      "released"
     ]);
   }
 });
@@ -3792,9 +4351,9 @@ function extractEntityKicker(headline, category, source) {
       palette: {
         bg1: "#0a1120",
         bg2: "#132342",
-        accent1: "#3b82f6",
+        accent1: "#327afd",
         accent2: "#60a5fa",
-        glow: "rgba(59, 130, 246, 0.24)"
+        glow: "rgba(50, 122, 253, 0.24)"
       }
     };
   }
@@ -3815,9 +4374,9 @@ function extractEntityKicker(headline, category, source) {
     palette: {
       bg1: "#0b0f19",
       bg2: "#141c2e",
-      accent1: "#3b82f6",
+      accent1: "#327afd",
       accent2: "#60a5fa",
-      glow: "rgba(59, 130, 246, 0.18)"
+      glow: "rgba(50, 122, 253, 0.18)"
     }
   };
 }
@@ -4683,14 +5242,20 @@ function sha256Hex(input) {
   return createHash2("sha256").update(input, "utf8").digest("hex");
 }
 function computeFollowUpContentHash(params) {
-  const canonicalPayload = JSON.stringify({
+  const payloadObj = {
     v: params.promptVersion || FOLLOW_UP_PROMPT_VERSION,
     postId: Number(params.postId),
     headline: normalizeCanonicalText(params.headline),
     body: normalizeCanonicalText(params.body),
     question: normalizeCanonicalText(params.question)
-  });
-  return sha256Hex(canonicalPayload);
+  };
+  if (params.history && params.history.length > 0) {
+    payloadObj.history = params.history.map((h) => ({
+      q: normalizeCanonicalText(h.question),
+      a: normalizeCanonicalText(h.answer)
+    }));
+  }
+  return sha256Hex(JSON.stringify(payloadObj));
 }
 function validateFollowUpOutput(rawText) {
   if (!rawText || typeof rawText !== "string") {
@@ -5678,6 +6243,15 @@ async function requireReader(ctx) {
   }
   return payload;
 }
+function optionalReaderId(ctx) {
+  try {
+    const token = cookies(ctx.req)[READER_COOKIE];
+    const payload = token ? readToken(token) : null;
+    if (payload && payload.kind === "reader") return payload.id;
+  } catch {
+  }
+  return void 0;
+}
 var appRouter = router({
   system: systemRouter,
   auth: router({
@@ -5849,6 +6423,9 @@ var appRouter = router({
         headline: z2.string().min(1).max(120),
         body: z2.string().min(1).max(800),
         category: z2.string().optional(),
+        whyItMatters: z2.string().max(240).optional().nullable(),
+        isEditorPick: z2.boolean().optional(),
+        editorialRank: z2.number().int().min(1).max(100).optional(),
         imageUrl: z2.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").optional()
       })
     ).mutation(async ({ input, ctx }) => {
@@ -5863,6 +6440,9 @@ var appRouter = router({
       const result = await db.insert(posts).values({
         ...input,
         category: input.category || "Tech",
+        whyItMatters: input.whyItMatters || null,
+        isEditorPick: Boolean(input.isEditorPick),
+        editorialRank: input.editorialRank ?? 50,
         status: "draft",
         createdBy: admin.id,
         updatedAt: /* @__PURE__ */ new Date()
@@ -5921,6 +6501,9 @@ var appRouter = router({
         headline: z2.string().min(1).optional(),
         body: z2.string().min(1).optional(),
         category: z2.string().optional(),
+        whyItMatters: z2.string().max(240).optional().nullable(),
+        isEditorPick: z2.boolean().optional(),
+        editorialRank: z2.number().int().min(1).max(100).optional(),
         imageUrl: z2.string().url().refine(isSafePublicHttpsUrl, "Must be a valid public HTTPS URL").nullable().optional()
       })
     ).mutation(async ({ input, ctx }) => {
@@ -6279,6 +6862,27 @@ var appRouter = router({
         input.onboardingCompleted
       )
     ),
+    setEmailDigestPreference: publicProcedure.input(z2.object({ enabled: z2.boolean() })).mutation(async ({ input, ctx }) => {
+      const session = await requireReader(ctx);
+      return updateReaderEmailDigestPreference(session.id, input.enabled);
+    }),
+    markPostRead: publicProcedure.input(
+      z2.object({
+        postId: z2.number().int().positive(),
+        timeZone: z2.string().min(1).max(80).default("Africa/Lagos")
+      })
+    ).mutation(async ({ input, ctx }) => {
+      const session = await requireReader(ctx);
+      return recordReaderPostRead(session.id, input.postId, input.timeZone);
+    }),
+    completeTodayBriefing: publicProcedure.input(
+      z2.object({
+        timeZone: z2.string().min(1).max(80).default("Africa/Lagos")
+      }).optional()
+    ).mutation(async ({ input, ctx }) => {
+      const session = await requireReader(ctx);
+      return markTodayBriefingComplete(session.id, input?.timeZone || "Africa/Lagos");
+    }),
     dashboard: publicProcedure.input(z2.object({ timeZone: z2.string().min(1).max(80).default("UTC") })).query(async ({ input, ctx }) => {
       const session = await requireReader(ctx);
       const dashboard = await getReaderDashboard(session.id, input.timeZone);
@@ -6309,6 +6913,7 @@ var appRouter = router({
           message: "An account already exists"
         });
       const verificationToken = randomToken();
+      const unsubscribeToken = randomToken();
       const db = await getDb();
       if (!db)
         throw new TRPCError4({
@@ -6322,7 +6927,9 @@ var appRouter = router({
         passwordHash: await hashPassword(input.password),
         verificationToken,
         verificationTokenUsed: null,
-        emailVerified: false
+        emailVerified: false,
+        emailDigestEnabled: true,
+        emailUnsubscribeToken: unsubscribeToken
       });
       const url = `${appBaseUrl()}/verify-email?token=${verificationToken}`;
       await sendAuthEmail(
@@ -6402,7 +7009,8 @@ var appRouter = router({
         name: reader?.name || "",
         nickname: reader?.nickname || null,
         avatarUrl: reader?.avatarUrl || null,
-        emailVerified: Boolean(reader?.emailVerified)
+        emailVerified: Boolean(reader?.emailVerified),
+        emailDigestEnabled: reader?.emailDigestEnabled ?? true
       };
     }),
     updateProfile: publicProcedure.input(
@@ -6562,38 +7170,62 @@ var appRouter = router({
       await publishDuePosts();
       return { posts: await listPublishedPostsForCarousel() };
     }),
-    today: publicProcedure.query(async () => {
+    today: publicProcedure.input(z2.object({ timeZone: z2.string().min(1).max(80).optional() }).optional()).query(async ({ input, ctx }) => {
       await publishDuePosts();
-      return listTodaysPublishedPosts();
+      const readerId = optionalReaderId(ctx);
+      return listTodaysPublishedPosts(input?.timeZone || "Africa/Lagos", readerId);
+    }),
+    archiveFacets: publicProcedure.query(async () => {
+      await publishDuePosts();
+      return getArchiveFacets();
     }),
     archive: publicProcedure.input(
       z2.object({
         query: z2.string().max(120).default(""),
         page: z2.number().int().min(1).default(1),
-        pageSize: z2.number().int().min(1).max(24).default(12)
+        pageSize: z2.number().int().min(1).max(24).default(12),
+        category: z2.string().max(60).optional(),
+        publisher: z2.string().max(120).optional()
       })
-    ).query(async ({ input }) => {
+    ).query(async ({ input, ctx }) => {
       await publishDuePosts();
+      const readerId = optionalReaderId(ctx);
       const result = await searchPublishedPosts(
         input.query,
         input.page,
-        input.pageSize
+        input.pageSize,
+        {
+          category: input.category,
+          publisher: input.publisher,
+          readerId
+        }
       );
       if (input.query.trim() && input.page === 1)
         await recordSearchQuery(input.query);
       return result;
     }),
-    byId: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).query(async ({ input }) => {
+    byId: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).query(async ({ input, ctx }) => {
       await publishDuePosts();
-      const post = await getPublishedPostById(input.id);
+      const readerId = optionalReaderId(ctx);
+      const post = await getPublishedPostById(input.id, readerId);
       if (!post) throw genericNotFound();
       await recordPostView(post.id);
+      if (readerId) {
+        await recordReaderPostRead(readerId, post.id, "Africa/Lagos").catch(() => {
+        });
+      }
       return post;
     }),
     askFollowUp: publicProcedure.input(
       z2.object({
         postId: z2.number().int().positive(),
         question: z2.string().min(3).max(300).trim(),
+        history: z2.array(
+          z2.object({
+            question: z2.string().max(300),
+            answer: z2.string().max(4e3)
+          })
+        ).max(3).optional(),
         bypassCache: z2.boolean().optional()
       })
     ).mutation(async ({ input, ctx }) => {
@@ -6610,7 +7242,8 @@ var appRouter = router({
         postId: post.id,
         headline: post.headline,
         body: post.body,
-        question: input.question
+        question: input.question,
+        history: input.history
       });
       let remainingCoins;
       let nextResetDate;
@@ -6703,21 +7336,33 @@ ${r.content?.slice(0, 400) ?? ""}`
             `Aurikrex Bytes technical context`
           ];
         }
-        const systemPrompt = `You are an intelligent tech news assistant for Aurikrex Bytes.
-The reader is asking a follow-up question regarding the following story:
+        const systemPrompt = `You are Falke AI, the executive tech intelligence assistant for Aurikrex Bytes.
+The reader is exploring a short follow-up thread (up to 4 turns) anchored to this verified story:
 
 HEADLINE: ${post.headline}
+CATEGORY: ${post.category || "Tech"}
+PUBLISHER: ${post.sourcePublisher || "Aurikrex Editorial"}
 STORY CONTENT: ${post.body}
+${post.whyItMatters ? `WHY IT MATTERS: ${post.whyItMatters}` : ""}
 
 ${webContext ? `RELEVANT LIVE WEB SEARCH CONTEXT:
 ${webContext}` : "No external web search results available."}
 
 Instructions:
-1. Provide a direct, insightful, and concise answer to the reader's question in 2-3 clear paragraphs.
-2. Synthesize the provided story details and web context into a natural explanation.
-3. Keep the tone calm, authoritative, and focused on tech signal rather than hype.
+1. Provide a direct, insightful, and concise answer to the reader's current question in 2-3 clear paragraphs.
+2. Keep the original Byte pinned as primary context while building naturally on any prior turns in the thread.
+3. Keep the tone calm, authoritative, and focused on technical/strategic signal rather than hype.
 4. Do NOT repeat or copy the original story text verbatim.
 5. Do NOT invent false facts.`;
+        const priorMessages = (input.history || []).slice(0, 3).flatMap((turn) => [
+          { role: "user", content: turn.question },
+          { role: "assistant", content: turn.answer }
+        ]);
+        const chatMessages = [
+          { role: "system", content: systemPrompt },
+          ...priorMessages,
+          { role: "user", content: input.question }
+        ];
         let answer = "";
         let modelUsed = "";
         const mistralApiKey = getMistralApiKey();
@@ -6729,10 +7374,7 @@ Instructions:
                 "https://api.mistral.ai/v1/chat/completions",
                 {
                   model,
-                  messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: input.question }
-                  ],
+                  messages: chatMessages,
                   max_tokens: 600,
                   temperature: 0.4
                 },
@@ -6769,10 +7411,7 @@ Instructions:
                 "https://integrate.api.nvidia.com/v1/chat/completions",
                 {
                   model,
-                  messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: input.question }
-                  ],
+                  messages: chatMessages,
                   max_tokens: 600,
                   temperature: 0.4
                 },
@@ -6810,10 +7449,7 @@ Instructions:
                 const cfRes = await axios2.post(
                   url,
                   {
-                    messages: [
-                      { role: "system", content: systemPrompt },
-                      { role: "user", content: input.question }
-                    ],
+                    messages: chatMessages,
                     max_tokens: 600
                   },
                   {
@@ -7115,6 +7751,36 @@ async function buildShareSvg(post, coverBuffer) {
   </svg>`;
   return Buffer.from(svg);
 }
+function buildStreakShareSvg(streak, leadHeadline, editionDate) {
+  const safeStreak = Math.max(1, Math.min(9999, Math.floor(Number(streak) || 1)));
+  const headline = cleanText(leadHeadline || "5-Minute Daily Tech Briefing Complete").slice(0, 96);
+  const lines = wrapTitle(headline, 44).slice(0, 2);
+  const dateLabel = cleanText(editionDate || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+    <defs>
+      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0b1220"/>
+        <stop offset="100%" stop-color="#172554"/>
+      </linearGradient>
+      <linearGradient id="flame" x1="0%" y1="100%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#2563eb"/>
+        <stop offset="50%" stop-color="#7c3aed"/>
+        <stop offset="100%" stop-color="#f59e0b"/>
+      </linearGradient>
+    </defs>
+    <rect width="1200" height="630" fill="url(#bg)"/>
+    <circle cx="1020" cy="140" r="240" fill="#3b82f6" fill-opacity="0.12"/>
+    <rect x="70" y="64" width="1060" height="502" rx="28" fill="#0f172a" fill-opacity="0.82" stroke="#3b82f6" stroke-opacity="0.35"/>
+    <text x="120" y="136" fill="#60a5fa" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="2.5">AURIKREX BYTES \u2022 DAILY READING RITUAL</text>
+    <rect x="120" y="164" width="260" height="64" rx="32" fill="url(#flame)"/>
+    <text x="250" y="206" text-anchor="middle" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700">${safeStreak}-DAY STREAK</text>
+    <text x="120" y="295" fill="#f8fafc" font-family="Georgia, serif" font-size="46" font-weight="700">Today\u2019s Tech Drop: Complete.</text>
+    <text x="120" y="355" fill="#94a3b8" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="600">LEAD STORY (${escapeXml(dateLabel)}):</text>
+    <text x="120" y="405" fill="#e2e8f0" font-family="Georgia, serif" font-size="30">${lines.map((l, idx) => `<tspan x="120" dy="${idx === 0 ? 0 : 40}">${escapeXml(l)}</tspan>`).join("")}</text>
+    <text x="120" y="518" fill="#60a5fa" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="600">Get the 8:00 AM WAT briefing at bytes.aurikrex.com \u2192</text>
+  </svg>`;
+  return Buffer.from(svg);
+}
 function wrapTitle(text2, maxCharsPerLine) {
   const words = text2.split(" ");
   const lines = [];
@@ -7245,6 +7911,92 @@ function registerSeoRoutes(app) {
     res.setHeader("Content-Type", "application/xml; charset=utf-8").setHeader("Cache-Control", "public, max-age=3600, s-maxage=86400, stale-while-revalidate=43200").send(
       `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join("")}</urlset>`
     );
+  });
+  app.all("/api/email/unsubscribe", async (req, res) => {
+    const token = String(req.query.token || req.body?.token || "").trim();
+    const ok = await unsubscribeReaderByToken(token);
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Preferences \u2014 Aurikrex Bytes</title>
+</head>
+<body style="margin:0;background:#f8fafc;color:#0f172a;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <div style="max-width:460px;background:#ffffff;border:1px solid #dbe4ef;border-radius:18px;padding:36px 28px;text-align:center;box-shadow:0 12px 32px rgba(15,23,42,0.06);">
+    <div style="font-family:Georgia,serif;font-size:22px;margin-bottom:16px;">Aurikrex <strong style="color:#2563eb;">Bytes</strong></div>
+    <h1 style="font-family:Georgia,serif;font-size:26px;margin:0 0 12px;font-weight:normal;">${ok ? "You\u2019re unsubscribed from morning emails." : "Email preference updated."}</h1>
+    <p style="color:#64748b;font-size:15px;line-height:1.6;margin:0 0 24px;">
+      You will no longer receive the 8:00 AM WAT daily email digest. You can re-enable email drops anytime from your reader profile.
+    </p>
+    <a href="${siteUrl()}/profile" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;font-size:14px;">Manage profile settings &rarr;</a>
+  </div>
+</body>
+</html>`);
+  });
+  app.get("/api/share/streak/image", async (req, res) => {
+    const streak = Math.max(1, Number(req.query.streak) || 1);
+    const leadId = Number(req.query.lead) || 0;
+    const date = typeof req.query.date === "string" ? req.query.date : (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    let leadHeadline = "Five to ten considered technology stories curated daily.";
+    if (leadId > 0) {
+      const post = await getPostById(leadId);
+      if (post && post.status === "published") {
+        leadHeadline = post.headline;
+      }
+    }
+    const svg = buildStreakShareSvg(streak, leadHeadline, date);
+    try {
+      const sharpMod = await import("sharp");
+      const sharp = sharpMod.default || sharpMod;
+      const png = await sharp(svg).png({ quality: 90 }).toBuffer();
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.status(200).end(png);
+    } catch {
+      res.setHeader("Content-Type", "image/svg+xml");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.status(200).end(svg);
+    }
+  });
+  app.get(["/share/streak", "/api/share/streak"], async (req, res) => {
+    const streak = Math.max(1, Number(req.query.streak) || 1);
+    const leadId = Number(req.query.lead) || 0;
+    const date = typeof req.query.date === "string" ? req.query.date : (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    let leadPost;
+    if (leadId > 0) {
+      const found = await getPostById(leadId);
+      if (found && found.status === "published") leadPost = found;
+    }
+    const targetUrl = leadPost ? `${siteUrl()}/post/${leadPost.id}` : `${siteUrl()}/`;
+    const shareImageUrl = `${siteUrl()}/api/share/streak/image?streak=${streak}&lead=${leadPost?.id || 0}&date=${encodeURIComponent(date)}`;
+    const headline = `${streak}-Day Tech Briefing Streak on Aurikrex Bytes`;
+    const description = leadPost ? `Completed today\u2019s briefing \u2014 including "${leadPost.headline}". Get the 5-minute 8:00 AM WAT tech drop.` : "I just finished today\u2019s 5-minute tech briefing on Aurikrex Bytes.";
+    const seo = {
+      title: `${headline} \u2014 Aurikrex Bytes`,
+      headline,
+      description,
+      canonicalUrl: targetUrl,
+      imageUrl: shareImageUrl
+    };
+    return res.status(200).type("html").send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    ${buildMetaTags(seo)}
+    <meta http-equiv="refresh" content="0;url=${htmlEscape(targetUrl)}">
+  </head>
+  <body style="background:#0b1220;color:#f8fafc;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;">
+    <main>
+      <h1 style="font-family:Georgia,serif;">${htmlEscape(headline)}</h1>
+      <p>${htmlEscape(description)}</p>
+      <a href="${htmlEscape(targetUrl)}" style="color:#60a5fa;">Continue to Aurikrex Bytes &rarr;</a>
+      <script>window.location.replace(${JSON.stringify(targetUrl)});</script>
+    </main>
+  </body>
+</html>`);
   });
   app.get("/post/:id", (req, res, next) => {
     if (process.env.NODE_ENV === "development") return next();

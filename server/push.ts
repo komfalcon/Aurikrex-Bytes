@@ -690,6 +690,19 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
       invalidRemovedCount,
     });
 
+    let emailDigestSent = 0;
+    if (slot === "morning") {
+      try {
+        const { sendMorningEmailDigest } = await import("./services.js");
+        const digestRes = await sendMorningEmailDigest(editionDate, editionPosts, {
+          force: force && resend,
+        });
+        emailDigestSent = digestRes.sentCount;
+      } catch (emailErr) {
+        console.warn("[Push] Morning email digest error:", emailErr);
+      }
+    }
+
     return {
       status: "sent",
       slot,
@@ -697,6 +710,7 @@ export async function processPushTrigger(options: ProcessPushOptions = {}) {
       leadPostId: leadStory.id,
       postsCount: editionPosts.length,
       recipientsCount: totalSent,
+      emailDigestSent,
       notificationIds,
     };
   } catch (error: any) {

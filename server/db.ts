@@ -8,6 +8,7 @@ import {
   postReactions,
   postViews,
   posts,
+  readerPostReads,
   readers,
   searchQueries,
   users,
@@ -16,8 +17,8 @@ import {
   pushSends,
 } from "../drizzle/schema.js";
 import { ENV } from "./_core/env.js";
-import { updateDailyStreak } from "./streak.js";
-import { hashToken } from "./auth.js";
+import { evaluateStreakDisplay, getTimeAwareEmptyTodayState, updateDailyStreak } from "./streak.js";
+import { hashToken, randomToken } from "./auth.js";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _schemaRepair: Promise<void> | null = null;
@@ -47,6 +48,8 @@ async function repairReaderSchema(db: ReturnType<typeof drizzle>) {
     ["last_active_date", "text"],
     ["feed_view_mode", "text DEFAULT 'editorial' NOT NULL"],
     ["feed_view_onboarding_completed", "integer DEFAULT 0 NOT NULL"],
+    ["email_digest_enabled", "integer DEFAULT 1 NOT NULL"],
+    ["email_unsubscribe_token", "text"],
     ["avatar_url", "text"],
     ["token_version", "integer DEFAULT 1 NOT NULL"],
   ] as const;
@@ -99,6 +102,15 @@ async function repairEngagementSchema(db: ReturnType<typeof drizzle>) {
   )`));
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_reactions_post_reader_unique ON post_reactions (post_id, reader_id)"));
   await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS post_bookmarks_post_reader_unique ON post_bookmarks (post_id, reader_id)"));
+  await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS reader_post_reads (
+    id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+    reader_id integer NOT NULL,
+    post_id integer NOT NULL,
+    edition_date text NOT NULL,
+    read_at integer NOT NULL
+  )`));
+  await db.run(sql.raw("CREATE UNIQUE INDEX IF NOT EXISTS reader_post_reads_reader_post_unique ON reader_post_reads (reader_id, post_id)"));
+  await db.run(sql.raw("CREATE INDEX IF NOT EXISTS reader_post_reads_reader_date_idx ON reader_post_reads (reader_id, edition_date)"));
 }
 
 async function repairPushSendsSchema(db: ReturnType<typeof drizzle>) {
@@ -158,6 +170,9 @@ async function repairVerifiedNewsSchema(db: ReturnType<typeof drizzle>) {
     ["image_query", "text"],
     ["image_provenance", "text"],
     ["category", "text DEFAULT 'Tech' NOT NULL"],
+    ["is_editor_pick", "integer DEFAULT 0 NOT NULL"],
+    ["editorial_rank", "integer DEFAULT 0 NOT NULL"],
+    ["why_it_matters", "text"],
     ["rejection_note", "text"],
   ] as const;
   for (const [name, definition] of repairs) {
@@ -426,6 +441,8 @@ export async function publishDuePosts(now = new Date()) {
     .where(and(eq(posts.status, "scheduled"), lte(posts.scheduledTime, now)));
   return Number(result.rowsAffected || 0);
 }
+export const EDITION_TIMEZONE = process.env.APP_TIMEZONE || "Africa/Lagos";
+
 export async function listPublishedPosts(readerId?: number) {
   const db = await getDb();
   if (!db) return [];
@@ -434,6 +451,12 @@ export async function listPublishedPosts(readerId?: number) {
       id: posts.id,
       headline: posts.headline,
       body: posts.body,
+      category: posts.category,
+      sourceUrl: posts.sourceUrl,
+      sourcePublisher: posts.sourcePublisher,
+      isEditorPick: posts.isEditorPick,
+      editorialRank: posts.editorialRank,
+      whyItMatters: posts.whyItMatters,
       imageUrl: posts.imageUrl,
       publishedTime: posts.publishedTime,
       updatedAt: posts.updatedAt,
@@ -446,25 +469,59 @@ export async function listPublishedPosts(readerId?: number) {
 
 async function addEngagement<T extends { id: number }>(rows: T[], readerId?: number) {
   const db = await getDb();
-  if (!db || !rows.length) return rows.map(row => ({ ...row, reactionCount: 0, hasReacted: false, isBookmarked: false }));
+  if (!db || !rows.length) {
+    return rows.map(row => ({
+      ...row,
+      reactionCount: 0,
+      hasReacted: false,
+      isBookmarked: false,
+      isRead: false,
+    }));
+  }
   const ids = rows.map(row => row.id);
-  let reactions;
-  let bookmarks;
+  let reactions: any[] = [];
+  let bookmarks: any[] = [];
+  let reads: any[] = [];
   try {
-    [reactions, bookmarks] = await Promise.all([
+    [reactions, bookmarks, reads] = await Promise.all([
       db.select().from(postReactions).where(inArray(postReactions.postId, ids)),
       db.select().from(postBookmarks).where(inArray(postBookmarks.postId, ids)),
+      readerId
+        ? db
+            .select({ postId: readerPostReads.postId })
+            .from(readerPostReads)
+            .where(
+              and(
+                eq(readerPostReads.readerId, readerId),
+                inArray(readerPostReads.postId, ids)
+              )
+            )
+        : Promise.resolve([]),
     ]);
   } catch (error) {
     console.warn("[Database] Engagement tables are unavailable; serving posts without engagement state", error);
-    return rows.map(row => ({ ...row, reactionCount: 0, hasReacted: false, isBookmarked: false }));
+    return rows.map(row => ({
+      ...row,
+      reactionCount: 0,
+      hasReacted: false,
+      isBookmarked: false,
+      isRead: false,
+    }));
   }
   const reactionCounts = new Map<number, number>();
   reactions.forEach(reaction => reactionCounts.set(reaction.postId, (reactionCounts.get(reaction.postId) || 0) + 1));
   const reacted = new Set(reactions.filter(reaction => reaction.readerId === readerId).map(reaction => reaction.postId));
   const saved = new Set(bookmarks.filter(bookmark => bookmark.readerId === readerId).map(bookmark => bookmark.postId));
-  return rows.map(row => ({ ...row, reactionCount: reactionCounts.get(row.id) || 0, hasReacted: reacted.has(row.id), isBookmarked: saved.has(row.id) }));
+  const readSet = new Set(reads.map(r => r.postId));
+  return rows.map(row => ({
+    ...row,
+    reactionCount: reactionCounts.get(row.id) || 0,
+    hasReacted: reacted.has(row.id),
+    isBookmarked: saved.has(row.id),
+    isRead: readSet.has(row.id),
+  }));
 }
+
 export function localCalendarDay(value: Date, timeZone: string) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -473,15 +530,12 @@ export function localCalendarDay(value: Date, timeZone: string) {
     day: "2-digit",
   }).format(value);
 }
-export async function getReaderDashboard(
-  readerId: number,
-  timeZone = process.env.APP_TIMEZONE || "UTC"
-) {
+
+async function awardReaderDailyStreak(readerId: number, today: string) {
   const db = await getDb();
   if (!db) return undefined;
   const reader = await getReaderById(readerId);
   if (!reader) return undefined;
-  const today = localCalendarDay(new Date(), timeZone);
   const streak = updateDailyStreak(
     {
       currentStreak: reader.currentStreak,
@@ -490,7 +544,7 @@ export async function getReaderDashboard(
     },
     today
   );
-  if (streak.increased)
+  if (streak.increased) {
     await db
       .update(readers)
       .set({
@@ -499,11 +553,164 @@ export async function getReaderDashboard(
         lastActiveDate: streak.lastActiveDate,
       })
       .where(eq(readers.id, readerId));
-  await publishDuePosts();
-  const [todayPosts, allPosts] = await Promise.all([
-    listTodaysPublishedPosts(timeZone, readerId),
-    listPublishedPosts(readerId),
+  }
+  return streak;
+}
+
+export async function recordReaderPostRead(
+  readerId: number,
+  postId: number,
+  timeZone = EDITION_TIMEZONE,
+  now = new Date()
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const editionDay = localCalendarDay(now, EDITION_TIMEZONE);
+  const userToday = localCalendarDay(now, timeZone || EDITION_TIMEZONE);
+
+  await db
+    .insert(readerPostReads)
+    .values({
+      readerId,
+      postId,
+      editionDate: editionDay,
+      readAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [readerPostReads.readerId, readerPostReads.postId],
+      set: { readAt: now },
+    });
+
+  const todayPosts = await listTodaysPublishedPosts(EDITION_TIMEZONE, readerId, now);
+  const todayReadCount = todayPosts.filter(p => p.isRead || p.id === postId).length;
+  const isCompleted = todayPosts.length > 0 && todayReadCount >= todayPosts.length;
+
+  let streak;
+  if (isCompleted) {
+    streak = await awardReaderDailyStreak(readerId, userToday);
+  } else {
+    const reader = await getReaderById(readerId);
+    streak = reader
+      ? evaluateStreakDisplay(
+          {
+            currentStreak: reader.currentStreak,
+            longestStreak: reader.longestStreak,
+            lastActiveDate: reader.lastActiveDate,
+          },
+          userToday
+        )
+      : { currentStreak: 0, longestStreak: 0, lastActiveDate: null, increased: false };
+  }
+
+  return {
+    success: true,
+    postId,
+    isRead: true,
+    todayReadCount,
+    todayTotalCount: todayPosts.length,
+    isCompleted,
+    streak,
+  };
+}
+
+export async function markTodayBriefingComplete(
+  readerId: number,
+  timeZone = EDITION_TIMEZONE,
+  now = new Date()
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const editionDay = localCalendarDay(now, EDITION_TIMEZONE);
+  const userToday = localCalendarDay(now, timeZone || EDITION_TIMEZONE);
+  const todayPosts = await listTodaysPublishedPosts(EDITION_TIMEZONE, readerId, now);
+
+  for (const post of todayPosts) {
+    await db
+      .insert(readerPostReads)
+      .values({
+        readerId,
+        postId: post.id,
+        editionDate: editionDay,
+        readAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [readerPostReads.readerId, readerPostReads.postId],
+        set: { readAt: now },
+      });
+  }
+
+  let streak;
+  if (todayPosts.length > 0) {
+    streak = await awardReaderDailyStreak(readerId, userToday);
+  } else {
+    const reader = await getReaderById(readerId);
+    streak = reader
+      ? evaluateStreakDisplay(
+          {
+            currentStreak: reader.currentStreak,
+            longestStreak: reader.longestStreak,
+            lastActiveDate: reader.lastActiveDate,
+          },
+          userToday
+        )
+      : { currentStreak: 0, longestStreak: 0, lastActiveDate: null, increased: false };
+  }
+
+  return {
+    success: true,
+    todayReadCount: todayPosts.length,
+    todayTotalCount: todayPosts.length,
+    isCompleted: todayPosts.length > 0,
+    streak,
+  };
+}
+
+export async function getReaderDashboard(
+  readerId: number,
+  timeZone = EDITION_TIMEZONE,
+  now = new Date()
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const reader = await getReaderById(readerId);
+  if (!reader) return undefined;
+
+  await publishDuePosts(now);
+
+  const userToday = localCalendarDay(now, timeZone || EDITION_TIMEZONE);
+  const [todayPosts, readerReads] = await Promise.all([
+    listTodaysPublishedPosts(EDITION_TIMEZONE, readerId, now),
+    db
+      .select({
+        postId: readerPostReads.postId,
+        editionDate: readerPostReads.editionDate,
+      })
+      .from(readerPostReads)
+      .where(eq(readerPostReads.readerId, readerId)),
   ]);
+
+  const readPostIds = readerReads.map(r => r.postId);
+  const readSet = new Set(readPostIds);
+  const todayReadCount = todayPosts.filter(p => readSet.has(p.id)).length;
+  const isCompleted = todayPosts.length > 0 && todayReadCount >= todayPosts.length;
+
+  let streak = evaluateStreakDisplay(
+    {
+      currentStreak: reader.currentStreak,
+      longestStreak: reader.longestStreak,
+      lastActiveDate: reader.lastActiveDate,
+    },
+    userToday
+  );
+
+  // Award streak ONLY if all of today's published posts have been read
+  if (isCompleted && reader.lastActiveDate !== userToday) {
+    const awarded = await awardReaderDailyStreak(readerId, userToday);
+    if (awarded) streak = awarded;
+  }
+
+  const emptyState = getTimeAwareEmptyTodayState(now, EDITION_TIMEZONE);
+
   return {
     reader: {
       id: reader.id,
@@ -512,31 +719,48 @@ export async function getReaderDashboard(
       email: reader.email,
       feedViewMode: reader.feedViewMode,
       feedViewOnboardingCompleted: reader.feedViewOnboardingCompleted,
+      emailDigestEnabled: reader.emailDigestEnabled ?? true,
     },
     streak,
     todayPosts,
-    allPosts,
+    readPostIds,
+    totalBytesRead: readPostIds.length,
+    todayReadCount,
+    todayTotalCount: todayPosts.length,
+    isCompleted,
+    emptyState,
   };
 }
+
 export async function listTodaysPublishedPosts(
-  timeZone = process.env.APP_TIMEZONE || "UTC",
-  readerId?: number
+  timeZone = EDITION_TIMEZONE,
+  readerId?: number,
+  now = new Date()
 ) {
   const db = await getDb();
   if (!db) return [];
-  const today = localCalendarDay(new Date(), timeZone);
+  const today = localCalendarDay(now, timeZone);
   const published = await db
     .select()
     .from(posts)
     .where(eq(posts.status, "published"))
-    .orderBy(asc(posts.publishedTime));
-  return addEngagement(published.filter(
-    post =>
-      post.publishedTime &&
-      localCalendarDay(post.publishedTime, timeZone) === today
-  ), readerId);
+    .orderBy(
+      desc(posts.isEditorPick),
+      asc(posts.editorialRank),
+      asc(posts.publishedTime),
+      asc(posts.id)
+    );
+  const todays = published
+    .filter(
+      post =>
+        post.publishedTime &&
+        localCalendarDay(post.publishedTime, timeZone) === today
+    )
+    .slice(0, 10);
+  return addEngagement(todays, readerId);
 }
-export async function getPublishedPostById(id: number) {
+
+export async function getPublishedPostById(id: number, readerId?: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db
@@ -544,17 +768,23 @@ export async function getPublishedPostById(id: number) {
     .from(posts)
     .where(and(eq(posts.id, id), eq(posts.status, "published")))
     .limit(1);
-  return result[0] ? (await addEngagement(result))[0] : undefined;
+  return result[0] ? (await addEngagement(result, readerId))[0] : undefined;
 }
 
 export async function getReaderPostEngagement(postId: number, readerId: number) {
   const db = await getDb();
-  if (!db) return { reactionCount: 0, hasReacted: false, isBookmarked: false };
-  const [reactions, bookmark] = await Promise.all([
+  if (!db) return { reactionCount: 0, hasReacted: false, isBookmarked: false, isRead: false };
+  const [reactions, bookmark, readRow] = await Promise.all([
     db.select().from(postReactions).where(eq(postReactions.postId, postId)),
     db.select().from(postBookmarks).where(and(eq(postBookmarks.postId, postId), eq(postBookmarks.readerId, readerId))).limit(1),
+    db.select().from(readerPostReads).where(and(eq(readerPostReads.postId, postId), eq(readerPostReads.readerId, readerId))).limit(1),
   ]);
-  return { reactionCount: reactions.length, hasReacted: reactions.some(reaction => reaction.readerId === readerId), isBookmarked: Boolean(bookmark[0]) };
+  return {
+    reactionCount: reactions.length,
+    hasReacted: reactions.some(reaction => reaction.readerId === readerId),
+    isBookmarked: Boolean(bookmark[0]),
+    isRead: Boolean(readRow[0]),
+  };
 }
 
 export async function togglePostReaction(postId: number, readerId: number) {
@@ -582,6 +812,12 @@ export async function listSavedPosts(readerId: number) {
     id: posts.id,
     headline: posts.headline,
     body: posts.body,
+    category: posts.category,
+    sourceUrl: posts.sourceUrl,
+    sourcePublisher: posts.sourcePublisher,
+    isEditorPick: posts.isEditorPick,
+    editorialRank: posts.editorialRank,
+    whyItMatters: posts.whyItMatters,
     imageUrl: posts.imageUrl,
     publishedTime: posts.publishedTime,
     updatedAt: posts.updatedAt,
@@ -589,25 +825,36 @@ export async function listSavedPosts(readerId: number) {
   }).from(postBookmarks).innerJoin(posts, eq(posts.id, postBookmarks.postId)).where(and(eq(postBookmarks.readerId, readerId), eq(posts.status, "published"))).orderBy(desc(postBookmarks.createdAt));
   return addEngagement(rows, readerId);
 }
+
 export async function searchPublishedPosts(
   query: string,
   page: number,
-  pageSize: number
+  pageSize: number,
+  options?: { category?: string; publisher?: string; readerId?: number }
 ) {
   const db = await getDb();
   if (!db) return { posts: [], nextPage: null as number | null };
   const normalizedQuery = query.trim().toLowerCase();
-  const search = normalizedQuery
-    ? or(
-      like(posts.headline, `%${normalizedQuery}%`),
-      like(posts.body, `%${normalizedQuery}%`),
-      like(posts.category, `%${normalizedQuery}%`),
-      like(posts.sourcePublisher, `%${normalizedQuery}%`)
-    )
-    : undefined;
-  const where = search
-    ? and(eq(posts.status, "published"), search)
-    : eq(posts.status, "published");
+  const conditions: any[] = [eq(posts.status, "published")];
+
+  if (options?.category && options.category !== "All") {
+    conditions.push(eq(posts.category, options.category));
+  }
+  if (options?.publisher && options.publisher !== "All") {
+    conditions.push(eq(posts.sourcePublisher, options.publisher));
+  }
+  if (normalizedQuery) {
+    conditions.push(
+      or(
+        like(posts.headline, `%${normalizedQuery}%`),
+        like(posts.body, `%${normalizedQuery}%`),
+        like(posts.category, `%${normalizedQuery}%`),
+        like(posts.sourcePublisher, `%${normalizedQuery}%`)
+      )
+    );
+  }
+
+  const where = conditions.length === 1 ? conditions[0] : and(...conditions);
   const rows = await db
     .select()
     .from(posts)
@@ -616,9 +863,118 @@ export async function searchPublishedPosts(
     .limit(pageSize + 1)
     .offset((page - 1) * pageSize);
   return {
-    posts: await addEngagement(rows.slice(0, pageSize)),
+    posts: await addEngagement(rows.slice(0, pageSize), options?.readerId),
     nextPage: rows.length > pageSize ? page + 1 : null,
   };
+}
+
+export async function getArchiveFacets() {
+  const db = await getDb();
+  if (!db) return { categories: ["Tech", "AI", "Science", "Innovation", "Crypto"], publishers: [], totalPublished: 0 };
+  const rows = await db
+    .select({
+      category: posts.category,
+      sourcePublisher: posts.sourcePublisher,
+    })
+    .from(posts)
+    .where(eq(posts.status, "published"));
+
+  const categoryCounts = new Map<string, number>();
+  const publisherCounts = new Map<string, number>();
+
+  for (const row of rows) {
+    const cat = (row.category || "Tech").trim();
+    if (cat) categoryCounts.set(cat, (categoryCounts.get(cat) || 0) + 1);
+    const pub = (row.sourcePublisher || "").trim();
+    if (pub) publisherCounts.set(pub, (publisherCounts.get(pub) || 0) + 1);
+  }
+
+  const defaultCategories = ["AI", "Tech", "Science", "Innovation", "Crypto"];
+  const categories = Array.from(
+    new Set([
+      ...Array.from(categoryCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([c]) => c),
+      ...defaultCategories,
+    ])
+  );
+
+  const publishers = Array.from(publisherCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([p]) => p);
+
+  return {
+    categories,
+    publishers,
+    totalPublished: rows.length,
+  };
+}
+
+export async function updateReaderEmailDigestPreference(
+  readerId: number,
+  enabled: boolean
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not configured");
+  const reader = await getReaderById(readerId);
+  const token = reader?.emailUnsubscribeToken || randomToken();
+  await db
+    .update(readers)
+    .set({
+      emailDigestEnabled: enabled,
+      emailUnsubscribeToken: token,
+    })
+    .where(eq(readers.id, readerId));
+  return { emailDigestEnabled: enabled };
+}
+
+export async function unsubscribeReaderByToken(token: string) {
+  const db = await getDb();
+  if (!db || !token) return false;
+  const rows = await db
+    .select()
+    .from(readers)
+    .where(eq(readers.emailUnsubscribeToken, token))
+    .limit(1);
+  if (!rows[0]) return false;
+  await db
+    .update(readers)
+    .set({ emailDigestEnabled: false })
+    .where(eq(readers.id, rows[0].id));
+  return true;
+}
+
+export async function listEmailDigestRecipients() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select()
+    .from(readers)
+    .where(
+      and(
+        eq(readers.emailVerified, true),
+        eq(readers.emailDigestEnabled, true)
+      )
+    );
+  const recipients: Array<{ id: number; email: string; name: string; unsubscribeToken: string }> = [];
+  for (const r of rows) {
+    let unsubToken = r.emailUnsubscribeToken;
+    if (!unsubToken) {
+      unsubToken = randomToken();
+      await db
+        .update(readers)
+        .set({ emailUnsubscribeToken: unsubToken })
+        .where(eq(readers.id, r.id));
+    }
+    recipients.push({
+      id: r.id,
+      email: r.email,
+      name: r.nickname || r.name || r.email.split("@")[0] || "Reader",
+      unsubscribeToken: unsubToken,
+    });
+  }
+  return recipients;
 }
 export async function recordPostView(postId: number, readerId?: number) {
   const db = await getDb();

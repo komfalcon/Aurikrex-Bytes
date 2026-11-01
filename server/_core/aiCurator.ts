@@ -4,11 +4,15 @@ import { getDb } from "../db.js";
 import { posts } from "../../drizzle/schema.js";
 import { getAiApiKeys, getMistralApiKey, getNvidiaApiKey, getCloudflareAiConfig, getCloudflareAiConfigs } from "./aiKeys.js";
 import { generateNvidiaFluxImage } from "./imageGeneration.js";
+import { extractWhyItMattersLine } from "../services.js";
 
 export interface CuratedByte {
   headline: string;
   body: string;
   category: string;
+  whyItMatters?: string;
+  isEditorPick?: boolean;
+  editorialRank?: number;
   imageUrl: string | null;
   sourceUrl?: string;
   sourcePublisher?: string;
@@ -18,70 +22,15 @@ export interface CuratedByte {
   imageProvenance?: string;
 }
 
-interface NewsCandidate {
+export interface NewsCandidate {
   title: string;
   url: string;
   publisher: string;
   publishedAt: Date;
   duplicateKey: string;
   imageUrl: string | null;
-}
-
-const TOPIC_POOL = [
-  "Generative AI and agentic workflows", "Quantum hardware and supercomputing", "Semiconductors and lithography", "Biotech and CRISPR therapies", "Fusion energy and power grids", "Robotics and spatial vision", "Cybersecurity and post-quantum cryptography", "Blockchain infrastructure", "Electric vehicles and solid-state batteries", "Neuromorphic computing", "Optical computing and silicon photonics", "Synthetic biology", "Aerospace and satellite constellations", "Databases and WebAssembly", "Privacy-preserving machine learning"
-];
-
-export function normalizeHeadline(value: string): string {
-  return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-export function canonicalizeUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    url.hash = "";
-    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
-    for (const key of Array.from(url.searchParams.keys())) if (/^(utm_|fbclid|gclid|ref$)/i.test(key)) url.searchParams.delete(key);
-    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
-    return url.toString();
-  } catch { return value.trim().toLowerCase(); }
-}
-
-export function buildDuplicateKey(title: string, url: string, publishedAt: Date): string {
-  // The URL is retained as provenance, but not used in identity: syndicated copies
-  // of one story often have different URLs and must still collapse to one Byte.
-  void url;
-  return createHash("sha256").update(`${normalizeHeadline(title)}|${publishedAt.toISOString().slice(0, 10)}`).digest("hex");
-}
-
-function localDate(timeZone: string, date = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
-  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
-function zonedMidnight(date: string, timeZone: string): Date {
-  const guess = new Date(`${date}T00:00:00Z`);
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(guess);
-  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
-  const localAsUtc = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour) % 24, Number(values.minute), Number(values.second));
-  return new Date(guess.getTime() - (localAsUtc - guess.getTime()));
-}
-
-export function getTodayWindow(now = new Date(), timeZone = process.env.APP_TIMEZONE || "Africa/Lagos") {
-  const date = localDate(timeZone, now);
-  const start = zonedMidnight(date, timeZone);
-  return { date, start, end: new Date(start.getTime() + 86_400_000) };
-}
-
-function publisherFromUrl(url: string): string {
-  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "Hacker News"; }
-}
-
-
-// Kept for backward compatibility with existing callers
-export function getHdUnsplashCoverUrl(headline: string, category = "Tech", seedOffset = 0): string {
-  // Generate a high-contrast editorial SVG data URL fallback instead of dead source.unsplash.com
-  return generateEditorialSvgCard(headline, category);
+  points?: number;
+  clusterScore?: number;
 }
 
 const STOP_WORDS = new Set([
@@ -95,7 +44,8 @@ const STOP_WORDS = new Set([
   "they", "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "we", "were", "what",
   "when", "where", "which", "while", "who", "whom", "why", "with", "would", "you", "your", "yours", "yourself",
   "yourselves", "says", "said", "new", "report", "reports", "first", "unveils", "launches", "introduces", "announces",
-  "releases", "reveals", "debuts", "rolls", "see", "sees", "seen", "records", "hits", "shows", "plans"
+  "releases", "reveals", "debuts", "rolls", "see", "sees", "seen", "records", "hits", "shows", "plans",
+  "next", "year", "years", "day", "days", "week", "month", "use", "using", "used", "may", "launch", "released"
 ]);
 
 export function extractSignificantTokens(title: string): Set<string> {
@@ -136,6 +86,140 @@ export function areDuplicateHeadlines(titleA: string, titleB: string): boolean {
   return false;
 }
 
+export function normalizeHeadline(value: string): string {
+  return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export function canonicalizeUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    for (const key of Array.from(url.searchParams.keys())) if (/^(utm_|fbclid|gclid|ref$)/i.test(key)) url.searchParams.delete(key);
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    return url.toString();
+  } catch { return value.trim().toLowerCase(); }
+}
+
+export function buildDuplicateKey(title: string, url: string, publishedAt: Date): string {
+  // Syndicated copies of a specific story (4+ significant headline tokens) collapse
+  // across domains on the same day. Short/generic headlines (<4 tokens) disambiguate
+  // by canonical URL so two distinct stories with terse titles do not collide.
+  const normalized = normalizeHeadline(title);
+  const tokens = normalized.split(" ").filter(Boolean);
+  const datePart = publishedAt.toISOString().slice(0, 10);
+  const identity =
+    tokens.length < 4
+      ? `${normalized}|${canonicalizeUrl(url)}|${datePart}`
+      : `${normalized}|${datePart}`;
+  return createHash("sha256").update(identity).digest("hex");
+}
+
+function extractHeadlineTokens(title: string): string[] {
+  return normalizeHeadline(title)
+    .split(" ")
+    .filter(token => token.length >= 3 && !STOP_WORDS.has(token));
+}
+
+/**
+ * Scores and ranks candidates against the day's actual multi-source news cluster
+ * rather than a static topic pool, and enforces a publisher diversity cap in the top 10.
+ */
+export function scoreAndRankCandidates(candidates: NewsCandidate[]): NewsCandidate[] {
+  if (candidates.length <= 1) return candidates;
+
+  // 1. Build cross-publisher keyword frequency map (how many distinct publishers mention a token)
+  const tokenPublishers = new Map<string, Set<string>>();
+  for (const candidate of candidates) {
+    const tokens = new Set(extractHeadlineTokens(candidate.title));
+    const pubKey = candidate.publisher.toLowerCase();
+    for (const token of tokens) {
+      if (!tokenPublishers.has(token)) {
+        tokenPublishers.set(token, new Set());
+      }
+      tokenPublishers.get(token)!.add(pubKey);
+    }
+  }
+
+  const nowMs = Date.now();
+
+  // 2. Score each candidate by cross-source cluster resonance + HN points + recency
+  const scored = candidates.map(candidate => {
+    const tokens = extractHeadlineTokens(candidate.title);
+    let clusterPoints = 0;
+    for (const token of tokens) {
+      const pubCount = tokenPublishers.get(token)?.size || 1;
+      if (pubCount > 1) {
+        clusterPoints += (pubCount - 1) * 12;
+      }
+    }
+    const hnBoost = Math.min(35, Math.log1p(Math.max(0, candidate.points || 0)) * 5);
+    const ageHours = Math.max(0, (nowMs - candidate.publishedAt.getTime()) / 3_600_000);
+    const recencyBoost = Math.max(0, 24 - Math.min(24, ageHours * 0.5));
+    const totalScore = Math.round((clusterPoints + hnBoost + recencyBoost) * 100) / 100;
+
+    return {
+      ...candidate,
+      clusterScore: totalScore,
+    };
+  });
+
+  scored.sort((a, b) => {
+    const scoreDiff = (b.clusterScore || 0) - (a.clusterScore || 0);
+    if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
+    return b.publishedAt.getTime() - a.publishedAt.getTime();
+  });
+
+  // 3. Enforce publisher diversity in the top 10 (max 2 stories per publisher in top 10)
+  const primary: NewsCandidate[] = [];
+  const overflow: NewsCandidate[] = [];
+  const publisherCounts = new Map<string, number>();
+
+  for (const item of scored) {
+    const pubKey = item.publisher.toLowerCase();
+    const count = publisherCounts.get(pubKey) || 0;
+    if (primary.length < 15 && count < 2) {
+      primary.push(item);
+      publisherCounts.set(pubKey, count + 1);
+    } else {
+      overflow.push(item);
+    }
+  }
+
+  return [...primary, ...overflow];
+}
+
+function localDate(timeZone: string, date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function zonedMidnight(date: string, timeZone: string): Date {
+  const guess = new Date(`${date}T00:00:00Z`);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(guess);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  const localAsUtc = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour) % 24, Number(values.minute), Number(values.second));
+  return new Date(guess.getTime() - (localAsUtc - guess.getTime()));
+}
+
+export function getTodayWindow(now = new Date(), timeZone = process.env.APP_TIMEZONE || "Africa/Lagos") {
+  const date = localDate(timeZone, now);
+  const start = zonedMidnight(date, timeZone);
+  return { date, start, end: new Date(start.getTime() + 86_400_000) };
+}
+
+function publisherFromUrl(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "Hacker News"; }
+}
+
+
+// Kept for backward compatibility with existing callers
+export function getHdUnsplashCoverUrl(headline: string, category = "Tech", seedOffset = 0): string {
+  void seedOffset;
+  // Generate a high-contrast editorial SVG data URL fallback instead of dead source.unsplash.com
+  return generateEditorialSvgCard(headline, category);
+}
 
 export function isNonNewsHeadline(title: string): boolean {
   const lower = title.toLowerCase().trim();
@@ -230,7 +314,7 @@ export function generateEditorialSvgCard(headline: string, category = "Tech"): s
       <stop offset="100%" stop-color="#141c2e" />
     </linearGradient>
     <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#327afd" />
+      <stop offset="0%" stop-color="#3b82f6" />
       <stop offset="100%" stop-color="#60a5fa" />
     </linearGradient>
   </defs>
@@ -245,7 +329,7 @@ export function generateEditorialSvgCard(headline: string, category = "Tech"): s
     ${tspans}
   </text>
   <g transform="translate(80, 530)">
-    <circle cx="10" cy="-6" r="6" fill="#327afd" />
+    <circle cx="10" cy="-6" r="6" fill="#3b82f6" />
     <text x="28" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="600" fill="#94a3b8" letter-spacing="0.5">AURIKREX BYTES &bull; VERIFIED TECH BRIEFING</text>
   </g>
 </svg>`;
@@ -481,16 +565,15 @@ async function fetchCandidatesForTimeframe(start: Date, end: Date, excludeKeys =
           publishedAt,
           duplicateKey,
           imageUrl: null,
+          points: Number(hit.points || 0),
         });
       }
     }
   }
 
-  const candidateList = Array.from(candidates.values())
-    .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
-
+  const ranked = scoreAndRankCandidates(Array.from(candidates.values()));
   const deduped: NewsCandidate[] = [];
-  for (const item of candidateList) {
+  for (const item of ranked) {
     if (!deduped.some(existing => areDuplicateHeadlines(existing.title, item.title))) {
       deduped.push(item);
     }
@@ -531,6 +614,7 @@ export function clampEditorialBrief(
   body: string,
   candidate?: { publisher?: string; publishedAt?: Date }
 ): string {
+  void candidate;
   let text = body.trim().replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
 
   // If longer than 800 chars, surgically trim at last clean sentence boundary
@@ -689,7 +773,7 @@ async function generateSingleCandidateBrief(
   candidate: NewsCandidate,
   mistralKey: string,
   nvidiaKey: string
-): Promise<{ headline: string; body: string; category: string } | null> {
+): Promise<{ headline: string; body: string; category: string; whyItMatters: string } | null> {
   const prompt = `You are the executive tech editor for Aurikrex Bytes.
 Write an authoritative, high-signal 3-paragraph editorial brief for this verified news story.
 
@@ -706,13 +790,32 @@ EDITORIAL RULES:
    - Paragraph 3 (The Outlook): What happens next, timeline, release dates, or key metrics to watch.
 3. STRICT LENGTH REQUIREMENT: The total character count of the "body" MUST be strictly between 550 and 750 characters.
 4. Headline: Crisp, punchy, active voice, under 90 characters. Never include publisher names or tags like "Show HN:".
-5. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
-6. Return a valid JSON object ONLY:
+5. Why It Matters Line: A single punchy 1-sentence takeaway (under 180 characters) summarizing why this matters.
+6. Category: Choose the single best fit from ["Tech", "AI", "Science", "Innovation", "Crypto"].
+7. Return a valid JSON object ONLY:
    {
      "headline": "Crisp Headline under 90 chars",
      "body": "Paragraph 1...\\n\\nParagraph 2...\\n\\nParagraph 3...",
+     "whyItMatters": "Single-sentence executive takeaway under 180 chars.",
      "category": "Tech"
    }`;
+
+  const buildBriefOutput = (item: any) => {
+    const headline = extractAiHeadline(item, candidate.title);
+    const rawBody = extractAiBody(item);
+    const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
+    const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
+      ? String(item.category)
+      : "Tech";
+    const whyItMatters = extractWhyItMattersLine({
+      whyItMatters: typeof item.whyItMatters === "string" ? item.whyItMatters : null,
+      body,
+    });
+    if (headline && body && body.length > 100) {
+      return { headline, body, category, whyItMatters };
+    }
+    return null;
+  };
 
   // 1. Primary LLM Provider: Mistral AI (mistral-small-latest -> open-mixtral-8x7b -> open-mistral-7b)
   if (mistralKey) {
@@ -743,17 +846,8 @@ EDITORIAL RULES:
           const content = resData.choices?.[0]?.message?.content || "";
           const parsed = parseAiJsonResponse(content);
           if (parsed && parsed.length > 0) {
-            const item = parsed[0];
-            const headline = extractAiHeadline(item, candidate.title);
-            const rawBody = extractAiBody(item);
-            const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-            const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-              ? String(item.category)
-              : "Tech";
-
-            if (headline && body && body.length > 100) {
-              return { headline, body, category };
-            }
+            const out = buildBriefOutput(parsed[0]);
+            if (out) return out;
           }
         } else if (response.status === 429) {
           await new Promise((r) => setTimeout(r, 300));
@@ -798,17 +892,8 @@ EDITORIAL RULES:
             const content = resData.choices?.[0]?.message?.content || "";
             const parsed = parseAiJsonResponse(content);
             if (parsed && parsed.length > 0) {
-              const item = parsed[0];
-              const headline = extractAiHeadline(item, candidate.title);
-              const rawBody = extractAiBody(item);
-              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-                ? String(item.category)
-                : "Tech";
-
-              if (headline && body && body.length > 100) {
-                return { headline, body, category };
-              }
+              const out = buildBriefOutput(parsed[0]);
+              if (out) return out;
             }
           }
         } catch {
@@ -846,17 +931,8 @@ EDITORIAL RULES:
             const content = resData.result?.response || resData.result?.text || "";
             const parsed = parseAiJsonResponse(content);
             if (parsed && parsed.length > 0) {
-              const item = parsed[0];
-              const headline = extractAiHeadline(item, candidate.title);
-              const rawBody = extractAiBody(item);
-              const body = rawBody ? clampEditorialBrief(rawBody, candidate) : "";
-              const category = ["Tech", "AI", "Science", "Innovation", "Crypto"].includes(String(item.category))
-                ? String(item.category)
-                : "Tech";
-
-              if (headline && body && body.length > 100) {
-                return { headline, body, category };
-              }
+              const out = buildBriefOutput(parsed[0]);
+              if (out) return out;
             }
           }
         } catch {
@@ -935,6 +1011,7 @@ export async function curateBytes(
     headline: string;
     body: string;
     category: string;
+    whyItMatters: string;
   }
 
   const draftItems: DraftStoryItem[] = [];
@@ -958,6 +1035,7 @@ export async function curateBytes(
           headline: brief.headline,
           body: brief.body,
           category: brief.category,
+          whyItMatters: brief.whyItMatters,
         };
       })
     );
@@ -983,7 +1061,7 @@ export async function curateBytes(
 
   // Resolve cover images for all stories in parallel
   const curatedBytes: CuratedByte[] = await Promise.all(
-    draftItems.map(async (draft) => {
+    draftItems.map(async (draft, index) => {
       let imageUrl = draft.candidate.imageUrl;
       let provenance = "source-article";
 
@@ -999,6 +1077,7 @@ export async function curateBytes(
         }
       }
 
+      // Treat editorial SVG cards strictly as a last resort when OG/Twitter/Flux fail
       if (!imageUrl) {
         imageUrl = generateEditorialSvgCard(draft.headline, draft.category);
         provenance = "editorial-card";
@@ -1008,6 +1087,9 @@ export async function curateBytes(
         headline: draft.headline,
         body: draft.body,
         category: draft.category,
+        whyItMatters: draft.whyItMatters,
+        isEditorPick: index === 0,
+        editorialRank: index + 1,
         imageUrl,
         sourceUrl: draft.candidate.url,
         sourcePublisher: draft.candidate.publisher,
@@ -1048,13 +1130,17 @@ export async function runNightlyCuration(
   if (!bytes.length) return 0;
 
   let count = 0;
-  for (const byte of bytes) {
+  for (let index = 0; index < bytes.length; index++) {
+    const byte = bytes[index];
     if (!byte.duplicateKey || excludeKeys.has(byte.duplicateKey)) continue;
     try {
       await db.insert(posts).values({
         headline: byte.headline,
         body: byte.body,
         category: byte.category || "Tech",
+        whyItMatters: byte.whyItMatters || extractWhyItMattersLine({ body: byte.body }),
+        isEditorPick: byte.isEditorPick ?? index === 0,
+        editorialRank: byte.editorialRank ?? index + 1,
         imageUrl: byte.imageUrl,
         status,
         createdBy: 1,
@@ -1075,4 +1161,3 @@ export async function runNightlyCuration(
   console.info(`[AICurator] Added ${count} validated ${status} Bytes`);
   return count;
 }
-

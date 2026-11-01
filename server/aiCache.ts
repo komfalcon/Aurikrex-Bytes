@@ -113,16 +113,23 @@ export function computeFollowUpContentHash(params: {
   headline: string;
   body: string;
   question: string;
+  history?: Array<{ question: string; answer: string }>;
   promptVersion?: string;
 }): string {
-  const canonicalPayload = JSON.stringify({
+  const payloadObj: Record<string, unknown> = {
     v: params.promptVersion || FOLLOW_UP_PROMPT_VERSION,
     postId: Number(params.postId),
     headline: normalizeCanonicalText(params.headline),
     body: normalizeCanonicalText(params.body),
     question: normalizeCanonicalText(params.question),
-  });
-  return sha256Hex(canonicalPayload);
+  };
+  if (params.history && params.history.length > 0) {
+    payloadObj.history = params.history.map(h => ({
+      q: normalizeCanonicalText(h.question),
+      a: normalizeCanonicalText(h.answer),
+    }));
+  }
+  return sha256Hex(JSON.stringify(payloadObj));
 }
 
 /**
@@ -187,7 +194,6 @@ export async function getCachedFollowUp(
   if (memRecord && memRecord.status === "active" && memRecord.answerText) {
     memRecord.hitCount += 1;
     memRecord.lastServedAt = now;
-    // Update L2 database hit count asynchronously
     void incrementDbHitCount(contentHash, promptVersion, now);
     let parsedQueries: string[] = [];
     try {

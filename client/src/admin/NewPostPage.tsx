@@ -1,13 +1,15 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
-import { Sparkles, FileText, UploadCloud, CheckCircle2, ArrowRight } from "lucide-react";
+import { Sparkles, FileText, UploadCloud, CheckCircle2, ArrowRight, Star } from "lucide-react";
 import { trpc } from "../lib/trpc";
 import NotFound from "../pages/NotFound";
 import { AdminFrame } from "./AdminPages";
 import { FormattedBody } from "@/components/FormattedBody";
 
 const HEADLINE_LIMIT = 120;
-const BODY_LIMIT = 1200;
+const BODY_LIMIT = 800;
+const WHY_LIMIT = 180;
+const CATEGORIES = ["Tech", "AI", "Science", "Innovation", "Crypto"] as const;
 type FormErrors = { imageUrl?: string; headline?: string; body?: string; submit?: string };
 
 export function NewPostPage() {
@@ -26,6 +28,10 @@ export function NewPostPage() {
   const [mode, setMode] = useState<"manual" | "pdf" | "ai">("manual");
   const [headline, setHeadline] = useState("");
   const [body, setBody] = useState("");
+  const [category, setCategory] = useState<string>("Tech");
+  const [whyItMatters, setWhyItMatters] = useState("");
+  const [isEditorPick, setIsEditorPick] = useState(false);
+  const [editorialRank, setEditorialRank] = useState<number>(10);
   const [imageUrl, setImageUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
@@ -49,6 +55,10 @@ export function NewPostPage() {
     if (existing.data && !hydrated) {
       setHeadline(existing.data.headline);
       setBody(existing.data.body);
+      setCategory(existing.data.category || "Tech");
+      setWhyItMatters((existing.data as any).whyItMatters || "");
+      setIsEditorPick(Boolean((existing.data as any).isEditorPick));
+      setEditorialRank(Number((existing.data as any).editorialRank || 10));
       setImageUrl(existing.data.imageUrl || "");
       setHydrated(true);
     }
@@ -101,10 +111,19 @@ export function NewPostPage() {
     if (Object.keys(next).length) return;
     try {
       let id = editId;
+      const payload = {
+        headline: headline.trim(),
+        body: body.trim(),
+        category,
+        whyItMatters: whyItMatters.trim() || null,
+        isEditorPick,
+        editorialRank: Math.max(1, Math.min(100, Number(editorialRank) || 10)),
+        imageUrl,
+      };
       if (editId) {
-        await editPost.mutateAsync({ id: editId, headline: headline.trim(), body: body.trim(), imageUrl });
+        await editPost.mutateAsync({ id: editId, ...payload });
       } else {
-        const result = await createPost.mutateAsync({ headline: headline.trim(), body: body.trim(), imageUrl });
+        const result = await createPost.mutateAsync(payload);
         id = result.id;
       }
       if (destination === "preview" && id) navigate(`/admin/preview/${id}?role=${currentRole}`);
@@ -249,7 +268,7 @@ export function NewPostPage() {
         <section className="table-card" style={{ padding: "2rem" }}>
           <h3 style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}><Sparkles size={20} /> Falke AI Multi-Byte Curation Drop</h3>
           <p className="muted" style={{ marginBottom: "1rem" }}>
-            Click below to immediately trigger Falke AI. It will analyze current technology, frontier AI (Gemini, Claude, OpenAI), science, and breaking developments to generate 20–30 unique, non-duplicate draft Bytes with high-resolution photos so you can filter and publish the top 10 stories.
+            Click below to immediately trigger Falke AI. It will score candidates against today&apos;s live multi-source news cluster, enforce publisher diversity, and generate 20–30 ranked draft Bytes so you can review and publish the daily top 5–10.
           </p>
 
           <div style={{
@@ -344,6 +363,45 @@ export function NewPostPage() {
           </section>
 
           <section className="table-card new-post-fields">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "1rem", marginBottom: "1rem" }}>
+              <div>
+                <label className="field-label" htmlFor="category">Category</label>
+                <select
+                  id="category"
+                  className="text-input"
+                  value={category}
+                  onChange={e => setCategory(e.target.value)}
+                >
+                  {CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="field-label" htmlFor="editorial-rank">Edition Rank (1–10)</label>
+                <input
+                  id="editorial-rank"
+                  type="number"
+                  min={1}
+                  max={100}
+                  className="text-input"
+                  value={editorialRank}
+                  onChange={e => setEditorialRank(Number(e.target.value) || 10)}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: "0.35rem" }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontWeight: 600 }}>
+                  <input
+                    type="checkbox"
+                    checked={isEditorPick}
+                    onChange={e => setIsEditorPick(e.target.checked)}
+                  />
+                  <Star size={15} style={{ color: isEditorPick ? "#f59e0b" : "var(--muted)" }} />
+                  <span>Editor&apos;s Pick (Lead Story)</span>
+                </label>
+              </div>
+            </div>
+
             <label className="field-label" htmlFor="headline">Headline</label>
             <input
               id="headline"
@@ -359,6 +417,20 @@ export function NewPostPage() {
             </div>
             {errors.headline && <p className="inline-error">{errors.headline}</p>}
 
+            <label className="field-label body-label" htmlFor="why-it-matters">Why it matters (1-line executive takeaway)</label>
+            <input
+              id="why-it-matters"
+              className="text-input"
+              value={whyItMatters}
+              maxLength={WHY_LIMIT}
+              onChange={event => setWhyItMatters(event.target.value)}
+              placeholder="Single-sentence summary used in the 8:00 AM email drop and card preview"
+            />
+            <div className="field-footer">
+              <span className="field-help">Optional — auto-extracted from paragraph 2 if left blank.</span>
+              <span className="char-count" aria-live="polite">{whyItMatters.length} / {WHY_LIMIT}</span>
+            </div>
+
             <label className="field-label body-label" htmlFor="body">Body</label>
             <textarea
               id="body"
@@ -366,7 +438,7 @@ export function NewPostPage() {
               value={body}
               maxLength={BODY_LIMIT}
               onChange={event => setBody(event.target.value)}
-              placeholder="Tell the story in a concise news card."
+              placeholder="Tell the story in a concise 3-paragraph news card."
               rows={8}
             />
             <div className="field-footer">
@@ -421,7 +493,7 @@ export function PreviewPage() {
   if (session.isLoading || post.isLoading) return <main className="auth-wrap"><p className="muted">Loading preview…</p></main>;
   if (!session.data || !post.data || !params) return <NotFound />;
 
-  const item = post.data;
+  const item = post.data as any;
   const isAdmin = session.data.role === "admin";
   const isReview = isAdmin && item.status === "pending_review";
   const busy = submit.isPending || publish.isPending || schedule.isPending || approve.isPending || reject.isPending;
@@ -461,8 +533,25 @@ export function PreviewPage() {
           />
         )}
         <div className="wysiwyg-copy">
-          <p className="eyebrow">Aurikrex Bytes</p>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.35rem" }}>
+            <p className="eyebrow" style={{ margin: 0 }}>{item.category || "Tech"} {item.sourcePublisher ? `• ${item.sourcePublisher}` : ""}</p>
+            {item.isEditorPick && (
+              <span style={{ fontSize: "0.75rem", fontWeight: 700, padding: "2px 8px", borderRadius: "999px", background: "rgba(245, 158, 11, 0.15)", color: "#d97706" }}>
+                ★ Editor&apos;s Pick
+              </span>
+            )}
+            {item.editorialRank && (
+              <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                Rank #{item.editorialRank}
+              </span>
+            )}
+          </div>
           <h2>{item.headline}</h2>
+          {item.whyItMatters && (
+            <p style={{ padding: "0.65rem 0.9rem", borderLeft: "3px solid var(--blue)", background: "var(--surface-2)", borderRadius: "0 8px 8px 0", fontSize: "0.92rem", marginBottom: "1rem" }}>
+              <strong>Why it matters:</strong> {item.whyItMatters}
+            </p>
+          )}
           <FormattedBody body={item.body} />
         </div>
       </div>
